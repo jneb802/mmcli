@@ -136,7 +136,12 @@ func Install(paths config.Paths, zipPath string) error {
 	return nil
 }
 
-// PatchRunScript patches run_bepinex.sh for macOS compatibility.
+// PatchRunScript patches run_bepinex.sh for macOS Apple Silicon compatibility.
+// The stock BepInExPack script fails on ARM Macs for two reasons:
+//  1. The arch detection case block rejects non-x86/x64 binaries
+//  2. The launch uses bare `exec` instead of forcing x86_64 via Rosetta
+//
+// This function applies the same patches as a known-working macOS install.
 func PatchRunScript(paths config.Paths) error {
 	scriptPath := paths.RunBepInExScript()
 	data, err := os.ReadFile(scriptPath)
@@ -149,16 +154,81 @@ func PatchRunScript(paths config.Paths) error {
 	// Set executable_name to valheim.app
 	content = replaceScriptVar(content, "executable_name", "valheim.app")
 
-	// Ensure ARCHPREFERENCE is set for x86_64 (Rosetta)
-	if !strings.Contains(content, "ARCHPREFERENCE") {
-		// Add before the exec line
-		content = strings.Replace(content,
-			"exec",
-			"export ARCHPREFERENCE=\"x86_64\"\nexec",
-			1)
-	}
+	// Comment out the arch detection case block — it rejects Apple Silicon binaries.
+	// The block starts with `case "${file_out}" in` and ends with `esac`.
+	content = commentOutArchCheck(content)
+
+	// Replace the stock `exec "$executable_path" $rest_args` launch with an
+	// `arch -x86_64 zsh` wrapper that re-exports the doorstop env vars and
+	// forces Rosetta. This is required because libdoorstop has no ARM build.
+	content = replaceExecWithArchWrapper(content)
 
 	return os.WriteFile(scriptPath, []byte(content), 0755)
+}
+
+// commentOutArchCheck comments out the `case "${file_out}" in ... esac` block
+// that checks binary architecture, since it rejects Apple Silicon executables.
+func commentOutArchCheck(content string) string {
+	lines := strings.Split(content, "\n")
+	inBlock := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		// Already commented out — nothing to do
+		if strings.HasPrefix(trimmed, "# case \"${file_out}\"") {
+			return content
+		}
+
+		if strings.HasPrefix(trimmed, "case \"${file_out}\"") {
+			inBlock = true
+		}
+		if inBlock && !strings.HasPrefix(trimmed, "#") {
+			lines[i] = "# " + line
+		}
+		if inBlock && trimmed == "esac" {
+			lines[i] = "# " + line
+			break
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// replaceExecWithArchWrapper replaces the stock exec launch line with an
+// `arch -x86_64 zsh -c` wrapper that re-exports doorstop environment variables
+// and forces the game to run under Rosetta 2.
+func replaceExecWithArchWrapper(content string) string {
+	// If already patched (contains "arch -x86_64 zsh"), skip
+	if strings.Contains(content, "arch -x86_64 zsh") {
+		return content
+	}
+
+	wrapper := `# Wrap the launch command in arch -x86_64 (libdoorstop has no Apple Silicon build)
+current_path=$(pwd)
+exports="export LD_LIBRARY_PATH=\"$LD_LIBRARY_PATH\";export LD_PRELOAD=$LD_PRELOAD;export DYLD_LIBRARY_PATH=\"$DYLD_LIBRARY_PATH\";export DYLD_INSERT_LIBRARIES=\"$DYLD_INSERT_LIBRARIES\""
+cdir="cd \"$current_path\""
+exec="\"${executable_path}\""
+a="\"$rest_args\""
+launch="arch;$cdir;pwd;$exports;$exec $a"
+echo "Wrapping x86_64 Launch Command: $launch"
+arch -x86_64 zsh -c "$launch"`
+
+	// Replace the stock exec line: `exec "$executable_path" $rest_args`
+	lines := strings.Split(content, "\n")
+	var result []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		// Match both active and shellcheck-disabled exec lines
+		if strings.HasPrefix(trimmed, "exec \"$executable_path\"") ||
+			strings.HasPrefix(trimmed, "exec \"${executable_path}\"") {
+			// Comment out the stock exec and append wrapper
+			result = append(result, "# "+line)
+			result = append(result, "")
+			result = append(result, wrapper)
+			continue
+		}
+		result = append(result, line)
+	}
+	return strings.Join(result, "\n")
 }
 
 // MakeExecutable sets executable permissions on required files.
