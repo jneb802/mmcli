@@ -1,0 +1,24 @@
+package cmd
+
+import (
+	"github.com/spf13/cobra"
+
+	"mmcli/internal/runner"
+)
+
+var startCmd = &cobra.Command{
+	Use:   "start",
+	Short: "Launch Valheim with BepInEx and stream logs",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		paths, cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+
+		return runner.Start(paths, cfg)
+	},
+}
+
+func init() {
+	rootCmd.AddCommand(startCmd)
+}
