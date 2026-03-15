@@ -8,7 +8,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"mmcli/internal/config"
+	"mmcli/internal/installer"
 	"mmcli/internal/profile"
+	"mmcli/internal/thunderstore"
 )
 
 var profileCmd = &cobra.Command{
@@ -145,12 +147,91 @@ var profileDeleteCmd = &cobra.Command{
 	},
 }
 
+var profileImportCmd = &cobra.Command{
+	Use:   "import <name> <modpack>",
+	Short: "Create a profile from a Thunderstore modpack",
+	Long:  "Create a new profile and install all mods from a Thunderstore modpack (e.g., 'mmcli profile import mypack Author-ModpackName')",
+	Args:  cobra.ExactArgs(2),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		paths, cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+
+		profileName := args[0]
+		modpackQuery := args[1]
+
+		// Resolve the modpack package
+		fmt.Printf("Resolving modpack '%s'...\n", modpackQuery)
+		pkg, err := thunderstore.FindPackageByQuery(modpackQuery, paths.CacheDir)
+		if err != nil {
+			return err
+		}
+		if len(pkg.Versions) == 0 {
+			return fmt.Errorf("modpack %s has no versions", pkg.FullName)
+		}
+
+		deps := pkg.Versions[0].Dependencies
+		// Filter out BepInExPack
+		var mods []string
+		for _, dep := range deps {
+			ref := thunderstore.ParseDep(dep)
+			if ref.Name == "BepInExPack_Valheim" || ref.Name == "BepInEx_pack" {
+				continue
+			}
+			mods = append(mods, fmt.Sprintf("%s-%s", ref.Owner, ref.Name))
+		}
+
+		fmt.Printf("Modpack \033[36m%s-%s\033[0m has %d mods:\n", pkg.Owner, pkg.Name, len(mods))
+		for _, m := range mods {
+			fmt.Printf("  - %s\n", m)
+		}
+		fmt.Println()
+
+		// Create profile
+		if err := profile.Create(paths, profileName); err != nil {
+			return err
+		}
+
+		reg, err := config.LoadRegistry(paths)
+		if err != nil {
+			return err
+		}
+		reg.EnsureProfile(profileName)
+
+		// Temporarily switch active profile so installer extracts into the new one
+		origProfile := cfg.ActiveProfile
+		cfg.ActiveProfile = profileName
+
+		// Install each mod
+		for _, mod := range mods {
+			if err := installer.Install(paths, cfg, &reg, mod); err != nil {
+				fmt.Printf("\033[31mWarning: failed to install %s: %v\033[0m\n", mod, err)
+			}
+		}
+
+		// Restore original active profile
+		cfg.ActiveProfile = origProfile
+		if err := config.Save(paths, cfg); err != nil {
+			return err
+		}
+		if err := config.SaveRegistry(paths, reg); err != nil {
+			return err
+		}
+
+		fmt.Printf("\n\033[32mProfile '%s' created with %d mods from %s-%s.\033[0m\n", profileName, len(mods), pkg.Owner, pkg.Name)
+		fmt.Printf("Run \033[36mmmcli profile switch %s\033[0m to activate it.\n", profileName)
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(profileCmd)
 	profileCmd.AddCommand(profileCreateCmd)
 	profileCmd.AddCommand(profileListCmd)
 	profileCmd.AddCommand(profileSwitchCmd)
 	profileCmd.AddCommand(profileDeleteCmd)
+	profileCmd.AddCommand(profileImportCmd)
 }
 
 // loadConfig loads paths and config, ensuring mmcli is initialized.
