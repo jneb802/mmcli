@@ -11,6 +11,7 @@ type ModEntry struct {
 	Name         string   `json:"name"`
 	Version      string   `json:"version"`
 	IsDependency bool     `json:"is_dependency"`
+	Disabled     bool     `json:"disabled,omitempty"`
 	Files        []string `json:"files"`
 	Dependencies []string `json:"dependencies"`
 }

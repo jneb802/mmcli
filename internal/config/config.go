@@ -61,6 +61,26 @@ func (p Paths) BepInExConfigDir() string {
 	return filepath.Join(p.ValheimDir, "BepInEx", "config")
 }
 
+func (p Paths) ProfilePatchersDir(name string) string {
+	return filepath.Join(p.ProfilesDir, name, "patchers")
+}
+
+func (p Paths) ProfileMonomodDir(name string) string {
+	return filepath.Join(p.ProfilesDir, name, "monomod")
+}
+
+func (p Paths) BepInExPatchersDir() string {
+	return filepath.Join(p.ValheimDir, "BepInEx", "patchers")
+}
+
+func (p Paths) BepInExMonomodDir() string {
+	return filepath.Join(p.ValheimDir, "BepInEx", "monomod")
+}
+
+func (p Paths) BepInExCoreDir() string {
+	return filepath.Join(p.ValheimDir, "BepInEx", "core")
+}
+
 func (p Paths) BepInExLogFile() string {
 	return filepath.Join(p.ValheimDir, "BepInEx", "LogOutput.log")
 }

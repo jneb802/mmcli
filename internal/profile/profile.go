@@ -22,6 +22,12 @@ func Create(paths config.Paths, name string) error {
 	if err := os.MkdirAll(paths.ProfileConfigDir(name), 0755); err != nil {
 		return fmt.Errorf("failed to create config dir: %w", err)
 	}
+	if err := os.MkdirAll(paths.ProfilePatchersDir(name), 0755); err != nil {
+		return fmt.Errorf("failed to create patchers dir: %w", err)
+	}
+	if err := os.MkdirAll(paths.ProfileMonomodDir(name), 0755); err != nil {
+		return fmt.Errorf("failed to create monomod dir: %w", err)
+	}
 
 	// Copy BepInEx.cfg from BepInEx/config if it exists (follow symlinks)
 	srcCfg := filepath.Join(paths.BepInExConfigDir(), "BepInEx.cfg")
@@ -80,16 +86,31 @@ func Delete(paths config.Paths, cfg config.Config, name string) error {
 
 // ActivateSymlinks makes the given profile's directories the active symlink targets.
 func ActivateSymlinks(paths config.Paths, name string) error {
-	profilePlugins := paths.ProfilePluginsDir(name)
-	profileConfig := paths.ProfileConfigDir(name)
-	bepPlugins := paths.BepInExPluginsDir()
-	bepConfig := paths.BepInExConfigDir()
-
-	if err := replaceWithSymlink(bepPlugins, profilePlugins, name, paths); err != nil {
-		return fmt.Errorf("failed to symlink plugins: %w", err)
+	// Ensure all profile target directories exist (handles upgrades from older mmcli)
+	for _, dir := range []string{
+		paths.ProfilePluginsDir(name),
+		paths.ProfileConfigDir(name),
+		paths.ProfilePatchersDir(name),
+		paths.ProfileMonomodDir(name),
+	} {
+		os.MkdirAll(dir, 0755)
 	}
-	if err := replaceWithSymlink(bepConfig, profileConfig, name, paths); err != nil {
-		return fmt.Errorf("failed to symlink config: %w", err)
+
+	symlinks := []struct {
+		bepDir     string
+		profileDir string
+		label      string
+	}{
+		{paths.BepInExPluginsDir(), paths.ProfilePluginsDir(name), "plugins"},
+		{paths.BepInExConfigDir(), paths.ProfileConfigDir(name), "config"},
+		{paths.BepInExPatchersDir(), paths.ProfilePatchersDir(name), "patchers"},
+		{paths.BepInExMonomodDir(), paths.ProfileMonomodDir(name), "monomod"},
+	}
+
+	for _, s := range symlinks {
+		if err := replaceWithSymlink(s.bepDir, s.profileDir, name, paths); err != nil {
+			return fmt.Errorf("failed to symlink %s: %w", s.label, err)
+		}
 	}
 	return nil
 }

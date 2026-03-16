@@ -142,6 +142,92 @@ func Remove(paths config.Paths, cfg config.Config, reg *config.Registry, modName
 	return nil
 }
 
+// Disable renames .dll files to .dll.old so BepInEx won't load them.
+func Disable(paths config.Paths, cfg config.Config, reg *config.Registry, modName string) error {
+	profile := cfg.ActiveProfile
+
+	mod, exists := findMod(reg, profile, modName)
+	if !exists {
+		return fmt.Errorf("mod '%s' is not installed in profile '%s'", modName, profile)
+	}
+
+	if mod.Disabled {
+		fmt.Printf("%s is already disabled\n", mod.FullName())
+		return nil
+	}
+
+	modSubdir := fmt.Sprintf("%s-%s", mod.Owner, mod.Name)
+	for _, dir := range modDirs(paths, profile, modSubdir) {
+		if err := renameDLLs(dir, ".dll", ".dll.old"); err != nil {
+			return fmt.Errorf("failed to disable %s: %w", mod.FullName(), err)
+		}
+	}
+
+	mod.Disabled = true
+	reg.SetMod(profile, mod)
+	fmt.Printf("Disabled %s\n", mod.FullName())
+	return nil
+}
+
+// Enable renames .dll.old files back to .dll so BepInEx loads them.
+func Enable(paths config.Paths, cfg config.Config, reg *config.Registry, modName string) error {
+	profile := cfg.ActiveProfile
+
+	mod, exists := findMod(reg, profile, modName)
+	if !exists {
+		return fmt.Errorf("mod '%s' is not installed in profile '%s'", modName, profile)
+	}
+
+	if !mod.Disabled {
+		fmt.Printf("%s is already enabled\n", mod.FullName())
+		return nil
+	}
+
+	modSubdir := fmt.Sprintf("%s-%s", mod.Owner, mod.Name)
+	for _, dir := range modDirs(paths, profile, modSubdir) {
+		if err := renameDLLs(dir, ".dll.old", ".dll"); err != nil {
+			return fmt.Errorf("failed to enable %s: %w", mod.FullName(), err)
+		}
+	}
+
+	mod.Disabled = false
+	reg.SetMod(profile, mod)
+	fmt.Printf("Enabled %s\n", mod.FullName())
+	return nil
+}
+
+// modDirs returns all directories where a mod may have files installed.
+func modDirs(paths config.Paths, profile, modSubdir string) []string {
+	return []string{
+		filepath.Join(paths.ProfilePluginsDir(profile), modSubdir),
+		filepath.Join(paths.ProfilePatchersDir(profile), modSubdir),
+		filepath.Join(paths.ProfileMonomodDir(profile), modSubdir),
+		filepath.Join(paths.BepInExCoreDir(), modSubdir),
+	}
+}
+
+// renameDLLs recursively walks a directory and renames files matching oldSuffix to newSuffix.
+func renameDLLs(dir, oldSuffix, newSuffix string) error {
+	return filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		if strings.HasSuffix(strings.ToLower(d.Name()), oldSuffix) {
+			neu := strings.TrimSuffix(path, oldSuffix) + newSuffix
+			if err := os.Rename(path, neu); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 func findMod(reg *config.Registry, profile, query string) (config.ModEntry, bool) {
 	// Try exact full name match first
 	if mod, ok := reg.GetMod(profile, query); ok {
@@ -208,8 +294,10 @@ func downloadMod(paths config.Paths, owner, name, version, downloadURL string) (
 	return zipPath, nil
 }
 
-// extractMod extracts a mod zip into the active profile's plugins and config directories.
-// DLLs go into plugins/<Owner>-<Name>/, configs go into config/.
+// extractMod extracts a mod zip using r2modman-compatible override folder rules.
+// Recognized override folders (plugins/, patchers/, monomod/, core/, config/) route
+// files to the corresponding BepInEx subdirectory. Files not in any override folder
+// default to plugins/<Author-Name>/. Subdirectory structure is preserved.
 func extractMod(paths config.Paths, cfg config.Config, owner, name, zipPath string) ([]string, error) {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
@@ -218,9 +306,21 @@ func extractMod(paths config.Paths, cfg config.Config, owner, name, zipPath stri
 	defer r.Close()
 
 	modSubdir := fmt.Sprintf("%s-%s", owner, name)
-	pluginsDir := filepath.Join(paths.ProfilePluginsDir(cfg.ActiveProfile), modSubdir)
-	configDir := paths.ProfileConfigDir(cfg.ActiveProfile)
-	os.MkdirAll(pluginsDir, 0755)
+	profile := cfg.ActiveProfile
+
+	// Override folder prefix → target directory.
+	// Author subfolder is baked into dir for all except config.
+	type override struct {
+		prefix string
+		dir    string
+	}
+	overrides := []override{
+		{"plugins/", filepath.Join(paths.ProfilePluginsDir(profile), modSubdir)},
+		{"patchers/", filepath.Join(paths.ProfilePatchersDir(profile), modSubdir)},
+		{"monomod/", filepath.Join(paths.ProfileMonomodDir(profile), modSubdir)},
+		{"core/", filepath.Join(paths.BepInExCoreDir(), modSubdir)},
+		{"config/", paths.ProfileConfigDir(profile)},
+	}
 
 	var files []string
 
@@ -229,9 +329,8 @@ func extractMod(paths config.Paths, cfg config.Config, owner, name, zipPath stri
 			continue
 		}
 
-		fname := f.Name
+		fname := filepath.ToSlash(f.Name)
 		baseName := filepath.Base(fname)
-		lowerName := strings.ToLower(baseName)
 
 		// Skip metadata
 		if baseName == "icon.png" || baseName == "manifest.json" || baseName == "README.md" || baseName == "CHANGELOG.md" {
@@ -239,16 +338,25 @@ func extractMod(paths config.Paths, cfg config.Config, owner, name, zipPath stri
 		}
 
 		var destPath string
+		matched := false
 
-		// Config files go to config dir
-		if strings.HasSuffix(lowerName, ".cfg") {
-			destPath = filepath.Join(configDir, baseName)
-		} else if strings.Contains(strings.ToLower(fname), "config/") || strings.Contains(strings.ToLower(fname), "config\\") {
-			// Files inside a config/ folder in the zip
-			destPath = filepath.Join(configDir, baseName)
-		} else {
-			// Everything else goes to the mod's plugin subfolder
-			destPath = filepath.Join(pluginsDir, baseName)
+		for _, ov := range overrides {
+			if len(fname) > len(ov.prefix) && strings.EqualFold(fname[:len(ov.prefix)], ov.prefix) {
+				relPath := fname[len(ov.prefix):]
+				destPath = filepath.Join(ov.dir, relPath)
+				matched = true
+				break
+			}
+		}
+
+		if !matched {
+			// .mm.dll files auto-route to monomod
+			if strings.HasSuffix(strings.ToLower(fname), ".mm.dll") {
+				destPath = filepath.Join(paths.ProfileMonomodDir(profile), modSubdir, baseName)
+			} else {
+				// Default: preserve subdirectory structure in plugins
+				destPath = filepath.Join(paths.ProfilePluginsDir(profile), modSubdir, fname)
+			}
 		}
 
 		if err := extractZipFile(f, destPath); err != nil {
@@ -280,14 +388,21 @@ func extractZipFile(f *zip.File, destPath string) error {
 }
 
 func removeModFiles(paths config.Paths, cfg config.Config, mod config.ModEntry) {
-	// Remove the mod's plugin subfolder
 	modSubdir := fmt.Sprintf("%s-%s", mod.Owner, mod.Name)
-	pluginDir := filepath.Join(paths.ProfilePluginsDir(cfg.ActiveProfile), modSubdir)
-	os.RemoveAll(pluginDir)
+	profile := cfg.ActiveProfile
 
-	// Remove individual tracked files that might be in config/
+	// Remove the mod's subdirectory from all target directories
+	for _, dir := range []string{
+		paths.ProfilePluginsDir(profile),
+		paths.ProfilePatchersDir(profile),
+		paths.ProfileMonomodDir(profile),
+		paths.BepInExCoreDir(),
+	} {
+		os.RemoveAll(filepath.Join(dir, modSubdir))
+	}
+
+	// Remove individually tracked files (config files without author subfolder)
 	for _, f := range mod.Files {
-		// Only remove files in the config dir (plugin files are handled by RemoveAll above)
 		if strings.Contains(f, "/config/") {
 			os.Remove(f)
 		}

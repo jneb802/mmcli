@@ -42,13 +42,17 @@ var listCmd = &cobra.Command{
 		fmt.Printf("Mods in profile '\033[36m%s\033[0m':\n\n", cfg.ActiveProfile)
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "MOD\tVERSION\tTYPE")
+		fmt.Fprintln(w, "MOD\tVERSION\tTYPE\tSTATUS")
 		for _, mod := range mods {
 			modType := "\033[32minstalled\033[0m"
 			if mod.IsDependency {
 				modType = "\033[33mdependency\033[0m"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\n", mod.FullName(), mod.Version, modType)
+			status := "\033[32menabled\033[0m"
+			if mod.Disabled {
+				status = "\033[31mdisabled\033[0m"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", mod.FullName(), mod.Version, modType, status)
 		}
 		w.Flush()
 		return nil
