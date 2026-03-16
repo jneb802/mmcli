@@ -216,9 +216,18 @@ func ResolveDependencies(pkg *Package, installed map[string]bool) ([]DepRef, err
 }
 
 // FindPackageByQuery searches for a package by query string.
-// Accepts "Name" or "Owner-Name" format.
+// Accepts "Name", "Owner-Name", or "Owner-Name-Version" format.
 func FindPackageByQuery(query, cacheDir string) (*Package, error) {
-	// Try direct lookup first if it looks like Owner-Name
+	// Try parsing as Owner-Name-Version first (e.g., "warpalicious-Praetoris-1.1.16")
+	ref := ParseDep(query)
+	if ref.Owner != "" && ref.Name != "" {
+		pkg, err := GetPackage(ref.Owner, ref.Name)
+		if err == nil {
+			return pkg, nil
+		}
+	}
+
+	// Try as Owner-Name (e.g., "warpalicious-Praetoris")
 	parts := strings.SplitN(query, "-", 2)
 	if len(parts) == 2 {
 		pkg, err := GetPackage(parts[0], parts[1])
