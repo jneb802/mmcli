@@ -86,7 +86,11 @@ func Download(paths config.Paths, downloadURL, version string) (string, error) {
 
 // Install extracts the BepInEx zip into the Valheim directory.
 // Strips the "BepInExPack_Valheim/" prefix and skips metadata files.
+// Removes any dangling symlinks from a previous mmcli install first.
 func Install(paths config.Paths, zipPath string) error {
+	// Clean up dangling symlinks left from previous profile symlinks
+	removeDanglingSymlinks(paths.BepInExDir())
+
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return fmt.Errorf("failed to open zip: %w", err)
@@ -264,6 +268,26 @@ func extractFile(f *zip.File, destPath string) error {
 
 	_, err = io.Copy(out, rc)
 	return err
+}
+
+// removeDanglingSymlinks removes symlinks in a directory that point to non-existent targets.
+func removeDanglingSymlinks(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		path := filepath.Join(dir, e.Name())
+		info, err := os.Lstat(path)
+		if err != nil {
+			continue
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			if _, err := os.Stat(path); err != nil {
+				os.Remove(path)
+			}
+		}
+	}
 }
 
 func replaceScriptVar(content, varName, value string) string {
