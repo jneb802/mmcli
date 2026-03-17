@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="mmcliBanner.png" alt="mmcli banner" />
+</p>
+
 # mmcli
 
 A command-line Valheim mod manager for macOS. Installs mods from [Thunderstore](https://thunderstore.io/c/valheim/), manages profiles, and launches the game with BepInEx.
@@ -52,8 +56,6 @@ Dependencies are resolved and installed automatically.
 
 ```
 mmcli list                        # show installed mods
-mmcli enable <mod>                # re-enable a disabled mod
-mmcli disable <mod>               # disable a mod without removing it
 mmcli remove <mod>                # remove a mod and orphaned dependencies
 ```
 
