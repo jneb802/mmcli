@@ -142,58 +142,54 @@ func Remove(paths config.Paths, cfg config.Config, reg *config.Registry, modName
 	return nil
 }
 
-// Disable renames .dll files to .dll.old so BepInEx won't load them.
-func Disable(paths config.Paths, cfg config.Config, reg *config.Registry, modName string) error {
+// Toggle flips a mod between enabled and disabled without printing output.
+func Toggle(paths config.Paths, cfg config.Config, reg *config.Registry, modName string) error {
 	profile := cfg.ActiveProfile
-
 	mod, exists := findMod(reg, profile, modName)
 	if !exists {
-		return fmt.Errorf("mod '%s' is not installed in profile '%s'", modName, profile)
-	}
-
-	if mod.Disabled {
-		fmt.Printf("%s is already disabled\n", mod.FullName())
-		return nil
+		return fmt.Errorf("mod '%s' not found", modName)
 	}
 
 	modSubdir := fmt.Sprintf("%s-%s", mod.Owner, mod.Name)
-	for _, dir := range modDirs(paths, profile, modSubdir) {
-		if err := renameDLLs(dir, ".dll", ".dll.old"); err != nil {
-			return fmt.Errorf("failed to disable %s: %w", mod.FullName(), err)
+	if mod.Disabled {
+		for _, dir := range modDirs(paths, profile, modSubdir) {
+			if err := renameDLLs(dir, ".dll.old", ".dll"); err != nil {
+				return err
+			}
 		}
+		mod.Disabled = false
+	} else {
+		for _, dir := range modDirs(paths, profile, modSubdir) {
+			if err := renameDLLs(dir, ".dll", ".dll.old"); err != nil {
+				return err
+			}
+		}
+		mod.Disabled = true
 	}
 
-	mod.Disabled = true
 	reg.SetMod(profile, mod)
-	fmt.Printf("Disabled %s\n", mod.FullName())
 	return nil
 }
 
-// Enable renames .dll.old files back to .dll so BepInEx loads them.
-func Enable(paths config.Paths, cfg config.Config, reg *config.Registry, modName string) error {
-	profile := cfg.ActiveProfile
-
-	mod, exists := findMod(reg, profile, modName)
-	if !exists {
-		return fmt.Errorf("mod '%s' is not installed in profile '%s'", modName, profile)
+// ToggleLocalMod enables or disables a local (untracked) mod by renaming its DLLs.
+func ToggleLocalMod(pluginsDir string, mod config.ModEntry) error {
+	oldSuffix, newSuffix := ".dll", ".dll.old"
+	if mod.Disabled {
+		oldSuffix, newSuffix = ".dll.old", ".dll"
 	}
 
-	if !mod.Disabled {
-		fmt.Printf("%s is already enabled\n", mod.FullName())
-		return nil
+	dirPath := filepath.Join(pluginsDir, mod.Name)
+	if info, err := os.Stat(dirPath); err == nil && info.IsDir() {
+		return renameDLLs(dirPath, oldSuffix, newSuffix)
 	}
 
-	modSubdir := fmt.Sprintf("%s-%s", mod.Owner, mod.Name)
-	for _, dir := range modDirs(paths, profile, modSubdir) {
-		if err := renameDLLs(dir, ".dll.old", ".dll"); err != nil {
-			return fmt.Errorf("failed to enable %s: %w", mod.FullName(), err)
-		}
+	// Loose DLL file
+	oldPath := filepath.Join(pluginsDir, mod.Name+oldSuffix)
+	newPath := filepath.Join(pluginsDir, mod.Name+newSuffix)
+	if _, err := os.Stat(oldPath); err == nil {
+		return os.Rename(oldPath, newPath)
 	}
-
-	mod.Disabled = false
-	reg.SetMod(profile, mod)
-	fmt.Printf("Enabled %s\n", mod.FullName())
-	return nil
+	return fmt.Errorf("local mod '%s' not found", mod.Name)
 }
 
 // modDirs returns all directories where a mod may have files installed.

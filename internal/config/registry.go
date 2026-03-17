@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 type ModEntry struct {
@@ -11,12 +13,16 @@ type ModEntry struct {
 	Name         string   `json:"name"`
 	Version      string   `json:"version"`
 	IsDependency bool     `json:"is_dependency"`
+	IsLocal      bool     `json:"-"`
 	Disabled     bool     `json:"disabled,omitempty"`
 	Files        []string `json:"files"`
 	Dependencies []string `json:"dependencies"`
 }
 
 func (m ModEntry) FullName() string {
+	if m.IsLocal {
+		return m.Name
+	}
 	return fmt.Sprintf("%s-%s", m.Owner, m.Name)
 }
 
@@ -108,4 +114,66 @@ func (r *Registry) IsDependent(profile, fullName string) bool {
 		}
 	}
 	return false
+}
+
+// DetectLocalMods scans the plugins directory for mods not tracked in the registry.
+func DetectLocalMods(pluginsDir string, registered map[string]ModEntry) []ModEntry {
+	entries, err := os.ReadDir(pluginsDir)
+	if err != nil {
+		return nil
+	}
+
+	knownDirs := make(map[string]bool)
+	for _, mod := range registered {
+		knownDirs[mod.FullName()] = true
+	}
+
+	var locals []ModEntry
+	for _, entry := range entries {
+		name := entry.Name()
+
+		if knownDirs[name] {
+			continue
+		}
+
+		if entry.IsDir() {
+			hasDLL, hasDisabledDLL := scanForDLLs(filepath.Join(pluginsDir, name))
+			if hasDLL || hasDisabledDLL {
+				locals = append(locals, ModEntry{
+					Name:     name,
+					IsLocal:  true,
+					Disabled: !hasDLL && hasDisabledDLL,
+				})
+			}
+		} else if strings.HasSuffix(strings.ToLower(name), ".dll.old") {
+			locals = append(locals, ModEntry{
+				Name:     strings.TrimSuffix(name, ".dll.old"),
+				IsLocal:  true,
+				Disabled: true,
+			})
+		} else if strings.HasSuffix(strings.ToLower(name), ".dll") {
+			locals = append(locals, ModEntry{
+				Name:    strings.TrimSuffix(name, filepath.Ext(name)),
+				IsLocal: true,
+			})
+		}
+	}
+
+	return locals
+}
+
+func scanForDLLs(dir string) (hasDLL bool, hasDisabledDLL bool) {
+	filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		lower := strings.ToLower(d.Name())
+		if strings.HasSuffix(lower, ".dll.old") {
+			hasDisabledDLL = true
+		} else if strings.HasSuffix(lower, ".dll") {
+			hasDLL = true
+		}
+		return nil
+	})
+	return
 }

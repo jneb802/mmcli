@@ -26,15 +26,35 @@ var listCmd = &cobra.Command{
 		}
 
 		mods := reg.ListMods(cfg.ActiveProfile)
+
+		// Detect local (untracked) mods in the plugins directory
+		pluginsDir := paths.ProfilePluginsDir(cfg.ActiveProfile)
+		registered := reg.Profiles[cfg.ActiveProfile]
+		if registered == nil {
+			registered = make(map[string]config.ModEntry)
+		}
+		locals := config.DetectLocalMods(pluginsDir, registered)
+		mods = append(mods, locals...)
+
 		if len(mods) == 0 {
 			fmt.Printf("No mods installed in profile '\033[36m%s\033[0m'.\n", cfg.ActiveProfile)
 			return nil
 		}
 
-		// Sort: user-installed first, then deps
+		// Sort: local first, then user-installed, then deps
 		sort.Slice(mods, func(i, j int) bool {
-			if mods[i].IsDependency != mods[j].IsDependency {
-				return !mods[i].IsDependency
+			rank := func(m config.ModEntry) int {
+				if m.IsLocal {
+					return 0
+				}
+				if !m.IsDependency {
+					return 1
+				}
+				return 2
+			}
+			ri, rj := rank(mods[i]), rank(mods[j])
+			if ri != rj {
+				return ri < rj
 			}
 			return mods[i].FullName() < mods[j].FullName()
 		})
@@ -45,14 +65,20 @@ var listCmd = &cobra.Command{
 		fmt.Fprintln(w, "MOD\tVERSION\tTYPE\tSTATUS")
 		for _, mod := range mods {
 			modType := "\033[32minstalled\033[0m"
-			if mod.IsDependency {
+			if mod.IsLocal {
+				modType = "\033[35mlocal\033[0m"
+			} else if mod.IsDependency {
 				modType = "\033[33mdependency\033[0m"
 			}
 			status := "\033[32menabled\033[0m"
 			if mod.Disabled {
 				status = "\033[31mdisabled\033[0m"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", mod.FullName(), mod.Version, modType, status)
+			version := mod.Version
+			if version == "" {
+				version = "-"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", mod.FullName(), version, modType, status)
 		}
 		w.Flush()
 		return nil
