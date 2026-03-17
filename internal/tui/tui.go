@@ -30,9 +30,11 @@ type model struct {
 
 	confirmRemove bool
 
-	pickProfile   bool
-	profiles      []string
-	profileCursor int
+	pickProfile      bool
+	profiles         []string
+	profileCursor    int
+	creatingProfile  bool
+	newProfileInput  string
 
 	installing   bool
 	installInput string
@@ -144,8 +146,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleInstallInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	key := msg.String()
-	switch key {
+	switch msg.String() {
 	case "esc":
 		m.installing = false
 	case "enter":
@@ -160,14 +161,56 @@ func (m model) handleInstallInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		return m, tea.Quit
 	default:
-		if len(key) == 1 {
-			m.installInput += key
+		if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+			m.installInput += string(msg.Runes)
 		}
 	}
 	return m, nil
 }
 
 func (m model) handleProfilePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// New profile text input
+	if m.creatingProfile {
+		switch msg.String() {
+		case "esc":
+			m.creatingProfile = false
+		case "enter":
+			if m.newProfileInput != "" {
+				if err := profile.Create(m.paths, m.newProfileInput); err != nil {
+					m.err = err
+				} else {
+					m.reg.EnsureProfile(m.newProfileInput)
+					config.SaveRegistry(m.paths, *m.reg)
+					// Switch to the new profile
+					if err := profile.Switch(m.paths, &m.cfg, m.newProfileInput); err != nil {
+						m.err = err
+					} else {
+						config.Save(m.paths, m.cfg)
+						m.cursor = 0
+						m.refreshMods()
+						m.updates = make(map[string]string)
+						m.err = nil
+						m.pickProfile = false
+						m.creatingProfile = false
+						return m, nil
+					}
+				}
+				m.creatingProfile = false
+			}
+		case "backspace":
+			if len(m.newProfileInput) > 0 {
+				m.newProfileInput = m.newProfileInput[:len(m.newProfileInput)-1]
+			}
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+				m.newProfileInput += string(msg.Runes)
+			}
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "q", "esc":
 		m.pickProfile = false
@@ -196,6 +239,10 @@ func (m model) handleProfilePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 		m.pickProfile = false
+	case "n":
+		m.creatingProfile = true
+		m.newProfileInput = ""
+		m.err = nil
 	}
 	return m, nil
 }
@@ -298,6 +345,12 @@ func (m model) View() string {
 
 	// Profile picker
 	if m.pickProfile {
+		if m.creatingProfile {
+			b.WriteString("\n  New profile name:\n\n")
+			fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.newProfileInput)
+			b.WriteString("\n  \033[2menter create • esc cancel\033[0m\n\n")
+			return b.String()
+		}
 		b.WriteString("\n  Switch profile:\n\n")
 		for i, name := range m.profiles {
 			cursor := "  "
@@ -310,7 +363,7 @@ func (m model) View() string {
 			}
 			fmt.Fprintf(&b, "  %s%s%s\n", cursor, name, active)
 		}
-		b.WriteString("\n  \033[2m↑/↓ navigate • enter select • esc back\033[0m\n\n")
+		b.WriteString("\n  \033[2m↑/↓ navigate • enter select • n new profile • esc back\033[0m\n\n")
 		return b.String()
 	}
 
