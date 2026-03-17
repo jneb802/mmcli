@@ -216,8 +216,24 @@ func ResolveDependencies(pkg *Package, installed map[string]bool) ([]DepRef, err
 }
 
 // FindPackageByQuery searches for a package by query string.
-// Accepts "Name", "Owner-Name", or "Owner-Name-Version" format.
+// Accepts "Name", "Owner-Name", "Owner-Name-Version", or a Thunderstore URL.
 func FindPackageByQuery(query, cacheDir string) (*Package, error) {
+	// Try parsing as a Thunderstore URL (e.g., https://thunderstore.io/c/valheim/p/Owner/Name/)
+	if strings.HasPrefix(query, "https://thunderstore.io/") || strings.HasPrefix(query, "http://thunderstore.io/") {
+		parts := strings.Split(strings.Trim(query, "/"), "/")
+		// URL format: .../c/{community}/p/{owner}/{name}
+		for i, p := range parts {
+			if p == "p" && i+2 < len(parts) {
+				pkg, err := GetPackage(parts[i+1], parts[i+2])
+				if err == nil {
+					return pkg, nil
+				}
+				return nil, fmt.Errorf("could not fetch package from URL: %w", err)
+			}
+		}
+		return nil, fmt.Errorf("could not parse Thunderstore URL: %s", query)
+	}
+
 	// Try parsing as Owner-Name-Version first (e.g., "warpalicious-Praetoris-1.1.16")
 	ref := ParseDep(query)
 	if ref.Owner != "" && ref.Name != "" {
