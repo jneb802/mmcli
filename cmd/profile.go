@@ -1,9 +1,14 @@
 package cmd
 
 import (
+	"archive/zip"
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -148,14 +153,27 @@ var profileDeleteCmd = &cobra.Command{
 }
 
 var profileImportCmd = &cobra.Command{
-	Use:   "import <name> <modpack>",
-	Short: "Create a profile from a Thunderstore modpack",
-	Long:  "Create a new profile and install all mods from a Thunderstore modpack (e.g., 'mmcli profile import mypack Author-ModpackName')",
-	Args:  cobra.ExactArgs(2),
+	Use:   "import <name> <modpack> | import <profile-code>",
+	Short: "Create a profile from a modpack or profile code",
+	Long: `Create a new profile and install mods from a Thunderstore modpack or profile code.
+
+Examples:
+  mmcli profile import mypack Author-ModpackName
+  mmcli profile import a1b2c3d4-e5f6-7890-abcd-ef1234567890`,
+	Args: cobra.RangeArgs(1, 2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths, cfg, err := loadConfig()
 		if err != nil {
 			return err
+		}
+
+		// Profile code import (single UUID argument)
+		if len(args) == 1 && thunderstore.IsProfileCode(args[0]) {
+			return importProfileCode(paths, cfg, args[0])
+		}
+
+		if len(args) != 2 {
+			return fmt.Errorf("expected <name> <modpack> or a profile code UUID")
 		}
 
 		profileName := args[0]
@@ -225,6 +243,78 @@ var profileImportCmd = &cobra.Command{
 	},
 }
 
+func importProfileCode(paths config.Paths, cfg config.Config, code string) error {
+	fmt.Printf("Fetching profile code %s...\n", code)
+	profileName, mods, zipData, err := thunderstore.FetchProfileCode(code)
+	if err != nil {
+		return err
+	}
+
+	// Filter out BepInExPack
+	var filtered []thunderstore.ProfileMod
+	for _, m := range mods {
+		parts := strings.SplitN(m.Name, "-", 2)
+		if len(parts) == 2 && (parts[1] == "BepInExPack_Valheim" || parts[1] == "BepInEx_pack") {
+			continue
+		}
+		filtered = append(filtered, m)
+	}
+
+	fmt.Printf("Profile \033[36m%s\033[0m has %d mods:\n", profileName, len(filtered))
+	for _, m := range filtered {
+		status := ""
+		if !m.Enabled {
+			status = " (disabled)"
+		}
+		fmt.Printf("  - %s v%s%s\n", m.Name, m.Version, status)
+	}
+	fmt.Println()
+
+	// Create profile
+	if err := profile.Create(paths, profileName); err != nil {
+		return err
+	}
+
+	reg, err := config.LoadRegistry(paths)
+	if err != nil {
+		return err
+	}
+	reg.EnsureProfile(profileName)
+
+	origProfile := cfg.ActiveProfile
+	cfg.ActiveProfile = profileName
+
+	// Install each mod
+	for _, m := range filtered {
+		if err := installer.Install(paths, cfg, &reg, m.Name); err != nil {
+			fmt.Printf("\033[31mWarning: failed to install %s: %v\033[0m\n", m.Name, err)
+			continue
+		}
+		// Toggle to disabled if the profile had it disabled
+		if !m.Enabled {
+			if err := installer.Toggle(paths, cfg, &reg, m.Name); err != nil {
+				fmt.Printf("\033[31mWarning: failed to disable %s: %v\033[0m\n", m.Name, err)
+			}
+		}
+	}
+
+	// Extract config files from the zip
+	extractProfileConfigs(paths, profileName, zipData)
+
+	// Restore original active profile
+	cfg.ActiveProfile = origProfile
+	if err := config.Save(paths, cfg); err != nil {
+		return err
+	}
+	if err := config.SaveRegistry(paths, reg); err != nil {
+		return err
+	}
+
+	fmt.Printf("\n\033[32mProfile '%s' created with %d mods from profile code.\033[0m\n", profileName, len(filtered))
+	fmt.Printf("Run \033[36mmmcli profile switch %s\033[0m to activate it.\n", profileName)
+	return nil
+}
+
 var profileOpenCmd = &cobra.Command{
 	Use:   "open",
 	Short: "Open the active profile folder in Finder",
@@ -248,6 +338,44 @@ func init() {
 	profileCmd.AddCommand(profileDeleteCmd)
 	profileCmd.AddCommand(profileImportCmd)
 	profileCmd.AddCommand(profileOpenCmd)
+}
+
+// extractProfileConfigs extracts config files from a profile code zip into the profile's config dir.
+func extractProfileConfigs(paths config.Paths, profileName string, zipData []byte) {
+	zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+	if err != nil {
+		return
+	}
+
+	configDir := paths.ProfileConfigDir(profileName)
+	for _, f := range zr.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+		name := filepath.ToSlash(f.Name)
+		// Skip the manifest
+		if name == "export.r2x" {
+			continue
+		}
+		// Extract config/ prefixed files into the profile config dir
+		if strings.HasPrefix(name, "config/") {
+			rel := name[len("config/"):]
+			dest := filepath.Join(configDir, rel)
+			os.MkdirAll(filepath.Dir(dest), 0755)
+			rc, err := f.Open()
+			if err != nil {
+				continue
+			}
+			out, err := os.Create(dest)
+			if err != nil {
+				rc.Close()
+				continue
+			}
+			io.Copy(out, rc)
+			out.Close()
+			rc.Close()
+		}
+	}
 }
 
 // loadConfig loads paths and config, ensuring mmcli is initialized.
