@@ -44,10 +44,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 	fmt.Print("Detecting Valheim installation... ")
 	valheimPath, err := config.DetectValheimPath()
 	if err != nil {
-		fmt.Println("\033[31mfailed\033[0m")
-		return err
+		fmt.Println("\033[33mnot found at default location\033[0m")
+		fmt.Print("Enter your Valheim install path: ")
+		reader := bufio.NewReader(os.Stdin)
+		input, _ := reader.ReadString('\n')
+		valheimPath = strings.TrimSpace(input)
+		if _, err := os.Stat(valheimPath); err != nil {
+			return fmt.Errorf("path does not exist: %s", valheimPath)
+		}
+	} else {
+		fmt.Printf("\033[32mfound\033[0m\n  %s\n", valheimPath)
 	}
-	fmt.Printf("\033[32mfound\033[0m\n  %s\n", valheimPath)
 	paths.ValheimDir = valheimPath
 
 	// Create directory structure
