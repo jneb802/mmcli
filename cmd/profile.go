@@ -24,11 +24,10 @@ var profileCreateCmd = &cobra.Command{
 	Short: "Create a new profile",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		paths, cfg, err := loadConfig()
+		paths, _, err := loadConfig()
 		if err != nil {
 			return err
 		}
-		_ = cfg
 
 		name := args[0]
 		if err := profile.Create(paths, name); err != nil {

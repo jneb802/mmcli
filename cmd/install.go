@@ -10,7 +10,7 @@ import (
 var installCmd = &cobra.Command{
 	Use:   "install <mod>",
 	Short: "Install a mod and its dependencies into the active profile",
-	Long:  "Install a mod by name (e.g., 'EpicLoot' or 'RandyKnapp-EpicLoot')",
+	Long:  "Install a mod by Owner-Name (e.g., 'RandyKnapp-EpicLoot') or Thunderstore URL",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths, cfg, err := loadConfig()

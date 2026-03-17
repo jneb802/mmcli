@@ -124,7 +124,7 @@ func ResolveDependencies(pkg *Package, installed map[string]bool) ([]DepRef, err
 }
 
 // FindPackageByQuery searches for a package by query string.
-// Accepts "Name", "Owner-Name", "Owner-Name-Version", or a Thunderstore URL.
+// Accepts "Owner-Name", "Owner-Name-Version", or a Thunderstore URL.
 func FindPackageByQuery(query string) (*Package, error) {
 	// Try parsing as a Thunderstore URL (e.g., https://thunderstore.io/c/valheim/p/Owner/Name/)
 	if strings.HasPrefix(query, "https://thunderstore.io/") || strings.HasPrefix(query, "http://thunderstore.io/") {
