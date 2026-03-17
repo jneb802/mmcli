@@ -421,13 +421,6 @@ func (m model) View() string {
 		name := mod.FullName()
 		pad := strings.Repeat(" ", maxName-len(name)+2)
 
-		modType := "\033[2mdependency\033[0m"
-		if mod.IsLocal {
-			modType = "\033[35mlocal\033[0m"
-		} else if !mod.IsDependency {
-			modType = "installed"
-		}
-
 		version := mod.Version
 		if version == "" {
 			version = "-"
@@ -435,13 +428,9 @@ func (m model) View() string {
 
 		// Show update indicator
 		if latest, ok := m.updates[mod.FullName()]; ok {
-			version = fmt.Sprintf("\033[33m%s → %s\033[0m", mod.Version, latest)
-			// Pad based on raw version length (without ANSI codes)
-			rawLen := len(mod.Version) + 3 + len(latest)
-			versionPad := strings.Repeat(" ", max(0, 10-rawLen))
-			fmt.Fprintf(&b, "  %s[%s] %s%s%s%s  %s\n", cursor, check, name, pad, version, versionPad, modType)
+			fmt.Fprintf(&b, "  %s[%s] %s%s\033[33m%s → %s\033[0m\n", cursor, check, name, pad, mod.Version, latest)
 		} else {
-			fmt.Fprintf(&b, "  %s[%s] %s%s%-10s  %s\n", cursor, check, name, pad, version, modType)
+			fmt.Fprintf(&b, "  %s[%s] %s%s%s\n", cursor, check, name, pad, version)
 		}
 	}
 
