@@ -427,6 +427,37 @@ func extractZipFile(f *zip.File, destPath string) error {
 	return err
 }
 
+// removeModFilesKeepConfig removes a mod's plugin/patcher/monomod/core files but preserves configs.
+func removeModFilesKeepConfig(paths config.Paths, cfg config.Config, mod config.ModEntry) {
+	modSubdir := fmt.Sprintf("%s-%s", mod.Owner, mod.Name)
+	profile := cfg.ActiveProfile
+
+	for _, dir := range []string{
+		paths.ProfilePluginsDir(profile),
+		paths.ProfilePatchersDir(profile),
+		paths.ProfileMonomodDir(profile),
+		paths.BepInExCoreDir(),
+	} {
+		os.RemoveAll(filepath.Join(dir, modSubdir))
+	}
+}
+
+// Update removes a mod's non-config files, removes its registry entry, and reinstalls the latest version.
+// Config files are preserved so user customizations are not lost.
+func Update(paths config.Paths, cfg config.Config, reg *config.Registry, modName string) error {
+	profile := cfg.ActiveProfile
+	mod, exists := findMod(reg, profile, modName)
+	if !exists {
+		return fmt.Errorf("mod '%s' not found", modName)
+	}
+
+	fullName := mod.FullName()
+	removeModFilesKeepConfig(paths, cfg, mod)
+	reg.RemoveMod(profile, fullName)
+
+	return Install(paths, cfg, reg, fullName)
+}
+
 func removeModFiles(paths config.Paths, cfg config.Config, mod config.ModEntry) {
 	modSubdir := fmt.Sprintf("%s-%s", mod.Owner, mod.Name)
 	profile := cfg.ActiveProfile
