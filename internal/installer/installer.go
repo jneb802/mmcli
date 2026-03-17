@@ -16,7 +16,7 @@ import (
 // Install resolves a mod query, downloads + installs it and its dependencies.
 func Install(paths config.Paths, cfg config.Config, reg *config.Registry, query string) error {
 	fmt.Printf("Resolving package '%s'...\n", query)
-	pkg, err := thunderstore.FindPackageByQuery(query, paths.CacheDir)
+	pkg, err := thunderstore.FindPackageByQuery(query)
 	if err != nil {
 		return err
 	}

@@ -164,7 +164,7 @@ var profileImportCmd = &cobra.Command{
 
 		// Resolve the modpack package
 		fmt.Printf("Resolving modpack '%s'...\n", modpackQuery)
-		pkg, err := thunderstore.FindPackageByQuery(modpackQuery, paths.CacheDir)
+		pkg, err := thunderstore.FindPackageByQuery(modpackQuery)
 		if err != nil {
 			return err
 		}

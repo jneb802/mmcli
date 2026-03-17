@@ -89,10 +89,6 @@ func (p Paths) RunBepInExScript() string {
 	return filepath.Join(p.ValheimDir, "run_bepinex.sh")
 }
 
-func (p Paths) CachedPackagesFile() string {
-	return filepath.Join(p.CacheDir, "packages.json")
-}
-
 func DetectValheimPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
