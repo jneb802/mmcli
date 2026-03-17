@@ -139,7 +139,7 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println("\n\033[32mmmcli initialized successfully!\033[0m")
-	fmt.Println("Use \033[36mmmcli install <mod>\033[0m to install mods.")
-	fmt.Println("Use \033[36mmmcli start\033[0m to launch Valheim with BepInEx.")
+	fmt.Println("Use \033[36mmmcli tui\033[0m to get started.")
+	fmt.Println("Use \033[36mmmcli start\033[0m to launch the game after you've installed mods.")
 	return nil
 }
