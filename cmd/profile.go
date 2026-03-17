@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
@@ -225,6 +226,21 @@ var profileImportCmd = &cobra.Command{
 	},
 }
 
+var profileOpenCmd = &cobra.Command{
+	Use:   "open",
+	Short: "Open the active profile folder in Finder",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		paths, cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+
+		profileDir := paths.ProfileDir(cfg.ActiveProfile)
+		fmt.Printf("Opening profile folder for %q: %s\n", cfg.ActiveProfile, profileDir)
+		return exec.Command("open", profileDir).Run()
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(profileCmd)
 	profileCmd.AddCommand(profileCreateCmd)
@@ -232,6 +248,7 @@ func init() {
 	profileCmd.AddCommand(profileSwitchCmd)
 	profileCmd.AddCommand(profileDeleteCmd)
 	profileCmd.AddCommand(profileImportCmd)
+	profileCmd.AddCommand(profileOpenCmd)
 }
 
 // loadConfig loads paths and config, ensuring mmcli is initialized.
