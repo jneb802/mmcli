@@ -142,6 +142,50 @@ func Remove(paths config.Paths, cfg config.Config, reg *config.Registry, modName
 	return nil
 }
 
+// Enable re-enables a disabled mod. Returns an error if the mod is already enabled.
+func Enable(paths config.Paths, cfg config.Config, reg *config.Registry, modName string) error {
+	profile := cfg.ActiveProfile
+	mod, exists := findMod(reg, profile, modName)
+	if !exists {
+		return fmt.Errorf("mod '%s' not found", modName)
+	}
+	if !mod.Disabled {
+		return fmt.Errorf("mod '%s' is already enabled", modName)
+	}
+
+	modSubdir := fmt.Sprintf("%s-%s", mod.Owner, mod.Name)
+	for _, dir := range modDirs(paths, profile, modSubdir) {
+		if err := renameDLLs(dir, ".dll.old", ".dll"); err != nil {
+			return err
+		}
+	}
+	mod.Disabled = false
+	reg.SetMod(profile, mod)
+	return nil
+}
+
+// Disable disables an enabled mod. Returns an error if the mod is already disabled.
+func Disable(paths config.Paths, cfg config.Config, reg *config.Registry, modName string) error {
+	profile := cfg.ActiveProfile
+	mod, exists := findMod(reg, profile, modName)
+	if !exists {
+		return fmt.Errorf("mod '%s' not found", modName)
+	}
+	if mod.Disabled {
+		return fmt.Errorf("mod '%s' is already disabled", modName)
+	}
+
+	modSubdir := fmt.Sprintf("%s-%s", mod.Owner, mod.Name)
+	for _, dir := range modDirs(paths, profile, modSubdir) {
+		if err := renameDLLs(dir, ".dll", ".dll.old"); err != nil {
+			return err
+		}
+	}
+	mod.Disabled = true
+	reg.SetMod(profile, mod)
+	return nil
+}
+
 // Toggle flips a mod between enabled and disabled without printing output.
 func Toggle(paths config.Paths, cfg config.Config, reg *config.Registry, modName string) error {
 	profile := cfg.ActiveProfile
