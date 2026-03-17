@@ -14,14 +14,6 @@ import (
 	"mmcli/internal/installer"
 )
 
-const logo = "\033[33m" +
-	"    __    _____    __    __  ______________  ___\n" +
-	"   | |  / /   |  / /   / / / / ____/  _/  |/  /\n" +
-	"   | | / / /| | / /   / /_/ / __/  / // /|_/ /\n" +
-	"   | |/ / ___ |/ /___/ __  / /____/ // /  / /\n" +
-	"   |___/_/  |_/_____/_/ /_/_____/___/_/  /_/\n" +
-	"\033[0m"
-
 type model struct {
 	mods          []config.ModEntry
 	cursor        int
@@ -148,8 +140,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	var b strings.Builder
 
-	b.WriteString(logo)
-	fmt.Fprintf(&b, "  Mods in profile '\033[36m%s\033[0m':\n\n", m.cfg.ActiveProfile)
+	fmt.Fprintf(&b, "\n  Mods in profile '\033[36m%s\033[0m':\n\n", m.cfg.ActiveProfile)
 
 	if len(m.mods) == 0 {
 		b.WriteString("  No mods installed.\n")
