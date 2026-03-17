@@ -8,12 +8,21 @@ A command-line Valheim mod manager for macOS. Installs mods from [Thunderstore](
 
 ## Install
 
-Download the latest binary for your Mac:
+### Homebrew (recommended)
 
-- [Apple Silicon (M1/M2/M3)](https://github.com/jneb802/mmcli/releases/download/v0.1.0/mmcli-darwin-arm64)
-- [Intel](https://github.com/jneb802/mmcli/releases/download/v0.1.0/mmcli-darwin-amd64)
+```
+brew install jneb802/tap/mmcli
+```
 
-Then make it executable and move it to your PATH:
+### Shell script
+
+```
+curl -fsSL https://raw.githubusercontent.com/jneb802/mmcli/main/install.sh | bash
+```
+
+### Manual download
+
+Download the latest binary from [Releases](https://github.com/jneb802/mmcli/releases), then:
 
 ```
 chmod +x mmcli-darwin-*
