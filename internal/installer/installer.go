@@ -14,7 +14,12 @@ import (
 )
 
 // Install resolves a mod query, downloads + installs it and its dependencies.
-func Install(paths config.Paths, cfg config.Config, reg *config.Registry, query string) error {
+// target is "client", "server", or "both" (empty string defaults to "both").
+// Dependencies always get target "both".
+func Install(paths config.Paths, cfg config.Config, reg *config.Registry, query string, target string) error {
+	if target == "" {
+		target = "both"
+	}
 	fmt.Printf("Resolving package '%s'...\n", query)
 	pkg, err := thunderstore.FindPackageByQuery(query)
 	if err != nil {
@@ -98,9 +103,22 @@ func Install(paths config.Paths, cfg config.Config, reg *config.Registry, query 
 		IsDependency: false,
 		Files:        files,
 		Dependencies: depNames,
+		Target:       target,
 	})
 
-	fmt.Printf("Successfully installed %s v%s\n", fullName, version)
+	// Auto-disable server-only mods locally (they'd error in the local game)
+	if target == "server" {
+		modSubdir := fmt.Sprintf("%s-%s", pkg.Owner, pkg.Name)
+		for _, dir := range modDirs(paths, profile, modSubdir) {
+			renameDLLs(dir, ".dll", ".dll.old")
+		}
+		mod, _ := reg.GetMod(profile, fullName)
+		mod.Disabled = true
+		reg.SetMod(profile, mod)
+		fmt.Printf("Successfully installed %s v%s (target: server, disabled locally)\n", fullName, version)
+	} else {
+		fmt.Printf("Successfully installed %s v%s\n", fullName, version)
+	}
 	return nil
 }
 
@@ -452,10 +470,11 @@ func Update(paths config.Paths, cfg config.Config, reg *config.Registry, modName
 	}
 
 	fullName := mod.FullName()
+	existingTarget := mod.ResolvedTarget()
 	removeModFilesKeepConfig(paths, cfg, mod)
 	reg.RemoveMod(profile, fullName)
 
-	return Install(paths, cfg, reg, fullName)
+	return Install(paths, cfg, reg, fullName, existingTarget)
 }
 
 func removeModFiles(paths config.Paths, cfg config.Config, mod config.ModEntry) {

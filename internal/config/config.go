@@ -7,10 +7,18 @@ import (
 	"path/filepath"
 )
 
+type ServerEntry struct {
+	Host   string `json:"host"`
+	Port   int    `json:"port"`
+	Secret string `json:"secret"`
+}
+
 type Config struct {
-	ActiveProfile string `json:"active_profile"`
-	ValheimPath   string `json:"valheim_path"`
-	Initialized   bool   `json:"initialized"`
+	ActiveProfile string                  `json:"active_profile"`
+	ValheimPath   string                  `json:"valheim_path"`
+	Initialized   bool                    `json:"initialized"`
+	ActiveServer  string                  `json:"active_server,omitempty"`
+	Servers       map[string]ServerEntry  `json:"servers,omitempty"`
 }
 
 type Paths struct {

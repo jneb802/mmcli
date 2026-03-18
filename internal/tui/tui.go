@@ -477,7 +477,7 @@ func installMod(paths config.Paths, cfg config.Config, reg *config.Registry, que
 			defer devnull.Close()
 			defer func() { os.Stdout = old }()
 		}
-		return installDoneMsg{err: installer.Install(paths, cfg, reg, query)}
+		return installDoneMsg{err: installer.Install(paths, cfg, reg, query, "both")}
 	}
 }
 

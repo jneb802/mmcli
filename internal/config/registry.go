@@ -17,6 +17,14 @@ type ModEntry struct {
 	Disabled     bool     `json:"disabled,omitempty"`
 	Files        []string `json:"files"`
 	Dependencies []string `json:"dependencies"`
+	Target       string   `json:"target,omitempty"` // "client", "server", "both" (default/"" = both)
+}
+
+func (m ModEntry) ResolvedTarget() string {
+	if m.Target == "" {
+		return "both"
+	}
+	return m.Target
 }
 
 func (m ModEntry) FullName() string {

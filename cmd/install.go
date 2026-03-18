@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"mmcli/internal/config"
@@ -13,6 +15,20 @@ var installCmd = &cobra.Command{
 	Long:  "Install a mod by Owner-Name (e.g., 'RandyKnapp-EpicLoot') or Thunderstore URL",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		clientFlag, _ := cmd.Flags().GetBool("client")
+		serverFlag, _ := cmd.Flags().GetBool("server")
+
+		if clientFlag && serverFlag {
+			return fmt.Errorf("cannot specify both --client and --server")
+		}
+
+		target := "both"
+		if clientFlag {
+			target = "client"
+		} else if serverFlag {
+			target = "server"
+		}
+
 		paths, cfg, err := loadConfig()
 		if err != nil {
 			return err
@@ -23,7 +39,7 @@ var installCmd = &cobra.Command{
 			return err
 		}
 
-		if err := installer.Install(paths, cfg, &reg, args[0]); err != nil {
+		if err := installer.Install(paths, cfg, &reg, args[0], target); err != nil {
 			return err
 		}
 
@@ -33,4 +49,6 @@ var installCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(installCmd)
+	installCmd.Flags().Bool("client", false, "mark as client-only (won't be pushed to server)")
+	installCmd.Flags().Bool("server", false, "mark as server-only (auto-disabled locally)")
 }

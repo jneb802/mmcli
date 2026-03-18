@@ -223,7 +223,7 @@ Examples:
 
 		// Install each mod
 		for _, mod := range mods {
-			if err := installer.Install(paths, cfg, &reg, mod); err != nil {
+			if err := installer.Install(paths, cfg, &reg, mod, "both"); err != nil {
 				fmt.Printf("\033[31mWarning: failed to install %s: %v\033[0m\n", mod, err)
 			}
 		}
@@ -286,7 +286,7 @@ func importProfileCode(paths config.Paths, cfg config.Config, code string) error
 
 	// Install each mod
 	for _, m := range filtered {
-		if err := installer.Install(paths, cfg, &reg, m.Name); err != nil {
+		if err := installer.Install(paths, cfg, &reg, m.Name, "both"); err != nil {
 			fmt.Printf("\033[31mWarning: failed to install %s: %v\033[0m\n", m.Name, err)
 			continue
 		}
