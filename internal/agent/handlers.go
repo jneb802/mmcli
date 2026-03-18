@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -115,18 +116,23 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) HandleModsPush(w http.ResponseWriter, r *http.Request) {
-	// Parse multipart form (max 500MB)
-	if err := r.ParseMultipartForm(500 << 20); err != nil {
+	log.Println("Push request received, parsing multipart...")
+
+	// Parse multipart form (max 1GB in memory, excess spills to disk)
+	if err := r.ParseMultipartForm(1 << 30); err != nil {
+		log.Printf("Push: failed to parse multipart: %v", err)
 		writeError(w, http.StatusBadRequest, "failed to parse upload: "+err.Error())
 		return
 	}
 
-	file, _, err := r.FormFile("archive")
+	file, fh, err := r.FormFile("archive")
 	if err != nil {
+		log.Printf("Push: missing archive field: %v", err)
 		writeError(w, http.StatusBadRequest, "missing 'archive' field: "+err.Error())
 		return
 	}
 	defer file.Close()
+	log.Printf("Push: received archive (%d bytes)", fh.Size)
 
 	bepDir := h.cfg.BepInExDir()
 	if _, err := os.Stat(bepDir); os.IsNotExist(err) {
@@ -137,6 +143,7 @@ func (h *Handlers) HandleModsPush(w http.ResponseWriter, r *http.Request) {
 	// Extract tar.gz
 	gz, err := gzip.NewReader(file)
 	if err != nil {
+		log.Printf("Push: invalid gzip: %v", err)
 		writeError(w, http.StatusBadRequest, "invalid gzip: "+err.Error())
 		return
 	}
@@ -150,6 +157,7 @@ func (h *Handlers) HandleModsPush(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		if err != nil {
+			log.Printf("Push: tar read error: %v", err)
 			writeError(w, http.StatusBadRequest, "invalid tar: "+err.Error())
 			return
 		}
@@ -169,6 +177,7 @@ func (h *Handlers) HandleModsPush(w http.ResponseWriter, r *http.Request) {
 			os.MkdirAll(filepath.Dir(target), 0755)
 			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, os.FileMode(hdr.Mode))
 			if err != nil {
+				log.Printf("Push: failed to create file %s: %v", target, err)
 				continue
 			}
 			io.Copy(f, tr)
@@ -177,6 +186,7 @@ func (h *Handlers) HandleModsPush(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	log.Printf("Push: extracted %d files", count)
 	writeJSON(w, http.StatusOK, agentapi.ActionResponse{
 		OK:      true,
 		Message: fmt.Sprintf("pushed %d files", count),

@@ -67,33 +67,34 @@ func (c *AgentClient) ListMods() (*agentapi.ModListResponse, error) {
 }
 
 func (c *AgentClient) PushMods(archive io.Reader, clean bool) (*agentapi.ActionResponse, error) {
-	var buf bytes.Buffer
-	w := multipart.NewWriter(&buf)
+	// Stream the multipart body via io.Pipe to avoid buffering large archives in memory
+	pr, pw := io.Pipe()
+	w := multipart.NewWriter(pw)
 
-	if clean {
-		w.WriteField("clean", "true")
-	} else {
-		w.WriteField("clean", "false")
-	}
+	go func() {
+		defer pw.Close()
+		w.WriteField("clean", fmt.Sprintf("%v", clean))
+		part, err := w.CreateFormFile("archive", "mods.tar.gz")
+		if err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		if _, err := io.Copy(part, archive); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		w.Close()
+	}()
 
-	part, err := w.CreateFormFile("archive", "mods.tar.gz")
-	if err != nil {
-		return nil, fmt.Errorf("failed to create form file: %w", err)
-	}
-	if _, err := io.Copy(part, archive); err != nil {
-		return nil, fmt.Errorf("failed to write archive: %w", err)
-	}
-	w.Close()
-
-	req, err := http.NewRequest("POST", c.BaseURL+agentapi.PathMods, &buf)
+	req, err := http.NewRequest("POST", c.BaseURL+agentapi.PathMods, pr)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set(agentapi.HeaderAPIKey, c.Secret)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 
-	// Use a longer timeout for uploads
-	httpClient := &http.Client{Timeout: 5 * time.Minute}
+	// No timeout — large uploads can take a long time
+	httpClient := &http.Client{}
 	httpResp, err := httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("push failed: %w", err)
