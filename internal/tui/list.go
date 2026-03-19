@@ -19,9 +19,45 @@ type modListItem struct {
 	ServerVersion string // push diff: previous version on server (for "changed" items)
 }
 
+// anticheatLabel returns the short display character for an anticheat value.
+func anticheatLabel(value, system string) string {
+	switch value {
+	case "whitelist":
+		if system == "enforcer" {
+			return "\033[32mR\033[0m"
+		}
+		return "\033[32mW\033[0m"
+	case "greylist":
+		if system == "enforcer" {
+			return "\033[33mO\033[0m"
+		}
+		return "\033[33mG\033[0m"
+	case "adminonly":
+		return "\033[35mA\033[0m"
+	default:
+		return "-"
+	}
+}
+
+// nextAnticheatValue cycles to the next anticheat classification for the given system.
+func nextAnticheatValue(current, system string) string {
+	var values []string
+	if system == "azu" {
+		values = []string{"whitelist", "greylist", ""}
+	} else {
+		values = []string{"whitelist", "greylist", "adminonly", ""}
+	}
+	for i, v := range values {
+		if v == current {
+			return values[(i+1)%len(values)]
+		}
+	}
+	return values[0]
+}
+
 // renderModList renders a list of mods with cursor, check/x, name, version, and update indicators.
 // If showAnticheat is true, an anticheat column is shown after version.
-func renderModList(b *strings.Builder, items []modListItem, cursor int, showAnticheat bool) {
+func renderModList(b *strings.Builder, items []modListItem, cursor int, showAnticheat bool, anticheatSystem string) {
 	if len(items) == 0 {
 		b.WriteString("  No mods.\n")
 		return
@@ -62,13 +98,7 @@ func renderModList(b *strings.Builder, items []modListItem, cursor int, showAnti
 
 		if showAnticheat {
 			verPad := strings.Repeat(" ", maxVer-len(version)+2)
-			ac := "-"
-			switch item.Anticheat {
-			case "whitelist":
-				ac = "\033[32mW\033[0m"
-			case "greylist":
-				ac = "\033[33mG\033[0m"
-			}
+			ac := anticheatLabel(item.Anticheat, anticheatSystem)
 			fmt.Fprintf(b, "  %s[%s] %s%s%s%s%s\n", cur, check, item.Name, pad, version, verPad, ac)
 		} else if item.Update != "" {
 			fmt.Fprintf(b, "  %s[%s] %s%s\033[33m%s → %s\033[0m\n", cur, check, item.Name, pad, version, item.Update)

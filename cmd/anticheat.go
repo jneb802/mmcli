@@ -9,7 +9,7 @@ import (
 )
 
 var anticheatCmd = &cobra.Command{
-	Use:   "anticheat <mod> <whitelist|greylist|none>",
+	Use:   "anticheat <mod> <whitelist|greylist|adminonly|none>",
 	Short: "Set anticheat classification for a mod",
 	Long: `Classify a mod for server-side anticheat enforcement.
 
@@ -17,17 +17,19 @@ Supports both AzuAntiCheat and ValheimEnforcer. The classification
 is the same for both systems — mmcli detects which anticheat mods
 are installed and configures each one automatically on push.
 
-  whitelist - players MUST have this mod (required)
-  greylist  - players MAY have this mod (optional)
-  none      - remove anticheat classification
+  whitelist  - players MUST have this mod (required)
+  greylist   - players MAY have this mod (optional)
+  adminonly  - only admins need this mod (ValheimEnforcer only)
+  none       - remove anticheat classification
 
 AzuAntiCheat: classified mod DLLs are copied into the appropriate
 AzuAntiCheat_Whitelist or AzuAntiCheat_Greylist config folder.
+"adminonly" mods are skipped for AzuAntiCheat.
 
 ValheimEnforcer: classified mods are written to the Mods.yaml config
-with the correct category (requiredMods, optionalMods, serverOnlyMods).
-Mods with target "server" are placed in serverOnlyMods regardless of
-their anticheat classification.
+with the correct category (requiredMods, optionalMods, adminOnlyMods,
+serverOnlyMods). Mods with target "server" are placed in serverOnlyMods
+regardless of their anticheat classification.
 
 Dependencies are automatically classified to match.`,
 	Args: cobra.ExactArgs(2),
@@ -35,8 +37,8 @@ Dependencies are automatically classified to match.`,
 		modName := args[0]
 		classification := args[1]
 
-		if classification != "whitelist" && classification != "greylist" && classification != "none" {
-			return fmt.Errorf("classification must be 'whitelist', 'greylist', or 'none'")
+		if classification != "whitelist" && classification != "greylist" && classification != "adminonly" && classification != "none" {
+			return fmt.Errorf("classification must be 'whitelist', 'greylist', 'adminonly', or 'none'")
 		}
 
 		paths, cfg, err := loadConfig()

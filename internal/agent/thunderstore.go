@@ -236,7 +236,7 @@ func setupAzuAntiCheat(bepDir string, mods []agentapi.ManifestMod) error {
 
 	var classified []classifiedMod
 	for _, mod := range mods {
-		if mod.Anticheat == "" {
+		if mod.Anticheat == "" || mod.Anticheat == "adminonly" {
 			continue
 		}
 		folder := filepath.Join(bepDir, "config", "AzuAntiCheat_Whitelist")

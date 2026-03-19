@@ -28,9 +28,10 @@ const (
 	contentLogs
 	contentStatus
 	contentWorld
+	contentSettings
 )
 
-var localTabs = []contentTab{contentMods, contentLogs, contentStatus}
+var localTabs = []contentTab{contentMods, contentLogs, contentStatus, contentSettings}
 var serverTabs = []contentTab{contentMods, contentLogs, contentWorld, contentStatus}
 
 func contentTabName(t contentTab) string {
@@ -43,6 +44,8 @@ func contentTabName(t contentTab) string {
 		return "Status"
 	case contentWorld:
 		return "World"
+	case contentSettings:
+		return "Settings"
 	default:
 		return "?"
 	}
@@ -58,6 +61,7 @@ type model struct {
 	local           localModel
 	server          serverModel
 	width           int
+	anticheatSystem string // resolved: "azu" or "enforcer"
 }
 
 func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model {
@@ -71,6 +75,7 @@ func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model
 		},
 	}
 	m.refreshMods()
+	m.anticheatSystem = resolveAnticheatSystem(cfg, m.local.mods)
 
 	// Set up server client if configured
 	if cfg.ActiveServer != "" {
@@ -85,6 +90,23 @@ func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model
 	}
 
 	return m
+}
+
+func resolveAnticheatSystem(cfg config.Config, mods []config.ModEntry) string {
+	pref := cfg.AnticheatSystem
+	if pref == "azu" || pref == "enforcer" {
+		return pref
+	}
+	for _, mod := range mods {
+		lower := strings.ToLower(mod.FullName())
+		if strings.Contains(lower, "azuanticheat") {
+			return "azu"
+		}
+		if strings.Contains(lower, "valheimenforcer") {
+			return "enforcer"
+		}
+	}
+	return "enforcer" // default — superset of azu
 }
 
 func (m model) Init() tea.Cmd {
@@ -393,6 +415,8 @@ func (m model) View() string {
 			b.WriteString(m.viewLocalLogs())
 		case contentStatus:
 			b.WriteString(m.viewLocalStatus())
+		case contentSettings:
+			b.WriteString(m.viewLocalSettings())
 		}
 	} else {
 		b.WriteString(renderContentTabBar(serverTabs, m.activeServerTab))

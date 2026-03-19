@@ -81,8 +81,9 @@ type localModel struct {
 	logCh   <-chan []string
 	logStop chan struct{}
 
-	updates         map[string]string
-	checkingUpdates bool
+	updates          map[string]string
+	checkingUpdates  bool
+	confirmUpdateAll bool
 
 	confirmStart      bool
 	preflightWarnings []string
@@ -163,6 +164,7 @@ func (m model) handleProfilePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						config.Save(m.paths, m.cfg)
 						m.local.cursor = 0
 						m.refreshMods()
+						m.anticheatSystem = resolveAnticheatSystem(m.cfg, m.local.mods)
 						m.local.updates = make(map[string]string)
 						m.local.err = nil
 						m.local.pickProfile = false
@@ -206,6 +208,7 @@ func (m model) handleProfilePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				config.Save(m.paths, m.cfg)
 				m.local.cursor = 0
 				m.refreshMods()
+				m.anticheatSystem = resolveAnticheatSystem(m.cfg, m.local.mods)
 				m.local.updates = make(map[string]string)
 				m.local.checkingUpdates = true
 				m.local.err = nil
@@ -290,22 +293,49 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleLocalLogsKeys(msg)
 	case contentStatus:
 		// No interactive keys on status tab
+	case contentSettings:
+		return m.handleLocalSettingsKeys(msg)
 	}
 	return m, nil
 }
 
 func (m model) handleLocalModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Update-all confirmation modal
+	if m.local.confirmUpdateAll {
+		switch msg.String() {
+		case "y":
+			m.local.confirmUpdateAll = false
+			m.local.installBusy = true
+			m.local.err = nil
+			return m, updateAllMods(m.paths, m.cfg, m.reg, m.local.updates)
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			m.local.confirmUpdateAll = false
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "up", "k":
 		if m.local.cursor > 0 {
 			m.local.cursor--
+		} else if m.local.cursor == 0 && len(m.local.updates) > 0 {
+			m.local.cursor = -1
 		}
 	case "down", "j":
-		if m.local.cursor < len(m.local.mods)-1 {
+		if m.local.cursor == -1 {
+			m.local.cursor = 0
+		} else if m.local.cursor < len(m.local.mods)-1 {
 			m.local.cursor++
 		}
+	case "enter":
+		if m.local.cursor == -1 && len(m.local.updates) > 0 {
+			m.local.confirmUpdateAll = true
+			return m, nil
+		}
 	case " ":
-		if len(m.local.mods) > 0 {
+		if len(m.local.mods) > 0 && m.local.cursor >= 0 {
 			mod := m.local.mods[m.local.cursor]
 			if mod.IsLocal {
 				pluginsDir := m.paths.ProfilePluginsDir(m.cfg.ActiveProfile)
@@ -324,12 +354,12 @@ func (m model) handleLocalModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "x":
-		if len(m.local.mods) > 0 {
+		if len(m.local.mods) > 0 && m.local.cursor >= 0 {
 			m.local.confirmRemove = true
 			m.local.err = nil
 		}
 	case "c":
-		if len(m.local.mods) > 0 {
+		if len(m.local.mods) > 0 && m.local.cursor >= 0 {
 			mod := m.local.mods[m.local.cursor]
 			path := findConfigFile(m.paths, m.cfg.ActiveProfile, mod)
 			return m, openFile(path)
@@ -355,7 +385,7 @@ func (m model) handleLocalModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.local.installInput = ""
 		m.local.err = nil
 	case "u":
-		if len(m.local.mods) > 0 {
+		if len(m.local.mods) > 0 && m.local.cursor >= 0 {
 			mod := m.local.mods[m.local.cursor]
 			if _, ok := m.local.updates[mod.FullName()]; ok {
 				m.local.installBusy = true
@@ -481,11 +511,32 @@ func (m model) viewLocal() string {
 		return b.String()
 	}
 
+	// Update-all confirmation modal
+	if m.local.confirmUpdateAll {
+		fmt.Fprintf(&b, "\n  \033[1mUpdate %d mod(s)?\033[0m\n\n", len(m.local.updates))
+		for name, latest := range m.local.updates {
+			cur := ""
+			for _, mod := range m.local.mods {
+				if mod.FullName() == name {
+					cur = mod.Version
+					break
+				}
+			}
+			fmt.Fprintf(&b, "    \033[33m%s\033[0m  %s → %s\n", name, cur, latest)
+		}
+		b.WriteString("\n  \033[33my update all • any key cancel\033[0m\n\n")
+		return b.String()
+	}
+
 	updateCount := len(m.local.updates)
 	if m.local.checkingUpdates {
 		b.WriteString("\n  \033[2mchecking for updates...\033[0m\n")
 	} else if updateCount > 0 {
-		fmt.Fprintf(&b, "\n  \033[33m%d update(s) available\033[0m\n", updateCount)
+		if m.local.cursor == -1 {
+			fmt.Fprintf(&b, "\n  \033[36m>\033[0m \033[33m%d update(s) available\033[0m    \033[2menter to update all\033[0m\n", updateCount)
+		} else {
+			fmt.Fprintf(&b, "\n    \033[33m%d update(s) available\033[0m\n", updateCount)
+		}
 	}
 	b.WriteString("\n")
 
@@ -499,7 +550,7 @@ func (m model) viewLocal() string {
 			Update:   m.local.updates[mod.FullName()],
 		}
 	}
-	renderModList(&b, items, m.local.cursor, false)
+	renderModList(&b, items, m.local.cursor, false, m.anticheatSystem)
 
 	// Status bar
 	b.WriteString("\n")
@@ -577,6 +628,61 @@ func (m model) viewLocalStatus() string {
 	renderHotkeyBar(&b, hotkeys, m.width)
 
 	return b.String()
+}
+
+func (m model) viewLocalSettings() string {
+	var b strings.Builder
+	b.WriteString("\n")
+
+	// Anticheat system (editable)
+	pref := m.cfg.AnticheatSystem
+	if pref == "" {
+		pref = "auto"
+	}
+	if pref == "auto" {
+		fmt.Fprintf(&b, "  Anticheat:      \033[36m%s\033[0m \033[2m(resolved: %s)\033[0m\n", pref, m.anticheatSystem)
+	} else {
+		fmt.Fprintf(&b, "  Anticheat:      \033[36m%s\033[0m\n", pref)
+	}
+
+	b.WriteString("\n")
+
+	// Read-only info
+	fmt.Fprintf(&b, "  Profile:        %s\n", m.cfg.ActiveProfile)
+	if m.cfg.ActiveServer != "" {
+		fmt.Fprintf(&b, "  Server:         %s\n", m.cfg.ActiveServer)
+	} else {
+		fmt.Fprintf(&b, "  Server:         \033[2m–\033[0m\n")
+	}
+	fmt.Fprintf(&b, "  Valheim Path:   %s\n", m.cfg.ValheimPath)
+	fmt.Fprintf(&b, "  mmcli:          \033[36m%s\033[0m\n", Version)
+
+	b.WriteString("\n")
+	hotkeys := []string{"a cycle anticheat", "tab next"}
+	if m.cfg.ActiveServer != "" {
+		hotkeys = append(hotkeys, "` mode")
+	}
+	hotkeys = append(hotkeys, "q quit")
+	renderHotkeyBar(&b, hotkeys, m.width)
+
+	return b.String()
+}
+
+func (m model) handleLocalSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "a":
+		switch m.cfg.AnticheatSystem {
+		case "", "auto":
+			m.cfg.AnticheatSystem = "azu"
+		case "azu":
+			m.cfg.AnticheatSystem = "enforcer"
+		case "enforcer":
+			m.cfg.AnticheatSystem = "auto"
+		}
+		config.Save(m.paths, m.cfg)
+		m.anticheatSystem = resolveAnticheatSystem(m.cfg, m.local.mods)
+	}
+	return m, nil
 }
 
 // --- Async commands ---
@@ -707,6 +813,23 @@ func localTick() tea.Cmd {
 	return tea.Tick(5*time.Second, func(time.Time) tea.Msg {
 		return localTickMsg{}
 	})
+}
+
+func updateAllMods(paths config.Paths, cfg config.Config, reg *config.Registry, updates map[string]string) tea.Cmd {
+	return func() tea.Msg {
+		old := os.Stdout
+		if devnull, err := os.Open(os.DevNull); err == nil {
+			os.Stdout = devnull
+			defer devnull.Close()
+			defer func() { os.Stdout = old }()
+		}
+		for name := range updates {
+			if err := installer.Update(paths, cfg, reg, name); err != nil {
+				return installDoneMsg{err: fmt.Errorf("failed to update %s: %w", name, err)}
+			}
+		}
+		return installDoneMsg{}
+	}
 }
 
 func updateMod(paths config.Paths, cfg config.Config, reg *config.Registry, fullName string) tea.Cmd {
