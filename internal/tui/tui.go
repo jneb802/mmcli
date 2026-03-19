@@ -31,7 +31,7 @@ const (
 )
 
 var localTabs = []contentTab{contentMods, contentLogs, contentStatus}
-var serverTabs = []contentTab{contentMods, contentLogs, contentWorld}
+var serverTabs = []contentTab{contentMods, contentLogs, contentWorld, contentStatus}
 
 func contentTabName(t contentTab) string {
 	switch t {
@@ -403,6 +403,8 @@ func (m model) View() string {
 			b.WriteString(m.viewServerLogs())
 		case contentWorld:
 			b.WriteString(m.viewServerWorld())
+		case contentStatus:
+			b.WriteString(m.viewServerStatus())
 		}
 	}
 
