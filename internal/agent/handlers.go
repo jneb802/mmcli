@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -777,12 +778,17 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		Message:    "updated, restarting",
 	})
 
-	// Flush response then re-exec with new binary
+	// Flush response then restart
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
 	go func() {
 		time.Sleep(500 * time.Millisecond)
+		// Prefer systemd restart if running as a service
+		if err := exec.Command("systemctl", "restart", "mmcli-agent").Run(); err == nil {
+			return
+		}
+		// Fallback: re-exec with new binary
 		exe, _ := os.Executable()
 		syscall.Exec(exe, os.Args, os.Environ())
 	}()
