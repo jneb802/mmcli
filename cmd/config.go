@@ -14,6 +14,7 @@ import (
 	"mmcli/internal/agentapi"
 	"mmcli/internal/cfgfile"
 	"mmcli/internal/client"
+	"mmcli/internal/config"
 )
 
 var configCmd = &cobra.Command{
@@ -237,6 +238,99 @@ the path instead of opening.`,
 	},
 }
 
+var configCleanCmd = &cobra.Command{
+	Use:   "clean",
+	Short: "Remove config files for mods no longer installed",
+	Long: `Scan the active profile's config directory and remove config files
+that do not belong to any currently installed mod. Uses the registry's
+tracked file list for exact matching. BepInEx.cfg is always preserved.
+Use --dry-run to preview which files would be removed.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		paths, cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+
+		reg, err := config.LoadRegistry(paths)
+		if err != nil {
+			return err
+		}
+
+		// Build set of all tracked file paths across installed mods.
+		tracked := make(map[string]bool)
+		for _, mod := range reg.ListMods(cfg.ActiveProfile) {
+			for _, f := range mod.Files {
+				tracked[f] = true
+			}
+		}
+
+		configDir := paths.ProfileConfigDir(cfg.ActiveProfile)
+		files, err := cfgfile.ListConfigFiles(configDir)
+		if err != nil {
+			return fmt.Errorf("failed to list config files: %w", err)
+		}
+
+		var orphans []string
+		for _, f := range files {
+			if f == "BepInEx.cfg" {
+				continue
+			}
+			absPath := filepath.Join(configDir, f)
+			if !tracked[absPath] {
+				orphans = append(orphans, f)
+			}
+		}
+
+		if len(orphans) == 0 {
+			fmt.Println("No orphaned config files.")
+			return nil
+		}
+
+		dryRun, _ := cmd.Flags().GetBool("dry-run")
+
+		if jsonOutput {
+			type cleanJSON struct {
+				Profile string   `json:"profile"`
+				Orphans []string `json:"orphans"`
+				DryRun  bool     `json:"dry_run"`
+			}
+			return json.NewEncoder(os.Stdout).Encode(cleanJSON{
+				Profile: cfg.ActiveProfile,
+				Orphans: orphans,
+				DryRun:  dryRun,
+			})
+		}
+
+		fmt.Printf("Orphaned config files (%d):\n", len(orphans))
+		for _, f := range orphans {
+			fmt.Printf("  %s\n", f)
+		}
+
+		if dryRun {
+			return nil
+		}
+
+		yes, _ := cmd.Flags().GetBool("yes")
+		if !yes {
+			fmt.Printf("\nRemove %d files? [y/N] ", len(orphans))
+			if !confirmPrompt() {
+				return nil
+			}
+		}
+
+		removed := 0
+		for _, f := range orphans {
+			if err := os.Remove(filepath.Join(configDir, f)); err != nil {
+				fmt.Printf("  \033[31mfailed to remove %s: %v\033[0m\n", f, err)
+			} else {
+				removed++
+			}
+		}
+		fmt.Printf("Removed %d config files.\n", removed)
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(configCmd)
 
@@ -245,11 +339,14 @@ func init() {
 	configCmd.AddCommand(configPushCmd)
 	configCmd.AddCommand(configPullCmd)
 	configCmd.AddCommand(configOpenCmd)
+	configCmd.AddCommand(configCleanCmd)
 
 	configListCmd.Flags().Bool("server", false, "list server config files instead of local")
 	configPushCmd.Flags().Bool("all", false, "push all config files")
 	configPullCmd.Flags().Bool("all", false, "pull all config files")
 	configOpenCmd.Flags().Bool("path", false, "print the config file path instead of opening it")
+	configCleanCmd.Flags().BoolP("dry-run", "n", false, "list orphaned config files without removing them")
+	configCleanCmd.Flags().BoolP("yes", "y", false, "skip confirmation prompt")
 }
 
 // diffFile diffs a single config file between local and server.

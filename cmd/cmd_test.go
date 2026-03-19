@@ -26,6 +26,7 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"profile",
 		"config",
 		"server",
+		"modpack",
 	}
 
 	commands := make(map[string]bool)
@@ -69,7 +70,7 @@ func TestProfileSubcommands(t *testing.T) {
 
 // TestConfigSubcommands verifies config has all its subcommands.
 func TestConfigSubcommands(t *testing.T) {
-	expected := []string{"list", "diff", "push", "pull", "open"}
+	expected := []string{"list", "diff", "push", "pull", "open", "clean"}
 
 	var configCmd *cobra.Command
 	for _, cmd := range rootCmd.Commands() {
@@ -121,6 +122,33 @@ func TestServerSubcommands(t *testing.T) {
 	for _, name := range expected {
 		if !subcommands[name] {
 			t.Errorf("missing server subcommand: %s", name)
+		}
+	}
+}
+
+// TestModpackSubcommands verifies modpack has all its subcommands.
+func TestModpackSubcommands(t *testing.T) {
+	expected := []string{"sync", "publish"}
+
+	var modpackCmd *cobra.Command
+	for _, cmd := range rootCmd.Commands() {
+		if cmd.Name() == "modpack" {
+			modpackCmd = cmd
+			break
+		}
+	}
+	if modpackCmd == nil {
+		t.Fatal("modpack command not found")
+	}
+
+	subcommands := make(map[string]bool)
+	for _, cmd := range modpackCmd.Commands() {
+		subcommands[cmd.Name()] = true
+	}
+
+	for _, name := range expected {
+		if !subcommands[name] {
+			t.Errorf("missing modpack subcommand: %s", name)
 		}
 	}
 }

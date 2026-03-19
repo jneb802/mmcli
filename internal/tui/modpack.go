@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,26 +9,12 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"mmcli/internal/config"
+	"mmcli/internal/modpack"
 	"mmcli/internal/thunderstore"
 )
 
 // Async messages for modpack actions.
 type modpackPublishDoneMsg struct{ err error }
-
-type syncDiffItem struct {
-	Name   string
-	Status string // "added", "removed", "changed"
-	Old    string // old version (for changed)
-	New    string // new version (for changed/added)
-}
-
-type modpackManifest struct {
-	Name          string   `json:"name"`
-	VersionNumber string   `json:"version_number"`
-	Description   string   `json:"description"`
-	WebsiteURL    string   `json:"website_url"`
-	Dependencies  []string `json:"dependencies"`
-}
 
 type modpackDep struct {
 	Owner   string
@@ -39,7 +24,7 @@ type modpackDep struct {
 }
 
 type modpackModel struct {
-	manifest     *modpackManifest
+	manifest     *modpack.Manifest
 	deps         []modpackDep
 	depCursor    int
 	readmeLines  []string
@@ -54,7 +39,7 @@ type modpackModel struct {
 
 	// Sync state
 	confirmSync bool
-	syncDiff    []syncDiffItem // preview of what sync will change
+	syncDiff    []modpack.SyncDiffItem // preview of what sync will change
 
 	// Publish state
 	confirmPublish bool
@@ -82,18 +67,12 @@ func (mp *modpackModel) loadFromDisk(modpackPath string) {
 		return
 	}
 
-	// Read manifest.json
-	data, err := os.ReadFile(filepath.Join(modpackPath, "manifest.json"))
+	manifest, err := modpack.LoadManifest(modpackPath)
 	if err != nil {
-		mp.loadErr = fmt.Errorf("cannot read manifest.json: %w", err)
+		mp.loadErr = err
 		return
 	}
-	var manifest modpackManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		mp.loadErr = fmt.Errorf("invalid manifest.json: %w", err)
-		return
-	}
-	mp.manifest = &manifest
+	mp.manifest = manifest
 
 	// Parse dependencies
 	for _, dep := range manifest.Dependencies {
@@ -125,76 +104,6 @@ func (mp *modpackModel) loadFromDisk(modpackPath string) {
 			}
 		}
 	}
-}
-
-// buildSyncDiff compares profile mods to current manifest dependencies.
-func buildSyncDiff(reg *config.Registry, profileName string, manifest *modpackManifest) []syncDiffItem {
-	// Build current dependency set from manifest
-	currentDeps := make(map[string]string) // Owner-Name -> Version
-	for _, dep := range manifest.Dependencies {
-		ref := thunderstore.ParseDep(dep)
-		if ref.Owner != "" && ref.Name != "" {
-			currentDeps[fmt.Sprintf("%s-%s", ref.Owner, ref.Name)] = ref.Version
-		}
-	}
-
-	// Build new dependency set from profile
-	newDeps := make(map[string]string)
-	for _, mod := range reg.ListMods(profileName) {
-		if mod.IsLocal || mod.Owner == "" {
-			continue
-		}
-		newDeps[mod.FullName()] = mod.Version
-	}
-
-	var diff []syncDiffItem
-
-	// Added or changed
-	for name, ver := range newDeps {
-		oldVer, exists := currentDeps[name]
-		if !exists {
-			diff = append(diff, syncDiffItem{Name: name, Status: "added", New: ver})
-		} else if oldVer != ver {
-			diff = append(diff, syncDiffItem{Name: name, Status: "changed", Old: oldVer, New: ver})
-		}
-	}
-
-	// Removed
-	for name := range currentDeps {
-		if _, exists := newDeps[name]; !exists {
-			diff = append(diff, syncDiffItem{Name: name, Status: "removed"})
-		}
-	}
-
-	return diff
-}
-
-// syncManifestDeps overwrites manifest.json dependencies from the profile.
-func syncManifestDeps(modpackPath string, reg *config.Registry, profileName string) error {
-	manifestPath := filepath.Join(modpackPath, "manifest.json")
-	data, err := os.ReadFile(manifestPath)
-	if err != nil {
-		return err
-	}
-	var manifest modpackManifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
-		return err
-	}
-
-	var deps []string
-	for _, mod := range reg.ListMods(profileName) {
-		if mod.IsLocal || mod.Owner == "" {
-			continue
-		}
-		deps = append(deps, fmt.Sprintf("%s-%s-%s", mod.Owner, mod.Name, mod.Version))
-	}
-	manifest.Dependencies = deps
-
-	out, err := json.MarshalIndent(manifest, "", "    ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(manifestPath, out, 0644)
 }
 
 func publishModpack(cfg config.Config) tea.Cmd {
@@ -238,7 +147,7 @@ func (m model) handleModpackNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "y":
 			m.modpack.confirmSync = false
-			if err := syncManifestDeps(m.cfg.ModpackPath, m.reg, m.cfg.ActiveProfile); err != nil {
+			if err := modpack.SyncManifestDeps(m.cfg.ModpackPath, m.reg, m.cfg.ActiveProfile); err != nil {
 				m.modpack.statusMsg = err.Error()
 			} else {
 				m.modpack.loadFromDisk(m.cfg.ModpackPath)
@@ -333,7 +242,7 @@ func (m model) handleModpackModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "s":
 		if m.modpack.manifest != nil {
-			diff := buildSyncDiff(m.reg, m.cfg.ActiveProfile, m.modpack.manifest)
+			diff := modpack.BuildSyncDiff(m.reg, m.cfg.ActiveProfile, m.modpack.manifest)
 			if len(diff) == 0 {
 				m.modpack.statusMsg = "dependencies already match profile"
 				return m, nil
