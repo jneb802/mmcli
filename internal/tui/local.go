@@ -261,45 +261,18 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
-	case "`":
-		m.stopLocalLogStream()
-		m.activeMode = modeServer
-		cmds := []tea.Cmd{}
-		if m.server.client != nil && m.server.status == nil {
-			m.server.fetching = true
-			cmds = append(cmds, fetchServerStatus(m.server.client))
-		}
-		if m.server.client != nil {
-			cmds = append(cmds, serverTick())
-		}
-		if m.activeServerTab == contentLogs && m.server.client != nil {
-			cmds = append(cmds, m.loadServerLogs())
-		}
-		return m, tea.Batch(cmds...)
+	case "`", "2":
+		return m, m.enterServerMode()
+	case "3":
+		return m, m.enterSyncMode()
+	case "4":
+		return m, m.enterModpackMode()
 	case "tab":
 		cmd := m.cycleLocalTab(1)
 		return m, cmd
 	case "shift+tab":
 		cmd := m.cycleLocalTab(-1)
 		return m, cmd
-	case "2":
-		m.stopLocalLogStream()
-		m.activeMode = modeServer
-		cmds := []tea.Cmd{}
-		if m.server.client != nil && m.server.status == nil {
-			m.server.fetching = true
-			cmds = append(cmds, fetchServerStatus(m.server.client))
-		}
-		if m.server.client != nil {
-			cmds = append(cmds, serverTick())
-		}
-		return m, tea.Batch(cmds...)
-	case "3":
-		m.stopLocalLogStream()
-		return m, m.enterSyncMode()
-	case "4":
-		m.stopLocalLogStream()
-		return m, m.enterModpackMode()
 	case "l":
 		if m.activeLocalTab != contentLogs {
 			cmd := m.switchLocalTab(contentLogs)

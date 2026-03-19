@@ -218,13 +218,10 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
-		case "`":
+		case "`", "3":
 			return m, m.enterSyncMode()
 		case "1":
-			m.activeMode = modeLocal
-			return m, tea.Batch(checkGameRunning(), localTick())
-		case "3":
-			return m, m.enterSyncMode()
+			return m, m.enterLocalMode()
 		case "4":
 			return m, m.enterModpackMode()
 		}
@@ -236,18 +233,15 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
 	case "`":
-		m.stopServerLogStream()
 		return m, m.enterSyncMode()
 	case "1", "3", "4":
 		// Guard: don't intercept digits when settings editor is active (typing port numbers, etc.)
 		if m.server.editor.active {
 			break
 		}
-		m.stopServerLogStream()
 		switch msg.String() {
 		case "1":
-			m.activeMode = modeLocal
-			return m, tea.Batch(checkGameRunning(), localTick())
+			return m, m.enterLocalMode()
 		case "3":
 			return m, m.enterSyncMode()
 		case "4":

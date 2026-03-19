@@ -129,16 +129,12 @@ func (m model) handleSyncNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
-		case "`":
+		case "`", "4":
 			return m, m.enterModpackMode()
 		case "1":
-			m.activeMode = modeLocal
-			return m, tea.Batch(checkGameRunning(), localTick())
+			return m, m.enterLocalMode()
 		case "2":
-			m.activeMode = modeServer
-			return m, nil
-		case "4":
-			return m, m.enterModpackMode()
+			return m, m.enterServerMode()
 		}
 		return m, nil
 	}
@@ -147,25 +143,12 @@ func (m model) handleSyncNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
-	case "`":
+	case "`", "4":
 		return m, m.enterModpackMode()
 	case "1":
-		m.activeMode = modeLocal
-		return m, tea.Batch(checkGameRunning(), localTick())
+		return m, m.enterLocalMode()
 	case "2":
-		m.stopServerLogStream()
-		m.activeMode = modeServer
-		cmds := []tea.Cmd{}
-		if m.server.client != nil && m.server.status == nil {
-			m.server.fetching = true
-			cmds = append(cmds, fetchServerStatus(m.server.client))
-		}
-		if m.server.client != nil {
-			cmds = append(cmds, serverTick())
-		}
-		return m, tea.Batch(cmds...)
-	case "4":
-		return m, m.enterModpackMode()
+		return m, m.enterServerMode()
 	case "tab":
 		cmd := m.cycleSyncTab(1)
 		return m, cmd

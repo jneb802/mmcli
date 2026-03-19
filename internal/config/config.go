@@ -21,7 +21,9 @@ type Config struct {
 	ActiveServer    string                 `json:"active_server,omitempty"`
 	Servers         map[string]ServerEntry `json:"servers,omitempty"`
 	AnticheatSystem string                 `json:"anticheat_system,omitempty"` // "auto", "azu", "enforcer", "" (= auto)
-	ModpackPath     string                 `json:"modpack_path,omitempty"`
+	ModpackPath         string                `json:"modpack_path,omitempty"`
+	ThunderstoreToken   string                `json:"thunderstore_token,omitempty"`
+	ThunderstoreAuthor  string                `json:"thunderstore_author,omitempty"` // team/namespace on Thunderstore
 }
 
 type Paths struct {

@@ -442,6 +442,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	// --- Modpack async messages ---
+	case modpackPublishDoneMsg:
+		m.modpack.publishing = false
+		if msg.err != nil {
+			m.modpack.publishErr = msg.err
+		} else {
+			m.modpack.publishDone = true
+		}
+		return m, nil
+
 	// --- Key dispatch ---
 	case tea.KeyMsg:
 		if m.activeMode == modeLocal {
@@ -699,6 +709,33 @@ func (m *model) cycleModpackTab(dir int) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// enterLocalMode switches to local mode with game status check.
+func (m *model) enterLocalMode() tea.Cmd {
+	m.stopLocalLogStream()
+	m.stopServerLogStream()
+	m.activeMode = modeLocal
+	return tea.Batch(checkGameRunning(), localTick())
+}
+
+// enterServerMode switches to server mode, fetching status if needed.
+func (m *model) enterServerMode() tea.Cmd {
+	m.stopLocalLogStream()
+	m.stopServerLogStream()
+	m.activeMode = modeServer
+	cmds := []tea.Cmd{}
+	if m.server.client != nil {
+		if m.server.status == nil {
+			m.server.fetching = true
+			cmds = append(cmds, fetchServerStatus(m.server.client))
+		}
+		cmds = append(cmds, serverTick())
+		if m.activeServerTab == contentLogs {
+			cmds = append(cmds, m.loadServerLogs())
+		}
+	}
+	return tea.Batch(cmds...)
 }
 
 // enterModpackMode loads modpack data and switches to modpack mode.
