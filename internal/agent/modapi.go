@@ -54,6 +54,9 @@ type ModAPIStatus struct {
 	Day           int    `json:"day"`
 	GameTime      string `json:"game_time"`
 	IsDay         bool   `json:"is_day"`
+	WorldLoaded   bool   `json:"world_loaded"`
+	SaveCount     int    `json:"save_count"`
+	LastSave      string `json:"last_save,omitempty"`
 }
 
 // ModAPIPlayer is a single player from the mod API.

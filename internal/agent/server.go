@@ -51,6 +51,11 @@ func Run(cfg AgentConfig, addr, version string) error {
 
 	handler := authMiddleware(cfg, mux)
 
+	// Start state tracker for Discord webhooks
+	st := NewStateTracker(cfg, pm)
+	st.Start()
+	defer st.Stop()
+
 	log.Printf("mmcli-agent listening on %s", addr)
 	log.Printf("Valheim dir: %s", cfg.ValheimDir)
 	log.Printf("Start script: %s", cfg.ResolvedStartScript())

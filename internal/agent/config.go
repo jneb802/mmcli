@@ -10,13 +10,42 @@ import (
 )
 
 type AgentConfig struct {
-	Secret             string `json:"secret"`
-	PlayerSecret       string `json:"player_secret,omitempty"`
-	ValheimDir         string `json:"valheim_dir"`
-	StartScript        string `json:"start_script"`
-	LogFile            string `json:"log_file,omitempty"`
-	ModAPIPort         int    `json:"mod_api_port,omitempty"`
-	ActiveLaunchConfig string `json:"active_launch_config,omitempty"`
+	Secret             string                `json:"secret"`
+	PlayerSecret       string                `json:"player_secret,omitempty"`
+	ValheimDir         string                `json:"valheim_dir"`
+	StartScript        string                `json:"start_script"`
+	LogFile            string                `json:"log_file,omitempty"`
+	ModAPIPort         int                   `json:"mod_api_port,omitempty"`
+	ActiveLaunchConfig string                `json:"active_launch_config,omitempty"`
+	DiscordWebhook     *DiscordWebhookConfig `json:"discord_webhook,omitempty"`
+}
+
+type DiscordWebhookConfig struct {
+	URL           string `json:"url"`
+	ServerStarted bool   `json:"server_started"`
+	ServerStopped bool   `json:"server_stopped"`
+	WorldSaved    bool   `json:"world_saved"`
+}
+
+// EventEnabled returns whether a given event type should fire.
+// If the URL is set but all bools are false, all events are enabled by default.
+func (c *DiscordWebhookConfig) EventEnabled(event string) bool {
+	if c == nil || c.URL == "" {
+		return false
+	}
+	// If no events explicitly enabled, enable all
+	if !c.ServerStarted && !c.ServerStopped && !c.WorldSaved {
+		return true
+	}
+	switch event {
+	case "server_started":
+		return c.ServerStarted
+	case "server_stopped":
+		return c.ServerStopped
+	case "world_saved":
+		return c.WorldSaved
+	}
+	return false
 }
 
 func (c AgentConfig) LaunchConfigsDir() string {
