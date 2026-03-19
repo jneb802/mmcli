@@ -242,9 +242,10 @@ var configCleanCmd = &cobra.Command{
 	Use:   "clean",
 	Short: "Remove config files for mods no longer installed",
 	Long: `Scan the active profile's config directory and remove config files
-that do not belong to any currently installed mod. Uses the registry's
-tracked file list for exact matching. BepInEx.cfg is always preserved.
-Use --dry-run to preview which files would be removed.`,
+that do not belong to any currently installed mod. A config file is kept
+if its path is in the registry's tracked file list OR if its filename
+contains an installed mod's name (case-insensitive). BepInEx.cfg is
+always preserved. Use --dry-run to preview which files would be removed.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths, cfg, err := loadConfig()
 		if err != nil {
@@ -256,12 +257,30 @@ Use --dry-run to preview which files would be removed.`,
 			return err
 		}
 
-		// Build set of all tracked file paths across installed mods.
+		mods := reg.ListMods(cfg.ActiveProfile)
+
+		// Include local (unregistered) mods detected from the plugins directory.
+		registered := make(map[string]config.ModEntry)
+		for _, mod := range mods {
+			registered[mod.FullName()] = mod
+		}
+		locals := config.DetectLocalMods(paths.ProfilePluginsDir(cfg.ActiveProfile), registered)
+		mods = append(mods, locals...)
+
+		// Layer 1: exact match via registry tracked file paths.
 		tracked := make(map[string]bool)
-		for _, mod := range reg.ListMods(cfg.ActiveProfile) {
+		for _, mod := range mods {
 			for _, f := range mod.Files {
 				tracked[f] = true
 			}
+		}
+
+		// Layer 2: collect lowercase mod names for substring matching.
+		// This catches configs created at runtime or installed before
+		// file tracking was added.
+		var modNames []string
+		for _, mod := range mods {
+			modNames = append(modNames, strings.ToLower(mod.Name))
 		}
 
 		configDir := paths.ProfileConfigDir(cfg.ActiveProfile)
@@ -275,8 +294,34 @@ Use --dry-run to preview which files would be removed.`,
 			if f == "BepInEx.cfg" {
 				continue
 			}
+			// Layer 1: exact path match
 			absPath := filepath.Join(configDir, f)
-			if !tracked[absPath] {
+			if tracked[absPath] {
+				continue
+			}
+			// Layer 2: substring match against any installed mod name.
+			// Check both the full relative path and the top-level directory
+			// (e.g. for "VFortress/Levels.yaml", also check "vfortress").
+			fLower := strings.ToLower(f)
+			matched := false
+			for _, name := range modNames {
+				if strings.Contains(fLower, name) {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				if dir := strings.SplitN(f, "/", 2); len(dir) == 2 {
+					dirLower := strings.ToLower(dir[0])
+					for _, name := range modNames {
+						if strings.Contains(name, dirLower) || strings.Contains(dirLower, name) {
+							matched = true
+							break
+						}
+					}
+				}
+			}
+			if !matched {
 				orphans = append(orphans, f)
 			}
 		}
