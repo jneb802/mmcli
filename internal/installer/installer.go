@@ -494,6 +494,139 @@ func Update(paths config.Paths, cfg config.Config, reg *config.Registry, modName
 	return Install(paths, cfg, reg, fullName, existingTarget)
 }
 
+// IsLocalPath returns true if the string refers to an existing file or directory.
+func IsLocalPath(s string) bool {
+	_, err := os.Stat(expandHome(s))
+	return err == nil
+}
+
+func expandHome(s string) string {
+	if s == "~" {
+		if home, err := os.UserHomeDir(); err == nil {
+			return home
+		}
+	} else if strings.HasPrefix(s, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			return filepath.Join(home, s[2:])
+		}
+	}
+	return s
+}
+
+// InstallLocal copies a locally-developed mod from srcPath into the active profile's plugins directory.
+// If the mod was previously installed from a local path, it is overwritten in place.
+func InstallLocal(paths config.Paths, cfg config.Config, reg *config.Registry, srcPath string, target string) error {
+	if target == "" {
+		target = "both"
+	}
+
+	absPath, err := filepath.Abs(expandHome(srcPath))
+	if err != nil {
+		return fmt.Errorf("invalid path: %w", err)
+	}
+
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return fmt.Errorf("path not found: %w", err)
+	}
+
+	profile := cfg.ActiveProfile
+	modName := filepath.Base(absPath)
+	if !info.IsDir() {
+		modName = strings.TrimSuffix(modName, filepath.Ext(modName))
+	}
+
+	fullName := fmt.Sprintf("local-%s", modName)
+
+	// If already installed as a local mod, overwrite
+	if existing, exists := reg.GetMod(profile, fullName); exists {
+		if existing.Owner == "local" {
+			removeModFiles(paths, cfg, existing)
+			reg.RemoveMod(profile, fullName)
+		} else {
+			return fmt.Errorf("%s is already installed as a Thunderstore mod — remove it first", fullName)
+		}
+	}
+
+	destDir := filepath.Join(paths.ProfilePluginsDir(profile), fullName)
+	os.MkdirAll(destDir, 0755)
+
+	var files []string
+	if info.IsDir() {
+		files, err = copyDir(absPath, destDir)
+	} else {
+		destFile := filepath.Join(destDir, filepath.Base(absPath))
+		err = copyFile(absPath, destFile)
+		files = []string{destFile}
+	}
+	if err != nil {
+		return fmt.Errorf("failed to copy mod: %w", err)
+	}
+
+	reg.SetMod(profile, config.ModEntry{
+		Owner:   "local",
+		Name:    modName,
+		Version: "dev",
+		Files:   files,
+		Target:  target,
+	})
+
+	if target == "server" {
+		for _, dir := range modDirs(paths, profile, fullName) {
+			renameDLLs(dir, ".dll", ".dll.old")
+		}
+		mod, _ := reg.GetMod(profile, fullName)
+		mod.Disabled = true
+		reg.SetMod(profile, mod)
+		fmt.Printf("Successfully installed %s from %s (target: server, disabled locally)\n", fullName, absPath)
+	} else {
+		fmt.Printf("Successfully installed %s from %s\n", fullName, absPath)
+	}
+
+	return nil
+}
+
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+
+	os.MkdirAll(filepath.Dir(dst), 0755)
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+
+	_, err = io.Copy(out, in)
+	return err
+}
+
+func copyDir(src, dst string) ([]string, error) {
+	var files []string
+	err := filepath.WalkDir(src, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+
+		rel, _ := filepath.Rel(src, path)
+		destPath := filepath.Join(dst, rel)
+
+		if d.IsDir() {
+			return os.MkdirAll(destPath, 0755)
+		}
+
+		if err := copyFile(path, destPath); err != nil {
+			return err
+		}
+		files = append(files, destPath)
+		return nil
+	})
+	return files, err
+}
+
 func removeModFiles(paths config.Paths, cfg config.Config, mod config.ModEntry) {
 	modSubdir := fmt.Sprintf("%s-%s", mod.Owner, mod.Name)
 	profile := cfg.ActiveProfile

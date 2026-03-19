@@ -12,7 +12,7 @@ import (
 var installCmd = &cobra.Command{
 	Use:   "install <mod>",
 	Short: "Install a mod and its dependencies into the active profile",
-	Long:  "Install a mod by Owner-Name (e.g., 'RandyKnapp-EpicLoot') or Thunderstore URL",
+	Long:  "Install a mod by Owner-Name (e.g., 'RandyKnapp-EpicLoot'), Thunderstore URL, or local path",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		clientFlag, _ := cmd.Flags().GetBool("client")
@@ -37,6 +37,14 @@ var installCmd = &cobra.Command{
 		reg, err := config.LoadRegistry(paths)
 		if err != nil {
 			return err
+		}
+
+		// Local path — copy files directly
+		if installer.IsLocalPath(args[0]) {
+			if err := installer.InstallLocal(paths, cfg, &reg, args[0], target); err != nil {
+				return err
+			}
+			return config.SaveRegistry(paths, reg)
 		}
 
 		if err := installer.Install(paths, cfg, &reg, args[0], target); err != nil {

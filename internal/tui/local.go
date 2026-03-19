@@ -381,7 +381,7 @@ func (m model) viewLocal() string {
 
 	// Install input mode
 	if m.local.installing && !m.local.installBusy {
-		b.WriteString("\n  Install mod (Owner-Name or Thunderstore URL):\n\n")
+		b.WriteString("\n  Install mod (Owner-Name, URL, or local path):\n\n")
 		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.local.installInput)
 		b.WriteString("\n  \033[2menter install • esc cancel\033[0m\n\n")
 		return b.String()
@@ -475,6 +475,9 @@ func installMod(paths config.Paths, cfg config.Config, reg *config.Registry, que
 			os.Stdout = devnull
 			defer devnull.Close()
 			defer func() { os.Stdout = old }()
+		}
+		if installer.IsLocalPath(query) {
+			return installDoneMsg{err: installer.InstallLocal(paths, cfg, reg, query, "both")}
 		}
 		return installDoneMsg{err: installer.Install(paths, cfg, reg, query, "both")}
 	}
