@@ -100,9 +100,11 @@ type serverModel struct {
 	logStop  chan struct{}
 	modsResp *agentapi.ModListResponse
 
-	statusCursor int
-	configFiles  []string
-	configCursor int
+	statusCursor    int
+	editingWebhook  bool
+	webhookInput    string
+	configFiles     []string
+	configCursor    int
 
 	settings       *agentapi.SettingsResponse
 	settingsScroll int
@@ -660,15 +662,41 @@ func (m model) buildServerStatusItems() []settingsItem {
 		webhookVal = "\033[2mnot configured\033[0m"
 	}
 	items = append(items, settingsItem{
-		label:   "Discord webhook",
-		value:   webhookVal,
-		tooltip: "Discord webhook for server event notifications (start, stop, save). Configure via agent config.",
+		label:    "Discord webhook",
+		value:    webhookVal,
+		tooltip:  "Discord webhook URL for server event notifications (start, stop, save).",
+		editable: true,
 	})
 
 	return items
 }
 
 func (m model) handleServerStatusKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Webhook URL input modal
+	if m.server.editingWebhook {
+		switch msg.String() {
+		case "esc":
+			m.server.editingWebhook = false
+		case "enter":
+			url := m.server.webhookInput
+			m.server.editingWebhook = false
+			if m.server.client != nil {
+				return m, setWebhookURL(m.server.client, url)
+			}
+		case "backspace":
+			if len(m.server.webhookInput) > 0 {
+				m.server.webhookInput = m.server.webhookInput[:len(m.server.webhookInput)-1]
+			}
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+				m.server.webhookInput += string(msg.Runes)
+			}
+		}
+		return m, nil
+	}
+
 	items := m.buildServerStatusItems()
 	switch msg.String() {
 	case "up", "k":
@@ -678,6 +706,19 @@ func (m model) handleServerStatusKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		if m.server.statusCursor < len(items)-1 {
 			m.server.statusCursor++
+		}
+	case "enter", " ":
+		if m.server.statusCursor < len(items) && items[m.server.statusCursor].editable {
+			switch items[m.server.statusCursor].label {
+			case "Discord webhook":
+				m.server.editingWebhook = true
+				// Pre-fill with current URL
+				if m.server.status != nil && m.server.status.WebhookURL != "" {
+					m.server.webhookInput = m.server.status.WebhookURL
+				} else {
+					m.server.webhookInput = ""
+				}
+			}
 		}
 	}
 	return m, nil
@@ -693,6 +734,14 @@ func (m model) viewServerStatus() string {
 		return b.String()
 	}
 
+	// Webhook URL input
+	if m.server.editingWebhook {
+		b.WriteString("\n  Discord webhook URL:\n\n")
+		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.server.webhookInput)
+		b.WriteString("\n  \033[2menter save • esc cancel • empty to clear\033[0m\n\n")
+		return b.String()
+	}
+
 	items := m.buildServerStatusItems()
 	b.WriteString("\n")
 
@@ -702,7 +751,11 @@ func (m model) viewServerStatus() string {
 			cursor = "  \033[36m>\033[0m "
 		}
 		label := fmt.Sprintf("%-18s", item.Label()+":")
-		fmt.Fprintf(&b, "%s%s %s\n", cursor, label, item.value)
+		val := item.value
+		if item.editable && i == m.server.statusCursor {
+			val = fmt.Sprintf("< %s >", val)
+		}
+		fmt.Fprintf(&b, "%s%s %s\n", cursor, label, val)
 	}
 
 	// Tooltip
@@ -712,7 +765,11 @@ func (m model) viewServerStatus() string {
 	}
 
 	b.WriteString("\n")
-	hotkeys := []string{"↑/↓ navigate", "` mode", "tab next", "q quit"}
+	hotkeys := []string{"↑/↓ navigate"}
+	if m.server.statusCursor < len(items) && items[m.server.statusCursor].editable {
+		hotkeys = append(hotkeys, "enter/space edit")
+	}
+	hotkeys = append(hotkeys, "` mode", "tab next", "q quit")
 	renderHotkeyBar(&b, hotkeys, m.width)
 
 	return b.String()
@@ -1141,6 +1198,19 @@ func serverAction(c *client.AgentClient, action string) tea.Cmd {
 			resp, err = c.Restart()
 		}
 		return serverActionMsg{action: action, resp: resp, err: err}
+	}
+}
+
+func setWebhookURL(c *client.AgentClient, url string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := c.UpdateWebhookConfig(agentapi.WebhookConfigUpdate{
+			URL: &url,
+		})
+		if err != nil {
+			return serverActionMsg{action: "webhook", err: err}
+		}
+		// Re-fetch status to update the display
+		return serverActionMsg{action: "webhook"}
 	}
 }
 
