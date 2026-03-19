@@ -44,7 +44,7 @@ const (
 )
 
 var localTabs = []contentTab{contentMods, contentConfig, contentLogs, contentStatus, contentSettings}
-var serverTabs = []contentTab{contentMods, contentConfig, contentLogs, contentPlayers, contentWorld, contentStatus}
+var serverTabs = []contentTab{contentMods, contentConfig, contentLogs, contentPlayers, contentWorld, contentSyncModeration, contentStatus}
 var syncTabs = []contentTab{contentSyncMods, contentSyncConfigs, contentSyncModeration}
 var modpackTabs = []contentTab{contentModpackMods, contentModpackConfig, contentModpackReadme, contentModpackManifest, contentModpackImage}
 
@@ -537,6 +537,8 @@ func (m model) View() string {
 			b.WriteString(m.viewServerLogs())
 		case contentWorld:
 			b.WriteString(m.viewServerWorld())
+		case contentSyncModeration:
+			b.WriteString(m.viewServerModeration())
 		case contentStatus:
 			b.WriteString(m.viewServerStatus())
 		case contentPlayers:
@@ -666,6 +668,9 @@ func (m *model) switchServerTab(to contentTab) tea.Cmd {
 	}
 	if to == contentConfig {
 		m.server.configFiles = listProfileConfigs(m.paths, m.cfg.ActiveProfile)
+	}
+	if to == contentSyncModeration {
+		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.server.mods)
 	}
 	if to == contentLogs && m.server.client != nil {
 		return m.loadServerLogs()

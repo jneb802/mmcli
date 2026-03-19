@@ -171,10 +171,12 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 		apiQueried = true
 		matched, unmatched := MatchAPIToMods(apiPlugins, modMap, manifestNames)
 
-		// Update matched mods with authoritative version + loaded status
-		for dirName, ap := range matched {
+		// Update matched mods with loaded status (and version if exact match)
+		for dirName, m := range matched {
 			if info, ok := modMap[dirName]; ok {
-				info.Version = ap.Version
+				if m.Exact || info.Version == "" {
+					info.Version = m.Plugin.Version
+				}
 				t := true
 				info.Loaded = &t
 			}

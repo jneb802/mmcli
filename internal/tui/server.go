@@ -312,6 +312,8 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleServerLogsKeys(msg)
 	case contentWorld:
 		return m.handleServerWorldKeys(msg)
+	case contentSyncModeration:
+		return m.handleServerModerationKeys(msg)
 	case contentStatus:
 		return m.handleServerStatusKeys(msg)
 	}
@@ -448,8 +450,8 @@ func (m model) viewServer() string {
 	// Remove confirmation
 	if m.server.confirmRemove && m.server.cursor < len(m.server.mods) {
 		mod := m.server.mods[m.server.cursor]
-		fmt.Fprintf(&b, "\n  \033[33mRemove %s from profile? (y/n)\033[0m\n", mod.Name)
-		b.WriteString("  \033[2mMod will be removed on next push.\033[0m\n\n")
+		fmt.Fprintf(&b, "\n  \033[33mRemove %s from server? (y/n)\033[0m\n", mod.Name)
+		b.WriteString("  \033[2mMod will be removed on next server restart.\033[0m\n\n")
 		return b.String()
 	}
 
@@ -820,6 +822,86 @@ func (m model) handleServerWorldKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.server.client != nil {
 			return m, fetchSettings(m.server.client)
 		}
+	}
+	return m, nil
+}
+
+func (m model) viewServerModeration() string {
+	var b strings.Builder
+
+	if m.server.client == nil {
+		b.WriteString("\n  \033[2mNo server configured.\033[0m\n\n")
+		hotkeys := []string{"` mode", "tab next", "q quit"}
+		renderHotkeyBar(&b, hotkeys, m.width)
+		return b.String()
+	}
+
+	if m.server.fetching && len(m.sync.modItems) == 0 {
+		b.WriteString("\n  \033[2mFetching server data...\033[0m\n\n")
+		return b.String()
+	}
+
+	b.WriteString("\n")
+
+	systemLabel := m.anticheatSystem
+	if systemLabel == "azu" {
+		systemLabel = "AzuAntiCheat"
+	} else {
+		systemLabel = "ValheimEnforcer"
+	}
+	fmt.Fprintf(&b, "  \033[1mModeration\033[0m  \033[2m%s\033[0m\n\n", systemLabel)
+
+	renderModerationList(&b, m.sync.modItems, m.sync.moderationCursor, listVisible(m.height, 12), m.anticheatSystem)
+
+	b.WriteString("\n")
+	if m.server.statusErr != nil {
+		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.server.statusErr)
+	}
+
+	var hotkeys []string
+	if m.server.role == agentapi.RoleAdmin {
+		hotkeys = []string{"a classify", "` mode", "tab next", "q quit"}
+	} else {
+		hotkeys = []string{"` mode", "tab next", "q quit"}
+	}
+	renderHotkeyBar(&b, hotkeys, m.width)
+
+	return b.String()
+}
+
+func (m model) handleServerModerationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	items := m.sync.modItems
+	switch msg.String() {
+	case "up", "k":
+		if m.sync.moderationCursor > 0 {
+			m.sync.moderationCursor--
+		}
+	case "down", "j":
+		if m.sync.moderationCursor < len(items)-1 {
+			m.sync.moderationCursor++
+		}
+	case "a":
+		if m.server.role != agentapi.RoleAdmin || len(items) == 0 {
+			return m, nil
+		}
+		modName := items[m.sync.moderationCursor].Name
+		regMod, ok := m.reg.GetMod(m.cfg.ActiveProfile, modName)
+		if !ok {
+			return m, nil
+		}
+		newValue := nextAnticheatValue(regMod.Anticheat, m.anticheatSystem)
+		regMod.Anticheat = newValue
+		m.reg.SetMod(m.cfg.ActiveProfile, regMod)
+		for _, depName := range regMod.Dependencies {
+			dep, depOk := m.reg.GetMod(m.cfg.ActiveProfile, depName)
+			if !depOk {
+				continue
+			}
+			dep.Anticheat = newValue
+			m.reg.SetMod(m.cfg.ActiveProfile, dep)
+		}
+		config.SaveRegistry(m.paths, *m.reg)
+		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.server.mods)
 	}
 	return m, nil
 }

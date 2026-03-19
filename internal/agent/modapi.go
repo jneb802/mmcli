@@ -115,11 +115,17 @@ type modCandidate struct {
 	names   []string
 }
 
+// ModMatch pairs a matched plugin with whether the match was exact.
+type ModMatch struct {
+	Plugin ModAPIPlugin
+	Exact  bool // true = safe to overwrite version; false = fuzzy substring match
+}
+
 // MatchAPIToMods matches mod API plugins to entries in modMap.
 // It uses manifestNames for high-quality matches and falls back to directory name matching.
-// Returns matched (dirName -> plugin) and unmatched (plugins with no modMap entry).
-func MatchAPIToMods(plugins []ModAPIPlugin, modMap map[string]*agentapi.ModInfo, manifestNames map[string]string) (matched map[string]ModAPIPlugin, unmatched []ModAPIPlugin) {
-	matched = make(map[string]ModAPIPlugin)
+// Returns matched (dirName -> ModMatch) and unmatched (plugins with no modMap entry).
+func MatchAPIToMods(plugins []ModAPIPlugin, modMap map[string]*agentapi.ModInfo, manifestNames map[string]string) (matched map[string]ModMatch, unmatched []ModAPIPlugin) {
+	matched = make(map[string]ModMatch)
 	candidates := buildCandidates(modMap, manifestNames)
 
 	for _, plugin := range plugins {
@@ -129,8 +135,8 @@ func MatchAPIToMods(plugins []ModAPIPlugin, modMap map[string]*agentapi.ModInfo,
 			guidName = plugin.GUID[idx+1:]
 		}
 
-		if dirName, ok := findMatch(normalize(guidName), normalize(plugin.Name), candidates); ok {
-			matched[dirName] = plugin
+		if dirName, exact, ok := findMatch(normalize(guidName), normalize(plugin.Name), candidates); ok {
+			matched[dirName] = ModMatch{Plugin: plugin, Exact: exact}
 		} else {
 			unmatched = append(unmatched, plugin)
 		}
@@ -164,20 +170,21 @@ func buildCandidates(modMap map[string]*agentapi.ModInfo, manifestNames map[stri
 }
 
 // findMatch tries to match a plugin's normalized GUID suffix and display name
-// against the candidate list. Returns the matching dirName and true, or ("", false).
-func findMatch(normGUID, normDisplay string, candidates []modCandidate) (string, bool) {
+// against the candidate list. Returns the matching dirName, whether the match
+// was exact (safe to overwrite version), and whether any match was found.
+func findMatch(normGUID, normDisplay string, candidates []modCandidate) (dirName string, exact bool, found bool) {
 	for _, c := range candidates {
 		for _, name := range c.names {
 			if normGUID == name || normDisplay == name {
-				return c.dirName, true
+				return c.dirName, true, true
 			}
 			if strings.Contains(normGUID, name) || strings.Contains(name, normGUID) {
-				return c.dirName, true
+				return c.dirName, false, true
 			}
 			if strings.Contains(normDisplay, name) || strings.Contains(name, normDisplay) {
-				return c.dirName, true
+				return c.dirName, false, true
 			}
 		}
 	}
-	return "", false
+	return "", false, false
 }
