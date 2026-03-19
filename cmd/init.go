@@ -16,7 +16,10 @@ import (
 var initCmd = &cobra.Command{
 	Use:   "init",
 	Short: "Initialize mmcli: detect Valheim, install BepInEx, create default profile",
-	RunE:  runInit,
+	Long: `Detect the Valheim installation, download and install BepInEx, create
+the directory structure, and set up a default mod profile. Safe to re-run;
+prompts for confirmation if already initialized.`,
+	RunE: runInit,
 }
 
 func init() {

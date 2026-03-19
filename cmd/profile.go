@@ -3,6 +3,7 @@ package cmd
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -22,12 +23,16 @@ import (
 var profileCmd = &cobra.Command{
 	Use:   "profile",
 	Short: "Manage mod profiles",
+	Long: `Manage mod profiles. Each profile is an isolated set of mods and configs.
+Only one profile is active at a time; the active profile is what BepInEx loads.`,
 }
 
 var profileCreateCmd = &cobra.Command{
 	Use:   "create <name>",
 	Short: "Create a new profile",
-	Args:  cobra.ExactArgs(1),
+	Long: `Create a new empty mod profile. The profile is not activated automatically;
+use 'mmcli profile switch' to make it active.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths, _, err := loadConfig()
 		if err != nil {
@@ -57,6 +62,8 @@ var profileCreateCmd = &cobra.Command{
 var profileListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all profiles",
+	Long: `List all profiles with their mod count. The active profile is marked with *.
+Use --json for machine-readable output.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths, cfg, err := loadConfig()
 		if err != nil {
@@ -69,13 +76,34 @@ var profileListCmd = &cobra.Command{
 		}
 
 		if len(names) == 0 {
-			fmt.Println("No profiles found.")
+			if jsonOutput {
+				fmt.Println("[]")
+			} else {
+				fmt.Println("No profiles found.")
+			}
 			return nil
 		}
 
 		reg, err := config.LoadRegistry(paths)
 		if err != nil {
 			return err
+		}
+
+		if jsonOutput {
+			type profileJSON struct {
+				Name   string `json:"name"`
+				Mods   int    `json:"mods"`
+				Active bool   `json:"active"`
+			}
+			items := make([]profileJSON, len(names))
+			for i, name := range names {
+				items[i] = profileJSON{
+					Name:   name,
+					Mods:   len(reg.ListMods(name)),
+					Active: name == cfg.ActiveProfile,
+				}
+			}
+			return json.NewEncoder(os.Stdout).Encode(items)
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -96,7 +124,9 @@ var profileListCmd = &cobra.Command{
 var profileSwitchCmd = &cobra.Command{
 	Use:   "switch <name>",
 	Short: "Switch to a different profile",
-	Args:  cobra.ExactArgs(1),
+	Long: `Switch the active profile. This updates BepInEx symlinks so the new profile's
+mods and configs are loaded on next game launch.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths, cfg, err := loadConfig()
 		if err != nil {
@@ -125,7 +155,9 @@ var profileSwitchCmd = &cobra.Command{
 var profileDeleteCmd = &cobra.Command{
 	Use:   "delete <name>",
 	Short: "Delete a profile (cannot delete the active profile)",
-	Args:  cobra.ExactArgs(1),
+	Long: `Delete a profile and all its mod files. The currently active profile cannot
+be deleted; switch to a different profile first.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths, cfg, err := loadConfig()
 		if err != nil {

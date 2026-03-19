@@ -12,7 +12,10 @@ import (
 var enableCmd = &cobra.Command{
 	Use:   "enable <mod>",
 	Short: "Re-enable a disabled mod in the active profile",
-	Args:  cobra.ExactArgs(1),
+	Long: `Re-enable a previously disabled mod. The mod argument is matched by
+Owner-Name (e.g., 'RandyKnapp-EpicLoot') or just the mod Name.
+Returns an error if the mod is not found or is already enabled.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths, cfg, err := loadConfig()
 		if err != nil {

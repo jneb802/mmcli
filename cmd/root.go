@@ -8,6 +8,7 @@ import (
 )
 
 var verbose bool
+var jsonOutput bool
 
 var rootCmd = &cobra.Command{
 	Use:   "mmcli",
@@ -24,4 +25,5 @@ func Execute() {
 
 func init() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "Enable verbose output")
+	rootCmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Output in JSON format for scripting and automation")
 }

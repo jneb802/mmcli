@@ -49,6 +49,6 @@ var installCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(installCmd)
-	installCmd.Flags().Bool("client", false, "mark as client-only (won't be pushed to server)")
-	installCmd.Flags().Bool("server", false, "mark as server-only (auto-disabled locally)")
+	installCmd.Flags().Bool("client", false, "mark as client-only; mod stays local and won't be pushed to the server")
+	installCmd.Flags().Bool("server", false, "mark as server-only; mod is auto-disabled locally and only pushed to the server")
 }

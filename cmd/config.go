@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -22,6 +24,9 @@ var configCmd = &cobra.Command{
 var configListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List config files in the local profile or on the server",
+	Long: `List config files in the active local profile. Use --server to list
+config files on the active remote server instead.
+Use --json for machine-readable output.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		server, _ := cmd.Flags().GetBool("server")
 
@@ -33,6 +38,13 @@ var configListCmd = &cobra.Command{
 			resp, err := c.ListConfigs()
 			if err != nil {
 				return err
+			}
+			if jsonOutput {
+				type configListJSON struct {
+					Source string   `json:"source"`
+					Files  []string `json:"files"`
+				}
+				return json.NewEncoder(os.Stdout).Encode(configListJSON{Source: "server", Files: resp.Files})
 			}
 			fmt.Printf("Server config files (%d):\n", len(resp.Files))
 			for _, f := range resp.Files {
@@ -50,6 +62,15 @@ var configListCmd = &cobra.Command{
 		files, err := cfgfile.ListConfigFiles(configDir)
 		if err != nil {
 			return fmt.Errorf("failed to list config files: %w", err)
+		}
+
+		if jsonOutput {
+			type configListJSON struct {
+				Source  string   `json:"source"`
+				Profile string  `json:"profile"`
+				Files   []string `json:"files"`
+			}
+			return json.NewEncoder(os.Stdout).Encode(configListJSON{Source: "local", Profile: cfg.ActiveProfile, Files: files})
 		}
 
 		fmt.Printf("Local config files (%d) [profile: %s]:\n", len(files), cfg.ActiveProfile)
@@ -164,6 +185,55 @@ If no filename given, requires --all flag.`,
 	},
 }
 
+var configOpenCmd = &cobra.Command{
+	Use:   "open <mod>",
+	Short: "Open a mod's config file or print its path",
+	Long: `Find the config file for a mod in the active profile and open it.
+The mod argument is matched against config file names. If no matching
+config file is found, opens the config directory. Use --path to print
+the path instead of opening.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		pathOnly, _ := cmd.Flags().GetBool("path")
+
+		paths, cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+
+		configDir := paths.ProfileConfigDir(cfg.ActiveProfile)
+		entries, err := os.ReadDir(configDir)
+		if err != nil {
+			return fmt.Errorf("config directory not found: %s", configDir)
+		}
+
+		modQuery := strings.ToLower(args[0])
+		// Strip owner prefix if given (e.g., "Owner-ModName" → "modname")
+		if parts := strings.SplitN(modQuery, "-", 2); len(parts) == 2 {
+			modQuery = parts[1]
+		}
+		modQuery = strings.ToLower(modQuery)
+
+		target := configDir
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			if strings.HasSuffix(e.Name(), ".cfg") && strings.Contains(strings.ToLower(e.Name()), modQuery) {
+				target = filepath.Join(configDir, e.Name())
+				break
+			}
+		}
+
+		if pathOnly {
+			fmt.Println(target)
+			return nil
+		}
+
+		return exec.Command("open", target).Run()
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(configCmd)
 
@@ -171,10 +241,12 @@ func init() {
 	configCmd.AddCommand(configDiffCmd)
 	configCmd.AddCommand(configPushCmd)
 	configCmd.AddCommand(configPullCmd)
+	configCmd.AddCommand(configOpenCmd)
 
 	configListCmd.Flags().Bool("server", false, "list server config files instead of local")
 	configPushCmd.Flags().Bool("all", false, "push all config files")
 	configPullCmd.Flags().Bool("all", false, "pull all config files")
+	configOpenCmd.Flags().Bool("path", false, "print the config file path instead of opening it")
 }
 
 // diffFile diffs a single config file between local and server.

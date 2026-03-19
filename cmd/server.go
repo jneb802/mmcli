@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -20,12 +21,17 @@ import (
 var serverCmd = &cobra.Command{
 	Use:   "server",
 	Short: "Manage remote Valheim dedicated servers",
+	Long: `Manage remote Valheim dedicated servers via the mmcli-agent.
+The agent must be running on the server. Use 'server add' to register
+a server, then use other subcommands to control it.`,
 }
 
 var serverAddCmd = &cobra.Command{
 	Use:   "add <name>",
 	Short: "Register a remote server and set it as active",
-	Args:  cobra.ExactArgs(1),
+	Long: `Register a remote server by name and set it as the active server.
+Requires --host and --secret flags. Validates connectivity before saving.`,
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
 		host, _ := cmd.Flags().GetString("host")
@@ -76,6 +82,8 @@ var serverAddCmd = &cobra.Command{
 var serverListCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List registered servers",
+	Long: `List all registered servers with their host, port, and active status.
+Use --json for machine-readable output.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		_, cfg, err := loadServerConfig()
 		if err != nil {
@@ -83,8 +91,31 @@ var serverListCmd = &cobra.Command{
 		}
 
 		if len(cfg.Servers) == 0 {
-			fmt.Println("No servers registered. Run `mmcli server add` to add one.")
+			if jsonOutput {
+				fmt.Println("[]")
+			} else {
+				fmt.Println("No servers registered. Run `mmcli server add` to add one.")
+			}
 			return nil
+		}
+
+		if jsonOutput {
+			type serverJSON struct {
+				Name   string `json:"name"`
+				Host   string `json:"host"`
+				Port   int    `json:"port"`
+				Active bool   `json:"active"`
+			}
+			var items []serverJSON
+			for name, srv := range cfg.Servers {
+				items = append(items, serverJSON{
+					Name:   name,
+					Host:   srv.Host,
+					Port:   srv.Port,
+					Active: name == cfg.ActiveServer,
+				})
+			}
+			return json.NewEncoder(os.Stdout).Encode(items)
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
@@ -104,6 +135,7 @@ var serverListCmd = &cobra.Command{
 var serverSwitchCmd = &cobra.Command{
 	Use:   "switch <name>",
 	Short: "Switch the active server",
+	Long:  `Set a different registered server as the active target for all server commands.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
@@ -129,6 +161,7 @@ var serverSwitchCmd = &cobra.Command{
 var serverRemoveCmd = &cobra.Command{
 	Use:   "remove <name>",
 	Short: "Forget a registered server",
+	Long:  `Remove a server from the local config. If the removed server was active, another server is selected automatically.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name := args[0]
@@ -163,6 +196,8 @@ var serverRemoveCmd = &cobra.Command{
 var serverStatusCmd = &cobra.Command{
 	Use:   "status",
 	Short: "Show the active server's status",
+	Long: `Query the active server's agent and display running state, uptime,
+BepInEx status, and installed mods. Use --json for machine-readable output.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, c, err := resolveActiveServer()
 		if err != nil {
@@ -174,6 +209,10 @@ var serverStatusCmd = &cobra.Command{
 			return err
 		}
 
+		if jsonOutput {
+			return json.NewEncoder(os.Stdout).Encode(status)
+		}
+
 		printStatus(name, status)
 		return nil
 	},
@@ -182,7 +221,8 @@ var serverStatusCmd = &cobra.Command{
 var serverStartCmd = &cobra.Command{
 	Use:   "start",
 	Short: "Start the Valheim server",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	Long:  `Send a start command to the active server's agent. Returns immediately after the server begins starting.`,
+	RunE:  func(cmd *cobra.Command, args []string) error {
 		name, c, err := resolveActiveServer()
 		if err != nil {
 			return err
@@ -201,7 +241,8 @@ var serverStartCmd = &cobra.Command{
 var serverStopCmd = &cobra.Command{
 	Use:   "stop",
 	Short: "Stop the Valheim server",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	Long:  `Send a stop command to the active server's agent. Returns after the server process is terminated.`,
+	RunE:  func(cmd *cobra.Command, args []string) error {
 		name, c, err := resolveActiveServer()
 		if err != nil {
 			return err
@@ -220,7 +261,8 @@ var serverStopCmd = &cobra.Command{
 var serverRestartCmd = &cobra.Command{
 	Use:   "restart",
 	Short: "Restart the Valheim server",
-	RunE: func(cmd *cobra.Command, args []string) error {
+	Long:  `Stop and restart the Valheim server via the active server's agent.`,
+	RunE:  func(cmd *cobra.Command, args []string) error {
 		name, c, err := resolveActiveServer()
 		if err != nil {
 			return err
@@ -308,6 +350,8 @@ Use --with-config to also push config files after mods.`,
 var serverLogsCmd = &cobra.Command{
 	Use:   "logs",
 	Short: "View server logs",
+	Long: `Fetch and display server logs from the active server's agent.
+Shows the last N lines (default 100). Use -f to stream new lines continuously.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		lines, _ := cmd.Flags().GetInt("lines")
 		follow, _ := cmd.Flags().GetBool("follow")
@@ -341,6 +385,9 @@ var serverLogsCmd = &cobra.Command{
 var serverSettingsCmd = &cobra.Command{
 	Use:   "settings",
 	Short: "Show the server's world settings",
+	Long: `Fetch and display the active server's world configuration including
+core settings, backup schedule, world modifiers, and permissions.
+Use --json for machine-readable output.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		name, c, err := resolveActiveServer()
 		if err != nil {
@@ -350,6 +397,10 @@ var serverSettingsCmd = &cobra.Command{
 		settings, err := c.GetSettings()
 		if err != nil {
 			return err
+		}
+
+		if jsonOutput {
+			return json.NewEncoder(os.Stdout).Encode(settings)
 		}
 
 		printSettings(name, settings)
@@ -372,9 +423,11 @@ func init() {
 	serverCmd.AddCommand(serverLogsCmd)
 	serverCmd.AddCommand(serverSettingsCmd)
 
-	serverAddCmd.Flags().String("host", "", "server hostname or IP")
+	serverAddCmd.Flags().String("host", "", "server hostname or IP (required)")
 	serverAddCmd.Flags().Int("port", agentapi.DefaultPort, "agent port")
-	serverAddCmd.Flags().String("secret", "", "agent API secret")
+	serverAddCmd.Flags().String("secret", "", "agent API secret (required)")
+	serverAddCmd.MarkFlagRequired("host")
+	serverAddCmd.MarkFlagRequired("secret")
 
 	serverPushCmd.Flags().String("profile", "", "profile to push (default: active profile)")
 	serverPushCmd.Flags().Bool("with-config", false, "also push config files after pushing mods")

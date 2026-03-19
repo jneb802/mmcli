@@ -274,7 +274,7 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "a":
-		if len(m.local.mods) > 0 {
+		if m.cfg.ActiveServer != "" && len(m.local.mods) > 0 {
 			mod := m.local.mods[m.local.cursor]
 			if mod.IsLocal {
 				m.local.err = fmt.Errorf("local mods cannot be classified for anticheat")
@@ -376,15 +376,19 @@ func (m model) viewLocal() string {
 	}
 
 	// Mod list
+	hasServer := m.cfg.ActiveServer != ""
 	items := make([]modListItem, len(m.local.mods))
 	for i, mod := range m.local.mods {
-		items[i] = modListItem{
-			Name:      mod.FullName(),
-			Version:   mod.Version,
-			Disabled:  mod.Disabled,
-			Update:    m.local.updates[mod.FullName()],
-			Anticheat: mod.Anticheat,
+		item := modListItem{
+			Name:     mod.FullName(),
+			Version:  mod.Version,
+			Disabled: mod.Disabled,
+			Update:   m.local.updates[mod.FullName()],
 		}
+		if hasServer {
+			item.Anticheat = mod.Anticheat
+		}
+		items[i] = item
 	}
 	renderModList(&b, items, m.local.cursor, false)
 
@@ -396,7 +400,11 @@ func (m model) viewLocal() string {
 	} else if m.local.err != nil {
 		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.local.err)
 	}
-	b.WriteString("  \033[2m↑/↓ navigate • space toggle • a anticheat • x remove • u update • i install • c config • l logs • p profile • tab server • q quit\033[0m\n\n")
+	if hasServer {
+		b.WriteString("  \033[2m↑/↓ navigate • space toggle • a anticheat • x remove • u update • i install • c config • l logs • p profile • tab server • q quit\033[0m\n\n")
+	} else {
+		b.WriteString("  \033[2m↑/↓ navigate • space toggle • x remove • u update • i install • c config • l logs • p profile • q quit\033[0m\n\n")
+	}
 
 	return b.String()
 }
