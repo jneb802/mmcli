@@ -99,11 +99,18 @@ type serverModel struct {
 	settings        *agentapi.SettingsResponse
 	settingsVisible bool
 	settingsScroll  int
+
+	editor settingsEditor
 }
 
 func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Settings viewer mode
+	// Settings viewer/editor mode
 	if m.server.settingsVisible {
+		// Editor sub-modal (nested within settings viewer)
+		if m.server.editor.active {
+			return m.handleSettingsEditor(msg)
+		}
+
 		switch msg.String() {
 		case "q", "esc":
 			m.server.settingsVisible = false
@@ -113,6 +120,16 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 		case "down", "j":
 			m.server.settingsScroll++
+		case "e":
+			if m.server.role == agentapi.RoleAdmin && m.server.settings != nil {
+				m.server.editor = settingsEditor{
+					active: true,
+					fields: buildEditorFields(m.server.settings),
+					cursor: 0,
+				}
+				// Try to fetch active launch config name
+				return m, fetchLaunchConfigsForEditor(m.server.client)
+			}
 		case "ctrl+c":
 			return m, tea.Quit
 		}
@@ -330,9 +347,13 @@ func (m model) viewServer() string {
 		return b.String()
 	}
 
-	// Settings viewer
+	// Settings viewer/editor
 	if m.server.settingsVisible && m.server.settings != nil {
-		renderSettingsView(&b, m.server.settings, m.server.settingsScroll)
+		if m.server.editor.active {
+			renderSettingsEdit(&b, &m.server.editor, m.width)
+			return b.String()
+		}
+		renderSettingsView(&b, m.server.settings, m.server.settingsScroll, m.server.role)
 		return b.String()
 	}
 
@@ -786,13 +807,29 @@ func fetchSettings(c *client.AgentClient) tea.Cmd {
 	}
 }
 
+// fetchLaunchConfigsForEditor loads the active launch config name when opening the editor.
+type editorLCInfoMsg struct {
+	active string
+	err    error
+}
+
+func fetchLaunchConfigsForEditor(c *client.AgentClient) tea.Cmd {
+	return func() tea.Msg {
+		resp, err := c.ListLaunchConfigs()
+		if err != nil {
+			return editorLCInfoMsg{err: err}
+		}
+		return editorLCInfoMsg{active: resp.Active}
+	}
+}
+
 func serverTick() tea.Cmd {
 	return tea.Tick(30*time.Second, func(time.Time) tea.Msg {
 		return serverTickMsg{}
 	})
 }
 
-func renderSettingsView(b *strings.Builder, s *agentapi.SettingsResponse, scroll int) {
+func renderSettingsView(b *strings.Builder, s *agentapi.SettingsResponse, scroll int, role string) {
 	var lines []string
 	lines = append(lines, "")
 	lines = append(lines, "  \033[1mServer World Settings\033[0m")
@@ -895,7 +932,11 @@ func renderSettingsView(b *strings.Builder, s *agentapi.SettingsResponse, scroll
 	for _, line := range lines[scroll:end] {
 		fmt.Fprintf(b, "%s\n", line)
 	}
-	b.WriteString("\n  \033[2m↑/↓ scroll • esc back\033[0m\n\n")
+	hints := "↑/↓ scroll • esc back"
+	if role == agentapi.RoleAdmin {
+		hints = "e edit • ↑/↓ scroll • esc back"
+	}
+	fmt.Fprintf(b, "\n  \033[2m%s\033[0m\n\n", hints)
 }
 
 func settingSeconds(val, defaultVal int) string {

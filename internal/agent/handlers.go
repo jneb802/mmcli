@@ -584,46 +584,20 @@ func (h *Handlers) HandleSettingsUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	scriptPath := h.cfg.ResolvedStartScript()
-	ps, settings, err := ParseStartScriptFull(scriptPath)
+	settings, err := ParseStartScript(h.cfg.ResolvedStartScript())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to parse start script: "+err.Error())
 		return
 	}
 
 	ApplySettingsUpdate(settings, &req)
-	content := RebuildStartScript(ps, settings)
 
-	// Atomic write: temp file + chmod + rename
-	dir := filepath.Dir(scriptPath)
-	tmp, err := os.CreateTemp(dir, ".mmcli-script-*.sh")
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create temp file: "+err.Error())
-		return
-	}
-	tmpName := tmp.Name()
-
-	if _, err := tmp.WriteString(content); err != nil {
-		tmp.Close()
-		os.Remove(tmpName)
-		writeError(w, http.StatusInternalServerError, "failed to write script: "+err.Error())
-		return
-	}
-	tmp.Close()
-
-	if err := os.Chmod(tmpName, 0755); err != nil {
-		os.Remove(tmpName)
-		writeError(w, http.StatusInternalServerError, "failed to set permissions: "+err.Error())
+	if err := h.rebuildStartScript(settings); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	if err := os.Rename(tmpName, scriptPath); err != nil {
-		os.Remove(tmpName)
-		writeError(w, http.StatusInternalServerError, "failed to replace script: "+err.Error())
-		return
-	}
-
-	log.Printf("Settings updated: %s", scriptPath)
+	log.Printf("Settings updated: %s", h.cfg.ResolvedStartScript())
 	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "settings updated"})
 }
 
@@ -792,6 +766,474 @@ func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		exe, _ := os.Executable()
 		syscall.Exec(exe, os.Args, os.Environ())
 	}()
+}
+
+// --- World handlers ---
+
+func (h *Handlers) HandleWorldsList(w http.ResponseWriter, r *http.Request) {
+	saveDir := h.resolveSaveDir()
+	worldsDir := filepath.Join(saveDir, "worlds_local")
+
+	entries, err := os.ReadDir(worldsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusOK, agentapi.WorldListResponse{
+				Worlds:  []agentapi.WorldInfo{},
+				SaveDir: saveDir,
+			})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	seen := make(map[string]bool)
+	var worlds []agentapi.WorldInfo
+	for _, e := range entries {
+		name := e.Name()
+		if !strings.HasSuffix(name, ".fwl") {
+			continue
+		}
+		worldName := strings.TrimSuffix(name, ".fwl")
+		if seen[worldName] {
+			continue
+		}
+		seen[worldName] = true
+
+		info := agentapi.WorldInfo{Name: worldName, SizeDB: -1, SizeFWL: -1}
+		if fi, err := os.Stat(filepath.Join(worldsDir, worldName+".fwl")); err == nil {
+			info.SizeFWL = fi.Size()
+			info.Modified = fi.ModTime().UTC().Format(time.RFC3339)
+		}
+		if fi, err := os.Stat(filepath.Join(worldsDir, worldName+".db")); err == nil {
+			info.SizeDB = fi.Size()
+			info.Modified = fi.ModTime().UTC().Format(time.RFC3339)
+		}
+		worlds = append(worlds, info)
+	}
+
+	sort.Slice(worlds, func(i, j int) bool { return worlds[i].Name < worlds[j].Name })
+	writeJSON(w, http.StatusOK, agentapi.WorldListResponse{Worlds: worlds, SaveDir: saveDir})
+}
+
+func (h *Handlers) HandleWorldUpload(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(1 << 30); err != nil {
+		writeError(w, http.StatusBadRequest, "failed to parse multipart: "+err.Error())
+		return
+	}
+
+	name := r.FormValue("name")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "missing 'name' field")
+		return
+	}
+	if strings.Contains(name, "..") || strings.ContainsAny(name, "/\\") {
+		writeError(w, http.StatusBadRequest, "invalid world name")
+		return
+	}
+
+	dbFile, _, err := r.FormFile("db")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "missing 'db' file")
+		return
+	}
+	defer dbFile.Close()
+
+	fwlFile, _, err := r.FormFile("fwl")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "missing 'fwl' file")
+		return
+	}
+	defer fwlFile.Close()
+
+	saveDir := h.resolveSaveDir()
+	worldsDir := filepath.Join(saveDir, "worlds_local")
+	if err := os.MkdirAll(worldsDir, 0755); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create worlds dir: "+err.Error())
+		return
+	}
+
+	for _, item := range []struct {
+		src  io.Reader
+		dest string
+	}{
+		{dbFile, filepath.Join(worldsDir, name+".db")},
+		{fwlFile, filepath.Join(worldsDir, name+".fwl")},
+	} {
+		tmp, err := os.CreateTemp(worldsDir, ".mmcli-world-*")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create temp file: "+err.Error())
+			return
+		}
+		if _, err := io.Copy(tmp, item.src); err != nil {
+			tmp.Close()
+			os.Remove(tmp.Name())
+			writeError(w, http.StatusInternalServerError, "failed to write world file: "+err.Error())
+			return
+		}
+		tmp.Close()
+		if err := os.Rename(tmp.Name(), item.dest); err != nil {
+			os.Remove(tmp.Name())
+			writeError(w, http.StatusInternalServerError, "failed to install world file: "+err.Error())
+			return
+		}
+	}
+
+	log.Printf("World uploaded: %s", name)
+	writeJSON(w, http.StatusOK, agentapi.WorldUploadResponse{OK: true, Name: name, Message: "world uploaded"})
+}
+
+func (h *Handlers) resolveSaveDir() string {
+	// Try parsing current start script for savedir
+	settings, err := ParseStartScript(h.cfg.ResolvedStartScript())
+	if err == nil && settings.SaveDir != "" {
+		return settings.SaveDir
+	}
+	// Default Valheim save location on Linux
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "unity3d", "IronGate", "Valheim")
+}
+
+// --- Launch config handlers ---
+
+func (h *Handlers) activeLaunchConfigName() string {
+	if h.cfg.ActiveLaunchConfig != "" {
+		return h.cfg.ActiveLaunchConfig
+	}
+	return "default"
+}
+
+// loadLaunchConfig reads and parses a launch config JSON file by name.
+func (h *Handlers) loadLaunchConfig(name string) (*agentapi.LaunchConfig, error) {
+	path := filepath.Join(h.cfg.LaunchConfigsDir(), name+".json")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var lc agentapi.LaunchConfig
+	if err := json.Unmarshal(data, &lc); err != nil {
+		return nil, fmt.Errorf("corrupt config file: %w", err)
+	}
+	return &lc, nil
+}
+
+// saveLaunchConfig writes a launch config JSON file.
+func (h *Handlers) saveLaunchConfig(lc *agentapi.LaunchConfig) error {
+	data, err := json.MarshalIndent(lc, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(h.cfg.LaunchConfigsDir(), lc.Name+".json"), data, 0644)
+}
+
+// extractLaunchConfigName extracts the config name from a URL path like /api/v1/launch-configs/{name}.
+func extractLaunchConfigName(r *http.Request) (string, bool) {
+	name := strings.TrimPrefix(r.URL.Path, agentapi.PathLaunchConfigs+"/")
+	if name == "" || name == "active" {
+		return "", false
+	}
+	return name, true
+}
+
+func (h *Handlers) ensureLaunchConfigs() error {
+	dir := h.cfg.LaunchConfigsDir()
+	if _, err := os.Stat(dir); err == nil {
+		return nil // already migrated
+	}
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create launch configs dir: %w", err)
+	}
+
+	// Import current start script as "default"
+	settings, err := ParseStartScript(h.cfg.ResolvedStartScript())
+	if err != nil {
+		// No valid script — create empty default
+		settings = &agentapi.SettingsResponse{
+			Name:  "My Server",
+			Port:  2456,
+			World: "Dedicated",
+		}
+	}
+
+	lc := &agentapi.LaunchConfig{
+		Name:      "default",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+		Settings:  *settings,
+	}
+	if err := h.saveLaunchConfig(lc); err != nil {
+		return err
+	}
+
+	h.cfg.ActiveLaunchConfig = "default"
+	SaveConfig(DefaultConfigPath(), h.cfg)
+	log.Printf("Migrated start script to launch config 'default'")
+	return nil
+}
+
+func (h *Handlers) HandleLaunchConfigsList(w http.ResponseWriter, r *http.Request) {
+	if err := h.ensureLaunchConfigs(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	dir := h.cfg.LaunchConfigsDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	active := h.activeLaunchConfigName()
+
+	var configs []agentapi.LaunchConfigSummary
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+		var lc agentapi.LaunchConfig
+		if json.Unmarshal(data, &lc) != nil {
+			continue
+		}
+		configs = append(configs, agentapi.LaunchConfigSummary{
+			Name:        lc.Name,
+			Description: lc.Description,
+			World:       lc.Settings.World,
+			Preset:      lc.Settings.Preset,
+		})
+	}
+
+	sort.Slice(configs, func(i, j int) bool { return configs[i].Name < configs[j].Name })
+	writeJSON(w, http.StatusOK, agentapi.LaunchConfigListResponse{Configs: configs, Active: active})
+}
+
+func (h *Handlers) HandleLaunchConfigCreate(w http.ResponseWriter, r *http.Request) {
+	if err := h.ensureLaunchConfigs(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var req agentapi.LaunchConfigCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if strings.Contains(req.Name, "..") || strings.ContainsAny(req.Name, "/\\") {
+		writeError(w, http.StatusBadRequest, "invalid config name")
+		return
+	}
+
+	// Check if already exists
+	if _, err := h.loadLaunchConfig(req.Name); err == nil {
+		writeError(w, http.StatusConflict, "launch config already exists: "+req.Name)
+		return
+	}
+
+	lc := &agentapi.LaunchConfig{
+		Name:        req.Name,
+		CreatedAt:   time.Now().UTC().Format(time.RFC3339),
+		Description: req.Description,
+	}
+
+	if req.CopyFrom != "" {
+		src, err := h.loadLaunchConfig(req.CopyFrom)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "source config not found: "+req.CopyFrom)
+			return
+		}
+		lc.Settings = src.Settings
+	} else if req.Settings != nil {
+		lc.Settings = *req.Settings
+	} else {
+		lc.Settings = agentapi.SettingsResponse{
+			Name:  "My Server",
+			Port:  2456,
+			World: "Dedicated",
+		}
+	}
+
+	if err := h.saveLaunchConfig(lc); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	log.Printf("Launch config created: %s", req.Name)
+	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "launch config created"})
+}
+
+func (h *Handlers) HandleLaunchConfigGet(w http.ResponseWriter, r *http.Request) {
+	if err := h.ensureLaunchConfigs(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	name, ok := extractLaunchConfigName(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "config name required")
+		return
+	}
+
+	lc, err := h.loadLaunchConfig(name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "launch config not found: "+name)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, lc)
+}
+
+func (h *Handlers) HandleLaunchConfigUpdate(w http.ResponseWriter, r *http.Request) {
+	if err := h.ensureLaunchConfigs(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	name, ok := extractLaunchConfigName(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "config name required")
+		return
+	}
+
+	lc, err := h.loadLaunchConfig(name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "launch config not found: "+name)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var settings agentapi.SettingsResponse
+	if err := json.NewDecoder(r.Body).Decode(&settings); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	lc.Settings = settings
+
+	if err := h.saveLaunchConfig(lc); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if name == h.activeLaunchConfigName() {
+		if err := h.rebuildStartScript(&lc.Settings); err != nil {
+			writeError(w, http.StatusInternalServerError, "config saved but failed to rebuild start script: "+err.Error())
+			return
+		}
+	}
+
+	log.Printf("Launch config updated: %s", name)
+	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "launch config updated"})
+}
+
+func (h *Handlers) HandleLaunchConfigDelete(w http.ResponseWriter, r *http.Request) {
+	if err := h.ensureLaunchConfigs(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	name, ok := extractLaunchConfigName(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "config name required")
+		return
+	}
+
+	if name == h.activeLaunchConfigName() {
+		writeError(w, http.StatusConflict, "cannot delete the active launch config")
+		return
+	}
+
+	path := filepath.Join(h.cfg.LaunchConfigsDir(), name+".json")
+	if err := os.Remove(path); err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "launch config not found: "+name)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	log.Printf("Launch config deleted: %s", name)
+	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "launch config deleted"})
+}
+
+func (h *Handlers) HandleLaunchConfigActivate(w http.ResponseWriter, r *http.Request) {
+	if err := h.ensureLaunchConfigs(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var req agentapi.LaunchConfigActivateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	lc, err := h.loadLaunchConfig(req.Name)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "launch config not found: "+req.Name)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if err := h.rebuildStartScript(&lc.Settings); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to rebuild start script: "+err.Error())
+		return
+	}
+
+	h.cfg.ActiveLaunchConfig = req.Name
+	SaveConfig(DefaultConfigPath(), h.cfg)
+
+	log.Printf("Launch config activated: %s", req.Name)
+	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "launch config activated, restart server to apply"})
+}
+
+func (h *Handlers) rebuildStartScript(settings *agentapi.SettingsResponse) error {
+	scriptPath := h.cfg.ResolvedStartScript()
+	ps, _, err := ParseStartScriptFull(scriptPath)
+	if err != nil {
+		return fmt.Errorf("failed to parse start script: %w", err)
+	}
+
+	content := RebuildStartScript(ps, settings)
+
+	dir := filepath.Dir(scriptPath)
+	tmp, err := os.CreateTemp(dir, ".mmcli-script-*.sh")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+
+	if _, err := tmp.WriteString(content); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	tmp.Close()
+
+	if err := os.Chmod(tmpName, 0755); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return os.Rename(tmpName, scriptPath)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

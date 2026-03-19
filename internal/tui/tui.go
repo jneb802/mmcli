@@ -226,6 +226,72 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.server.settings = msg.settings
 			m.server.settingsVisible = true
 			m.server.settingsScroll = 0
+			// Rebuild editor fields if active (e.g. after LC switch)
+			if m.server.editor.active {
+				m.server.editor.fields = buildEditorFields(msg.settings)
+				m.server.editor.dirty = false
+				m.server.editor.cursor = 0
+				m.server.editor.lcManager = false
+			}
+		}
+		return m, nil
+
+	case settingsUpdateMsg:
+		m.server.editor.saving = false
+		if msg.err != nil {
+			m.server.editor.err = msg.err.Error()
+		} else {
+			// Success — close editor, re-fetch settings
+			m.server.editor.active = false
+			return m, fetchSettings(m.server.client)
+		}
+		return m, nil
+
+	case worldListMsg:
+		m.server.editor.worldFetching = false
+		if msg.err != nil {
+			m.server.editor.worldErr = msg.err.Error()
+		} else {
+			m.server.editor.worlds = msg.worlds
+		}
+		return m, nil
+
+	case worldUploadMsg:
+		m.server.editor.worldUploading = false
+		if msg.err != nil {
+			m.server.editor.worldErr = msg.err.Error()
+		} else {
+			m.setWorldField(msg.name)
+			m.server.editor.worldPicker = false
+			m.server.editor.worldInput = ""
+		}
+		return m, nil
+
+	case editorLCInfoMsg:
+		if msg.err == nil {
+			m.server.editor.lcActive = msg.active
+		}
+		return m, nil
+
+	case lcListMsg:
+		m.server.editor.lcFetching = false
+		if msg.err != nil {
+			m.server.editor.lcErr = msg.err.Error()
+		} else {
+			m.server.editor.lcConfigs = msg.configs
+			m.server.editor.lcActive = msg.active
+			m.server.editor.lcCreating = false
+			// If active config changed, reload settings
+			if m.server.client != nil {
+				return m, fetchSettings(m.server.client)
+			}
+		}
+		return m, nil
+
+	case lcActionMsg:
+		m.server.editor.lcFetching = false
+		if msg.err != nil {
+			m.server.editor.lcErr = msg.err.Error()
 		}
 		return m, nil
 

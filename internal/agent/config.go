@@ -10,12 +10,17 @@ import (
 )
 
 type AgentConfig struct {
-	Secret       string `json:"secret"`
-	PlayerSecret string `json:"player_secret,omitempty"`
-	ValheimDir   string `json:"valheim_dir"`
-	StartScript  string `json:"start_script"`
-	LogFile      string `json:"log_file,omitempty"`
-	ModAPIPort   int    `json:"mod_api_port,omitempty"`
+	Secret             string `json:"secret"`
+	PlayerSecret       string `json:"player_secret,omitempty"`
+	ValheimDir         string `json:"valheim_dir"`
+	StartScript        string `json:"start_script"`
+	LogFile            string `json:"log_file,omitempty"`
+	ModAPIPort         int    `json:"mod_api_port,omitempty"`
+	ActiveLaunchConfig string `json:"active_launch_config,omitempty"`
+}
+
+func (c AgentConfig) LaunchConfigsDir() string {
+	return filepath.Join(c.ValheimDir, "mmcli-launch-configs")
 }
 
 func (c AgentConfig) ResolvedModAPIPort() int {

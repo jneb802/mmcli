@@ -39,6 +39,14 @@ func Run(cfg AgentConfig, addr, version string) error {
 	mux.HandleFunc("GET "+agentapi.PathSettings, h.HandleSettingsGet)
 	mux.HandleFunc("POST "+agentapi.PathSettings, adminOnly(h.HandleSettingsUpdate))
 	mux.HandleFunc("POST "+agentapi.PathUpdate, adminOnly(h.HandleUpdate))
+	mux.HandleFunc("GET "+agentapi.PathWorlds, h.HandleWorldsList)
+	mux.HandleFunc("POST "+agentapi.PathWorldUpload, adminOnly(h.HandleWorldUpload))
+	mux.HandleFunc("GET "+agentapi.PathLaunchConfigs, h.HandleLaunchConfigsList)
+	mux.HandleFunc("POST "+agentapi.PathLaunchConfigs, adminOnly(h.HandleLaunchConfigCreate))
+	mux.HandleFunc("GET "+agentapi.PathLaunchConfigs+"/", h.HandleLaunchConfigGet)
+	mux.HandleFunc("PUT "+agentapi.PathLaunchConfigs+"/", adminOnly(h.HandleLaunchConfigUpdate))
+	mux.HandleFunc("DELETE "+agentapi.PathLaunchConfigs+"/", adminOnly(h.HandleLaunchConfigDelete))
+	mux.HandleFunc("POST "+agentapi.PathLaunchConfigsActive, adminOnly(h.HandleLaunchConfigActivate))
 
 	handler := authMiddleware(cfg, mux)
 
