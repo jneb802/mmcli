@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -12,6 +13,12 @@ import (
 	"mmcli/internal/modpack"
 	"mmcli/internal/thunderstore"
 )
+
+// Async messages for modpack dep actions.
+type modpackUpdateCheckDoneMsg struct {
+	updates map[string]string // Owner-Name -> latest version
+}
+type modpackUpdateDoneMsg struct{ err error }
 
 // Async messages for modpack actions.
 type modpackPublishDoneMsg struct{ err error }
@@ -26,6 +33,7 @@ type modpackDep struct {
 type modpackModel struct {
 	manifest     *modpack.Manifest
 	deps         []modpackDep
+	versionMap   map[string]string // Owner-Name -> Version, for sync view
 	depCursor    int
 	readmeLines  []string
 	readmeScroll int
@@ -36,6 +44,12 @@ type modpackModel struct {
 	statusMsg    string // transient info/error shown on Mods tab only
 	editingPath  bool
 	pathInput    string
+
+	// Mod actions state
+	confirmRemove    bool
+	depUpdates       map[string]string // Owner-Name -> latest version
+	checkingUpdates  bool
+	updatingDep      bool
 
 	// Sync state
 	confirmSync bool
@@ -65,9 +79,12 @@ func (mp *modpackModel) loadFromDisk(modpackPath string) {
 	mp.iconFile = ""
 	mp.configFiles = nil
 	mp.configCursor = 0
+	mp.versionMap = nil
 	mp.loadErr = nil
 	mp.statusMsg = ""
 	mp.editingField = -1
+	mp.depUpdates = nil
+	mp.checkingUpdates = false
 
 	if modpackPath == "" {
 		return
@@ -91,6 +108,19 @@ func (mp *modpackModel) loadFromDisk(modpackPath string) {
 		})
 	}
 
+	// Sort deps alphabetically by Owner-Name
+	sort.Slice(mp.deps, func(i, j int) bool {
+		ni := fmt.Sprintf("%s-%s", mp.deps[i].Owner, mp.deps[i].Name)
+		nj := fmt.Sprintf("%s-%s", mp.deps[j].Owner, mp.deps[j].Name)
+		return ni < nj
+	})
+
+	// Build modpack version map for sync view
+	mp.versionMap = make(map[string]string)
+	for _, dep := range mp.deps {
+		mp.versionMap[fmt.Sprintf("%s-%s", dep.Owner, dep.Name)] = dep.Version
+	}
+
 	// Read README.md (optional)
 	if readmeData, err := os.ReadFile(filepath.Join(modpackPath, "README.md")); err == nil {
 		mp.readmeLines = strings.Split(string(readmeData), "\n")
@@ -109,6 +139,32 @@ func (mp *modpackModel) loadFromDisk(modpackPath string) {
 				mp.configFiles = append(mp.configFiles, e.Name())
 			}
 		}
+	}
+}
+
+func checkModpackUpdates(deps []modpackDep) tea.Cmd {
+	return func() tea.Msg {
+		updates := make(map[string]string)
+		for _, dep := range deps {
+			if dep.Owner == "" || dep.Name == "" {
+				continue
+			}
+			pkg, err := thunderstore.GetPackage(dep.Owner, dep.Name)
+			if err != nil || len(pkg.Versions) == 0 {
+				continue
+			}
+			latest := pkg.Versions[0].VersionNumber
+			if latest != dep.Version {
+				updates[fmt.Sprintf("%s-%s", dep.Owner, dep.Name)] = latest
+			}
+		}
+		return modpackUpdateCheckDoneMsg{updates: updates}
+	}
+}
+
+func updateModpackDep(modpackPath, ownerName, newVersion string) tea.Cmd {
+	return func() tea.Msg {
+		return modpackUpdateDoneMsg{err: modpack.UpdateDep(modpackPath, ownerName, newVersion)}
 	}
 }
 
@@ -175,6 +231,38 @@ func (m model) handleModpackNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
 				m.modpack.pathInput += string(msg.Runes)
 			}
+		}
+		return m, nil
+	}
+
+	// Remove confirmation modal
+	if m.modpack.confirmRemove {
+		switch msg.String() {
+		case "y":
+			m.modpack.confirmRemove = false
+			dep := m.modpack.deps[m.modpack.depCursor]
+			ownerName := fmt.Sprintf("%s-%s", dep.Owner, dep.Name)
+			if err := modpack.RemoveDep(m.cfg.ModpackPath, ownerName); err != nil {
+				m.modpack.statusMsg = err.Error()
+			} else {
+				m.modpack.loadFromDisk(m.cfg.ModpackPath)
+				if m.modpack.depCursor >= len(m.modpack.deps) {
+					m.modpack.depCursor = max(0, len(m.modpack.deps)-1)
+				}
+				m.modpack.statusMsg = "dependency removed"
+			}
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			m.modpack.confirmRemove = false
+		}
+		return m, nil
+	}
+
+	// Updating dep busy
+	if m.modpack.updatingDep {
+		if msg.String() == "ctrl+c" {
+			return m, tea.Quit
 		}
 		return m, nil
 	}
@@ -278,6 +366,27 @@ func (m model) handleModpackModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		if m.modpack.depCursor < len(m.modpack.deps)-1 {
 			m.modpack.depCursor++
+		}
+	case "x":
+		if len(m.modpack.deps) > 0 {
+			m.modpack.confirmRemove = true
+			m.modpack.statusMsg = ""
+		}
+	case "u":
+		if len(m.modpack.deps) > 0 {
+			dep := m.modpack.deps[m.modpack.depCursor]
+			ownerName := fmt.Sprintf("%s-%s", dep.Owner, dep.Name)
+			if latest, ok := m.modpack.depUpdates[ownerName]; ok {
+				m.modpack.updatingDep = true
+				m.modpack.statusMsg = ""
+				return m, updateModpackDep(m.cfg.ModpackPath, ownerName, latest)
+			}
+		}
+	case "c":
+		if len(m.modpack.deps) > 0 && !m.modpack.checkingUpdates {
+			m.modpack.checkingUpdates = true
+			m.modpack.statusMsg = "checking for updates..."
+			return m, checkModpackUpdates(m.modpack.deps)
 		}
 	case "s":
 		if m.modpack.manifest != nil {
@@ -393,6 +502,20 @@ func (m model) viewModpackMods() string {
 
 	var b strings.Builder
 
+	// Remove confirmation modal
+	if m.modpack.confirmRemove && m.modpack.depCursor < len(m.modpack.deps) {
+		dep := m.modpack.deps[m.modpack.depCursor]
+		fmt.Fprintf(&b, "\n  \033[1mRemove %s-%s from modpack?\033[0m\n\n", dep.Owner, dep.Name)
+		b.WriteString("  \033[33my confirm • any key cancel\033[0m\n\n")
+		return b.String()
+	}
+
+	// Updating dep busy
+	if m.modpack.updatingDep {
+		b.WriteString("\n  \033[33mUpdating dependency...\033[0m\n\n")
+		return b.String()
+	}
+
 	// Sync confirmation modal
 	if m.modpack.confirmSync {
 		b.WriteString("\n  \033[1mSync dependencies from profile?\033[0m\n\n")
@@ -469,8 +592,15 @@ func (m model) viewModpackMods() string {
 				version = dep.Version
 			}
 			pad := strings.Repeat(" ", maxName-len(name)+2)
+			updateTag := ""
+			if dep.Owner != "" && dep.Name != "" {
+				ownerName := fmt.Sprintf("%s-%s", dep.Owner, dep.Name)
+				if latest, ok := m.modpack.depUpdates[ownerName]; ok {
+					updateTag = fmt.Sprintf("  \033[33m→ %s\033[0m", latest)
+				}
+			}
 			if version != "" {
-				fmt.Fprintf(&b, "  %s%s%s%s\n", cur, name, pad, version)
+				fmt.Fprintf(&b, "  %s%s%s%s%s\n", cur, name, pad, version, updateTag)
 			} else {
 				fmt.Fprintf(&b, "  %s%s\n", cur, name)
 			}
@@ -488,7 +618,7 @@ func (m model) viewModpackMods() string {
 	if m.modpack.statusMsg != "" {
 		fmt.Fprintf(&b, "  \033[33m%s\033[0m\n", m.modpack.statusMsg)
 	}
-	hotkeys := []string{"↑/↓ navigate", "s sync from profile", "p publish", "tab next", "` mode", "q quit"}
+	hotkeys := []string{"↑/↓ navigate", "x remove", "u update", "c check updates", "s sync", "p publish", "tab next", "` mode", "q quit"}
 	renderHotkeyBar(&b, hotkeys, m.width)
 	return b.String()
 }

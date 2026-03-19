@@ -60,6 +60,23 @@ type syncConfigPushMsg struct {
 	err  error
 }
 
+// syncModsFiltered returns the mod items filtered to only show mods with
+// differences across local, server, and modpack.
+func (m model) syncModsFiltered() []modListItem {
+	if m.modpack.manifest == nil {
+		return m.sync.modItems // no filtering without modpack
+	}
+	var filtered []modListItem
+	for _, item := range m.sync.modItems {
+		// Hide mods that are the same across all three sources
+		if item.Status == "" && item.Version != "" && item.ModpackVersion == item.Version {
+			continue
+		}
+		filtered = append(filtered, item)
+	}
+	return filtered
+}
+
 func (m model) handleSyncNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Push result screen — stay until dismissed
 	if m.sync.pushResult {
@@ -174,20 +191,25 @@ func (m model) handleSyncNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleSyncModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	filtered := m.syncModsFiltered()
+	n := len(filtered)
+	if m.sync.modCursor >= n && n > 0 {
+		m.sync.modCursor = n - 1
+	}
 	switch msg.String() {
 	case "up", "k":
 		if m.sync.modCursor > 0 {
 			m.sync.modCursor--
 		}
 	case "down", "j":
-		if m.sync.modCursor < len(m.sync.modItems)-1 {
+		if m.sync.modCursor < n-1 {
 			m.sync.modCursor++
 		}
 	case "p":
 		if m.server.role != agentapi.RoleAdmin {
 			return m, nil
 		}
-		items := buildPushItems(m.cfg, m.reg, m.server.mods)
+		items := buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
 		if len(items) == 0 {
 			return m, nil
 		}
@@ -262,13 +284,13 @@ func (m model) handleSyncModerationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		config.SaveRegistry(m.paths, *m.reg)
 		// Refresh mod items to reflect the change
-		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.server.mods)
+		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
 		return m, nil
 	case "p":
 		if m.server.role != agentapi.RoleAdmin {
 			return m, nil
 		}
-		pushItems := buildPushItems(m.cfg, m.reg, m.server.mods)
+		pushItems := buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
 		if len(pushItems) == 0 {
 			return m, nil
 		}
@@ -441,7 +463,17 @@ func (m model) viewSyncMods() string {
 	// Header
 	fmt.Fprintf(&b, "  \033[1mMod sync: %s → %s\033[0m\n\n", m.cfg.ActiveProfile, m.server.serverName)
 
-	renderSyncModList(&b, m.sync.modItems, m.sync.modCursor, listVisible(m.height, 12))
+	filtered := m.syncModsFiltered()
+	cursor := m.sync.modCursor
+	if cursor >= len(filtered) {
+		cursor = max(0, len(filtered)-1)
+	}
+
+	if len(filtered) == 0 && len(m.sync.modItems) > 0 {
+		fmt.Fprintf(&b, "  \033[32mAll %d mods in sync.\033[0m\n", len(m.sync.modItems))
+	} else {
+		renderSyncModList(&b, filtered, cursor, listVisible(m.height, 12), m.modpack.manifest != nil)
+	}
 
 	// Status
 	b.WriteString("\n")

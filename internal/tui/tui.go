@@ -249,7 +249,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.server.players = msg.players
 		// Refresh sync mod items when server data arrives
 		if m.activeMode == modeSync && msg.mods != nil {
-			m.sync.modItems = buildPushItems(m.cfg, m.reg, m.server.mods)
+			m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
 		}
 		// If we were waiting for server data to run preflight check
 		if m.local.preflightFetching {
@@ -457,6 +457,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.modpack.publishErr = msg.err
 		} else {
 			m.modpack.publishDone = true
+		}
+		return m, nil
+
+	case modpackUpdateCheckDoneMsg:
+		m.modpack.checkingUpdates = false
+		m.modpack.depUpdates = msg.updates
+		return m, nil
+
+	case modpackUpdateDoneMsg:
+		m.modpack.updatingDep = false
+		if msg.err != nil {
+			m.modpack.statusMsg = msg.err.Error()
+		} else {
+			m.modpack.loadFromDisk(m.cfg.ModpackPath)
+			m.modpack.statusMsg = "dependency updated"
 		}
 		return m, nil
 
@@ -675,7 +690,7 @@ func (m *model) switchServerTab(to contentTab) tea.Cmd {
 		m.server.configFiles = listProfileConfigs(m.paths, m.cfg.ActiveProfile)
 	}
 	if to == contentSyncModeration {
-		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.server.mods)
+		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
 	}
 	if to == contentLogs && m.server.client != nil {
 		return m.loadServerLogs()
@@ -787,7 +802,7 @@ func (m *model) enterSyncMode() tea.Cmd {
 		cmds = append(cmds, serverTick())
 	}
 	// Populate mod items from current data
-	m.sync.modItems = buildPushItems(m.cfg, m.reg, m.server.mods)
+	m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
 	return tea.Batch(cmds...)
 }
 

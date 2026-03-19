@@ -98,15 +98,7 @@ type localModel struct {
 }
 
 func (m *model) refreshMods() {
-	mods := m.reg.ListMods(m.cfg.ActiveProfile)
-
-	pluginsDir := m.paths.ProfilePluginsDir(m.cfg.ActiveProfile)
-	registered := m.reg.Profiles[m.cfg.ActiveProfile]
-	if registered == nil {
-		registered = make(map[string]config.ModEntry)
-	}
-	locals := config.DetectLocalMods(pluginsDir, registered)
-	mods = append(mods, locals...)
+	mods := m.reg.ListAllMods(m.cfg.ActiveProfile, m.paths.ProfilePluginsDir(m.cfg.ActiveProfile))
 
 	sort.Slice(mods, func(i, j int) bool {
 		rank := func(m config.ModEntry) int {

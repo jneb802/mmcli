@@ -109,6 +109,16 @@ func (r *Registry) ListMods(profile string) []ModEntry {
 	return result
 }
 
+// ListAllMods returns registry mods plus locally-detected mods for a profile.
+func (r *Registry) ListAllMods(profile, pluginsDir string) []ModEntry {
+	mods := r.ListMods(profile)
+	registered := r.Profiles[profile]
+	if registered == nil {
+		registered = make(map[string]ModEntry)
+	}
+	return append(mods, DetectLocalMods(pluginsDir, registered)...)
+}
+
 // IsDependent returns true if any non-dependency mod in the profile depends on fullName.
 func (r *Registry) IsDependent(profile, fullName string) bool {
 	mods, ok := r.Profiles[profile]

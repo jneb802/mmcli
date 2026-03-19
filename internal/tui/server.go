@@ -924,7 +924,7 @@ func (m model) handleServerModerationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.reg.SetMod(m.cfg.ActiveProfile, dep)
 		}
 		config.SaveRegistry(m.paths, *m.reg)
-		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.server.mods)
+		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
 	}
 	return m, nil
 }
@@ -1024,20 +1024,24 @@ func renderPushDetail(b *strings.Builder, lp *agentapi.SyncResponse, pushTime ti
 	fmt.Fprintf(b, "\n  \033[2m%s\033[0m\n\n", strings.Join(hints, " • "))
 }
 
-func buildPushItems(cfg config.Config, reg *config.Registry, serverMods []agentapi.ModInfo) []modListItem {
-	// Build local mod list (non-client)
+func buildPushItems(cfg config.Config, reg *config.Registry, paths config.Paths, serverMods []agentapi.ModInfo, modpackDeps map[string]string) []modListItem {
+	// Build local mod list (non-client), including locally-detected mods
 	var items []modListItem
 	localSet := make(map[string]bool)
-	for _, mod := range reg.ListMods(cfg.ActiveProfile) {
+
+	mods := reg.ListAllMods(cfg.ActiveProfile, paths.ProfilePluginsDir(cfg.ActiveProfile))
+
+	for _, mod := range mods {
 		if mod.ResolvedTarget() == "client" {
 			continue
 		}
 		localSet[mod.FullName()] = true
 		items = append(items, modListItem{
-			Name:      mod.FullName(),
-			Version:   mod.Version,
-			Disabled:  mod.Disabled,
-			Anticheat: mod.Anticheat,
+			Name:           mod.FullName(),
+			Version:        mod.Version,
+			Disabled:       mod.Disabled,
+			Anticheat:      mod.Anticheat,
+			ModpackVersion: modpackDeps[mod.FullName()],
 		})
 	}
 
@@ -1063,10 +1067,11 @@ func buildPushItems(cfg config.Config, reg *config.Registry, serverMods []agenta
 		for _, sm := range serverMods {
 			if !localSet[sm.Name] {
 				items = append(items, modListItem{
-					Name:      sm.Name,
-					Version:   sm.Version,
-					Anticheat: sm.Anticheat,
-					Status:    "removed",
+					Name:           sm.Name,
+					ServerVersion:  sm.Version,
+					Anticheat:      sm.Anticheat,
+					Status:         "removed",
+					ModpackVersion: modpackDeps[sm.Name],
 				})
 			}
 		}
@@ -1142,7 +1147,11 @@ func renderPushConfirm(b *strings.Builder, serverName, profileName string, items
 		case "added":
 			fmt.Fprintf(b, "    \033[32m+ %s%s%s\033[0m\n", item.Name, pad, version)
 		case "removed":
-			fmt.Fprintf(b, "    \033[31m- %s%s%s\033[0m\n", item.Name, pad, version)
+			sv := item.ServerVersion
+			if sv == "" {
+				sv = "-"
+			}
+			fmt.Fprintf(b, "    \033[31m- %s%s%s\033[0m\n", item.Name, pad, sv)
 		case "changed":
 			fmt.Fprintf(b, "    \033[33m~ %s%s%s → %s\033[0m\n", item.Name, pad, item.ServerVersion, version)
 		default:

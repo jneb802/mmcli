@@ -46,13 +46,14 @@ func listWindow(length, cursor, visible int) (int, int) {
 
 // modListItem is a unified representation for rendering mod lists in both tabs.
 type modListItem struct {
-	Name          string
-	Version       string
-	Disabled      bool
-	Update        string // latest version, empty if no update
-	Anticheat     string // "whitelist", "greylist", or ""
-	Status        string // push diff: "added", "removed", "changed", "" (unchanged)
-	ServerVersion string // push diff: previous version on server (for "changed" items)
+	Name           string
+	Version        string
+	Disabled       bool
+	Update         string // latest version, empty if no update
+	Anticheat      string // "whitelist", "greylist", or ""
+	Status         string // push diff: "added", "removed", "changed", "" (unchanged)
+	ServerVersion  string // push diff: previous version on server (for "changed" items)
+	ModpackVersion string // modpack version (for sync view)
 }
 
 // anticheatLabel returns the short display character for an anticheat value.
@@ -156,8 +157,9 @@ func renderModList(b *strings.Builder, items []modListItem, cursor, visible int,
 	}
 }
 
-// renderSyncModList renders a mod list with dual local/server version columns and diff status.
-func renderSyncModList(b *strings.Builder, items []modListItem, cursor, visible int) {
+// renderSyncModList renders a mod list with local/server/modpack version columns and diff status.
+// If showModpack is true, a Modpack column is displayed.
+func renderSyncModList(b *strings.Builder, items []modListItem, cursor, visible int, showModpack bool) {
 	if len(items) == 0 {
 		b.WriteString("  No mods.\n")
 		return
@@ -166,6 +168,7 @@ func renderSyncModList(b *strings.Builder, items []modListItem, cursor, visible 
 	maxName := 0
 	maxLocal := len("Local")
 	maxServer := len("Server")
+	maxModpack := len("Modpack")
 	for _, item := range items {
 		if l := len(item.Name); l > maxName {
 			maxName = l
@@ -187,13 +190,27 @@ func renderSyncModList(b *strings.Builder, items []modListItem, cursor, visible 
 		if l := len(sv); l > maxServer {
 			maxServer = l
 		}
+		if showModpack {
+			mv := item.ModpackVersion
+			if mv == "" {
+				mv = "—"
+			}
+			if l := len(mv); l > maxModpack {
+				maxModpack = l
+			}
+		}
 	}
 
 	// Header
 	namePad := strings.Repeat(" ", maxName-len("Name")+2)
 	localPad := strings.Repeat(" ", maxLocal-len("Local")+2)
 	serverPad := strings.Repeat(" ", maxServer-len("Server")+2)
-	fmt.Fprintf(b, "  \033[2m    Name%sLocal%sServer%sStatus\033[0m\n", namePad, localPad, serverPad)
+	if showModpack {
+		modpackPad := strings.Repeat(" ", maxModpack-len("Modpack")+2)
+		fmt.Fprintf(b, "  \033[2m    Name%sLocal%sServer%sModpack%sStatus\033[0m\n", namePad, localPad, serverPad, modpackPad)
+	} else {
+		fmt.Fprintf(b, "  \033[2m    Name%sLocal%sServer%sStatus\033[0m\n", namePad, localPad, serverPad)
+	}
 
 	start, end := listWindow(len(items), cursor, visible)
 
@@ -230,15 +247,26 @@ func renderSyncModList(b *strings.Builder, items []modListItem, cursor, visible 
 		}
 		sPad := strings.Repeat(" ", maxServer-len(serverVer)+2)
 
+		// Modpack version suffix
+		modpackSuffix := ""
+		if showModpack {
+			modpackVer := item.ModpackVersion
+			if modpackVer == "" {
+				modpackVer = "—"
+			}
+			mPad := strings.Repeat(" ", maxModpack-len(modpackVer)+2)
+			modpackSuffix = modpackVer + mPad
+		}
+
 		switch item.Status {
 		case "added":
-			fmt.Fprintf(b, "  %s\033[32m%s%s%s%s%s%s+ added\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad)
+			fmt.Fprintf(b, "  %s\033[32m%s%s%s%s%s%s%s+ added\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad, modpackSuffix)
 		case "removed":
-			fmt.Fprintf(b, "  %s\033[31m%s%s%s%s%s%s- removed\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad)
+			fmt.Fprintf(b, "  %s\033[31m%s%s%s%s%s%s%s- removed\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad, modpackSuffix)
 		case "changed":
-			fmt.Fprintf(b, "  %s\033[33m%s%s%s%s%s%s~ changed\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad)
+			fmt.Fprintf(b, "  %s\033[33m%s%s%s%s%s%s%s~ changed\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad, modpackSuffix)
 		default:
-			fmt.Fprintf(b, "  %s\033[2m%s%s%s%s%s%s✓\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad)
+			fmt.Fprintf(b, "  %s\033[2m%s%s%s%s%s%s%s✓\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad, modpackSuffix)
 		}
 	}
 

@@ -38,6 +38,14 @@ func LoadManifest(modpackPath string) (*Manifest, error) {
 	return &m, nil
 }
 
+func saveManifest(modpackPath string, manifest *Manifest) error {
+	out, err := json.MarshalIndent(manifest, "", "    ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(modpackPath, "manifest.json"), out, 0644)
+}
+
 // BuildSyncDiff compares profile mods to current manifest dependencies.
 func BuildSyncDiff(reg *config.Registry, profileName string, manifest *Manifest) []SyncDiffItem {
 	// Build current dependency set from manifest
@@ -80,15 +88,47 @@ func BuildSyncDiff(reg *config.Registry, profileName string, manifest *Manifest)
 	return diff
 }
 
-// SyncManifestDeps overwrites manifest.json dependencies from the profile.
-func SyncManifestDeps(modpackPath string, reg *config.Registry, profileName string) error {
-	manifestPath := filepath.Join(modpackPath, "manifest.json")
-	data, err := os.ReadFile(manifestPath)
+// RemoveDep removes a dependency from manifest.json by Owner-Name key.
+func RemoveDep(modpackPath, ownerName string) error {
+	manifest, err := LoadManifest(modpackPath)
 	if err != nil {
 		return err
 	}
-	var manifest Manifest
-	if err := json.Unmarshal(data, &manifest); err != nil {
+
+	var kept []string
+	for _, dep := range manifest.Dependencies {
+		ref := thunderstore.ParseDep(dep)
+		key := fmt.Sprintf("%s-%s", ref.Owner, ref.Name)
+		if key != ownerName {
+			kept = append(kept, dep)
+		}
+	}
+	manifest.Dependencies = kept
+	return saveManifest(modpackPath, manifest)
+}
+
+// UpdateDep updates a single dependency version in manifest.json.
+func UpdateDep(modpackPath, ownerName, newVersion string) error {
+	manifest, err := LoadManifest(modpackPath)
+	if err != nil {
+		return err
+	}
+
+	for i, dep := range manifest.Dependencies {
+		ref := thunderstore.ParseDep(dep)
+		key := fmt.Sprintf("%s-%s", ref.Owner, ref.Name)
+		if key == ownerName {
+			manifest.Dependencies[i] = fmt.Sprintf("%s-%s-%s", ref.Owner, ref.Name, newVersion)
+			break
+		}
+	}
+	return saveManifest(modpackPath, manifest)
+}
+
+// SyncManifestDeps overwrites manifest.json dependencies from the profile.
+func SyncManifestDeps(modpackPath string, reg *config.Registry, profileName string) error {
+	manifest, err := LoadManifest(modpackPath)
+	if err != nil {
 		return err
 	}
 
@@ -100,10 +140,5 @@ func SyncManifestDeps(modpackPath string, reg *config.Registry, profileName stri
 		deps = append(deps, fmt.Sprintf("%s-%s-%s", mod.Owner, mod.Name, mod.Version))
 	}
 	manifest.Dependencies = deps
-
-	out, err := json.MarshalIndent(manifest, "", "    ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(manifestPath, out, 0644)
+	return saveManifest(modpackPath, manifest)
 }
