@@ -43,6 +43,21 @@ func (m *model) stopLocalLogStream() {
 	}
 }
 
+func (m *model) loadLocalLogs() tea.Cmd {
+	m.stopLocalLogStream()
+	logFile := m.paths.BepInExLogFile()
+	lines, size, err := readLogFile(logFile)
+	if err != nil {
+		m.local.err = fmt.Errorf("no log file found")
+		return nil
+	}
+	ch, stop := streamLocalLogs(logFile, size)
+	m.local.logCh = ch
+	m.local.logStop = stop
+	m.local.logs = newLogViewerState("BepInEx Logs ("+m.cfg.ActiveProfile+")", lines, true)
+	return nextLocalLogLine(ch)
+}
+
 type localModel struct {
 	mods    []config.ModEntry
 	cursor  int
@@ -235,40 +250,52 @@ func (m model) handleConfirmRemove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Common keys across all tabs
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
 	case "`":
 		m.stopLocalLogStream()
 		m.activeMode = modeServer
+		cmds := []tea.Cmd{}
 		if m.server.client != nil && m.server.status == nil {
 			m.server.fetching = true
-			return m, tea.Batch(fetchServerStatus(m.server.client), serverTick())
+			cmds = append(cmds, fetchServerStatus(m.server.client))
 		}
 		if m.server.client != nil {
-			return m, serverTick()
+			cmds = append(cmds, serverTick())
 		}
-		return m, nil
+		if m.activeServerTab == contentLogs && m.server.client != nil {
+			cmds = append(cmds, m.loadServerLogs())
+		}
+		return m, tea.Batch(cmds...)
 	case "tab":
-		tabs := localTabs
-		if len(tabs) > 1 {
-			for i, t := range tabs {
-				if t == m.activeLocalTab {
-					m.activeLocalTab = tabs[(i+1)%len(tabs)]
-					break
-				}
-			}
-		}
+		cmd := m.cycleLocalTab(1)
+		return m, cmd
 	case "shift+tab":
-		tabs := localTabs
-		if len(tabs) > 1 {
-			for i, t := range tabs {
-				if t == m.activeLocalTab {
-					m.activeLocalTab = tabs[(i-1+len(tabs))%len(tabs)]
-					break
-				}
-			}
+		cmd := m.cycleLocalTab(-1)
+		return m, cmd
+	case "l":
+		if m.activeLocalTab != contentLogs {
+			cmd := m.switchLocalTab(contentLogs)
+			return m, cmd
 		}
+	}
+
+	// Tab-specific keys
+	switch m.activeLocalTab {
+	case contentMods:
+		return m.handleLocalModsKeys(msg)
+	case contentLogs:
+		return m.handleLocalLogsKeys(msg)
+	case contentStatus:
+		// No interactive keys on status tab
+	}
+	return m, nil
+}
+
+func (m model) handleLocalModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
 	case "up", "k":
 		if m.local.cursor > 0 {
 			m.local.cursor--
@@ -354,22 +381,37 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, startGame(m.paths, m.cfg)
 		}
-	case "l":
-		m.stopLocalLogStream()
-		logFile := m.paths.BepInExLogFile()
-		lines, size, err := readLogFile(logFile)
-		if err != nil {
-			m.local.err = fmt.Errorf("no log file found")
-		} else {
-			ch, stop := streamLocalLogs(logFile, size)
-			m.local.logCh = ch
-			m.local.logStop = stop
-			m.local.logs = newLogViewerState("BepInEx Logs ("+m.cfg.ActiveProfile+")", lines, true)
-			return m, nextLocalLogLine(ch)
+	case "o":
+		return m, openFile(m.paths.ProfileDir(m.cfg.ActiveProfile))
+	}
+	return m, nil
+}
+
+func (m model) handleLocalLogsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.local.logs.active {
+		switch msg.String() {
+		case "up", "k":
+			if m.local.logs.scroll > 0 {
+				m.local.logs.scroll--
+				m.local.logs.following = false
+			}
+		case "down", "j":
+			maxScroll := max(0, len(m.local.logs.lines)-m.local.logs.visible)
+			if m.local.logs.scroll < maxScroll {
+				m.local.logs.scroll++
+			}
+			if m.local.logs.scroll >= maxScroll {
+				m.local.logs.following = true
+			}
+		case "f", "G":
+			m.local.logs.scroll = max(0, len(m.local.logs.lines)-m.local.logs.visible)
+			m.local.logs.following = true
 		}
 	}
 	return m, nil
 }
+
+// --- Views ---
 
 func (m model) viewLocal() string {
 	var b strings.Builder
@@ -387,12 +429,6 @@ func (m model) viewLocal() string {
 			fmt.Fprintf(&b, "    %s\n", w)
 		}
 		b.WriteString("\n  \033[33mStart anyway? (y/n)\033[0m\n\n")
-		return b.String()
-	}
-
-	// Log viewer
-	if m.local.logs.active {
-		renderLogViewer(&b, m.local.logs)
 		return b.String()
 	}
 
@@ -477,7 +513,70 @@ func (m model) viewLocal() string {
 	if m.local.err != nil {
 		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.local.err)
 	}
-	hotkeys := []string{"↑/↓ navigate", "space toggle", "x remove", "u update", "i install", "c config", "s start", "l logs", "p profile"}
+	hotkeys := []string{"↑/↓ navigate", "space toggle", "x remove", "u update", "i install", "c config", "o open folder", "s start", "l logs", "p profile"}
+	if m.cfg.ActiveServer != "" {
+		hotkeys = append(hotkeys, "` mode")
+	}
+	hotkeys = append(hotkeys, "tab next", "q quit")
+	renderHotkeyBar(&b, hotkeys, m.width)
+
+	return b.String()
+}
+
+func (m model) viewLocalLogs() string {
+	var b strings.Builder
+
+	if !m.local.logs.active {
+		b.WriteString("\n  \033[2mNo logs available. Start the game to generate logs.\033[0m\n\n")
+		hotkeys := []string{"tab next"}
+		if m.cfg.ActiveServer != "" {
+			hotkeys = append(hotkeys, "` mode")
+		}
+		hotkeys = append(hotkeys, "q quit")
+		renderHotkeyBar(&b, hotkeys, m.width)
+		return b.String()
+	}
+
+	renderLogViewer(&b, m.local.logs)
+	return b.String()
+}
+
+func (m model) viewLocalStatus() string {
+	var b strings.Builder
+
+	b.WriteString("\n")
+
+	// Profile
+	fmt.Fprintf(&b, "  Profile:        \033[36m%s\033[0m\n", m.cfg.ActiveProfile)
+
+	// Game status
+	gameStatus := "\033[2mstopped\033[0m"
+	if m.local.gameRunning {
+		gameStatus = "\033[32mrunning\033[0m"
+	}
+	fmt.Fprintf(&b, "  Game:           %s\n", gameStatus)
+
+	// Mod count
+	fmt.Fprintf(&b, "  Mods:           %d\n", len(m.local.mods))
+
+	// mmcli version
+	fmt.Fprintf(&b, "  mmcli:          \033[36m%s\033[0m\n", Version)
+
+	// BepInEx version
+	bepVer := detectBepInExVersion(m.paths)
+	if bepVer != "" {
+		fmt.Fprintf(&b, "  BepInEx:        %s\n", bepVer)
+	} else {
+		fmt.Fprintf(&b, "  BepInEx:        \033[2m–\033[0m\n")
+	}
+
+	// Server
+	if m.cfg.ActiveServer != "" {
+		fmt.Fprintf(&b, "  Server:         \033[36m%s\033[0m\n", m.cfg.ActiveServer)
+	}
+
+	b.WriteString("\n")
+	hotkeys := []string{"tab next"}
 	if m.cfg.ActiveServer != "" {
 		hotkeys = append(hotkeys, "` mode")
 	}
@@ -714,4 +813,24 @@ func preflightCheck(localMods []config.ModEntry, serverMods []agentapi.ModInfo) 
 	}
 
 	return warnings
+}
+
+// detectBepInExVersion checks the cache dir for a BepInExPack zip and extracts the version.
+func detectBepInExVersion(paths config.Paths) string {
+	entries, err := os.ReadDir(paths.CacheDir)
+	if err != nil {
+		return ""
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if strings.HasPrefix(name, "BepInExPack_Valheim-") && strings.HasSuffix(name, ".zip") {
+			ver := strings.TrimPrefix(name, "BepInExPack_Valheim-")
+			ver = strings.TrimSuffix(ver, ".zip")
+			return ver
+		}
+	}
+	if _, err := os.Stat(paths.BepInExDir()); err == nil {
+		return "installed"
+	}
+	return ""
 }

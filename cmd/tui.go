@@ -21,6 +21,7 @@ var tuiCmd = &cobra.Command{
 			return err
 		}
 
+		tui.Version = Version
 		return tui.Run(paths, cfg, &reg)
 	},
 }

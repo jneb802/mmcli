@@ -103,43 +103,6 @@ func newLogViewerState(title string, lines []string, live bool) logViewerState {
 	}
 }
 
-// handleLogViewerKeys handles shared scroll/exit keybindings. Returns true if handled.
-func handleLogViewerKeys(lv *logViewerState, msg tea.KeyMsg) bool {
-	switch msg.String() {
-	case "q", "esc":
-		lv.active = false
-		lv.lines = nil
-		lv.scroll = 0
-		lv.following = false
-		lv.live = false
-		return true
-	case "up", "k":
-		if lv.scroll > 0 {
-			lv.scroll--
-			lv.following = false
-		}
-		return true
-	case "down", "j":
-		maxScroll := max(0, len(lv.lines)-lv.visible)
-		if lv.scroll < maxScroll {
-			lv.scroll++
-		}
-		// Re-enable following when scrolled to bottom
-		if lv.scroll >= maxScroll {
-			lv.following = true
-		}
-		return true
-	case "f", "G":
-		// Jump to bottom and resume following
-		lv.scroll = max(0, len(lv.lines)-lv.visible)
-		lv.following = true
-		return true
-	case "ctrl+c":
-		return false // let caller handle quit
-	}
-	return true
-}
-
 func renderLogViewer(b *strings.Builder, lv logViewerState) {
 	liveTag := ""
 	if lv.live {

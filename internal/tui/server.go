@@ -103,8 +103,16 @@ type serverModel struct {
 	editor settingsEditor
 }
 
+func (m *model) loadServerLogs() tea.Cmd {
+	m.stopServerLogStream()
+	cmd, ch, stop := streamServerLogs(m.server.client)
+	m.server.logCh = ch
+	m.server.logStop = stop
+	return cmd
+}
+
 func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Settings viewer/editor mode
+	// Settings viewer/editor mode (works across all tabs)
 	if m.server.settingsVisible {
 		// Editor sub-modal (nested within settings viewer)
 		if m.server.editor.active {
@@ -136,18 +144,7 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Log viewer mode
-	if m.server.logs.active {
-		if !handleLogViewerKeys(&m.server.logs, msg) {
-			return m, tea.Quit
-		}
-		if !m.server.logs.active {
-			m.stopServerLogStream()
-		}
-		return m, nil
-	}
-
-	// Push detail view
+	// Push detail view modal
 	if m.server.pushDetail {
 		switch msg.String() {
 		case "q", "esc":
@@ -169,7 +166,7 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Push confirmation
+	// Push confirmation modal
 	if m.server.confirmPush {
 		switch msg.String() {
 		case "y":
@@ -191,7 +188,7 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Start confirmation (shown when server is already running)
+	// Start confirmation
 	if m.server.confirmStart {
 		switch msg.String() {
 		case "y":
@@ -259,33 +256,43 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Common keys across all server tabs
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
 	case "`":
 		m.stopServerLogStream()
 		m.activeMode = modeLocal
-		return m, tea.Batch(checkGameRunning(), localTick())
+		cmds := []tea.Cmd{checkGameRunning(), localTick()}
+		if m.activeLocalTab == contentLogs {
+			cmds = append(cmds, m.loadLocalLogs())
+		}
+		return m, tea.Batch(cmds...)
 	case "tab":
-		tabs := serverTabs
-		if len(tabs) > 1 {
-			for i, t := range tabs {
-				if t == m.activeServerTab {
-					m.activeServerTab = tabs[(i+1)%len(tabs)]
-					break
-				}
-			}
-		}
+		cmd := m.cycleServerTab(1)
+		return m, cmd
 	case "shift+tab":
-		tabs := serverTabs
-		if len(tabs) > 1 {
-			for i, t := range tabs {
-				if t == m.activeServerTab {
-					m.activeServerTab = tabs[(i-1+len(tabs))%len(tabs)]
-					break
-				}
-			}
+		cmd := m.cycleServerTab(-1)
+		return m, cmd
+	case "l":
+		if m.activeServerTab != contentLogs {
+			cmd := m.switchServerTab(contentLogs)
+			return m, cmd
 		}
+	}
+
+	// Tab-specific keys
+	switch m.activeServerTab {
+	case contentMods:
+		return m.handleServerModsKeys(msg)
+	case contentLogs:
+		return m.handleServerLogsKeys(msg)
+	}
+	return m, nil
+}
+
+func (m model) handleServerModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
 	case "up", "k":
 		if m.server.cursor > 0 {
 			m.server.cursor--
@@ -340,18 +347,34 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.server.pushItems = items
 		m.server.pushScroll = 0
 		return m, nil
-	case "l":
-		m.stopServerLogStream()
-		m.server.actionBusy = true
-		m.server.actionMsg = "Fetching logs..."
-		cmd, ch, stop := streamServerLogs(m.server.client)
-		m.server.logCh = ch
-		m.server.logStop = stop
-		return m, cmd
 	case "w":
 		m.server.actionBusy = true
 		m.server.actionMsg = "Fetching settings..."
 		return m, fetchSettings(m.server.client)
+	}
+	return m, nil
+}
+
+func (m model) handleServerLogsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.server.logs.active {
+		switch msg.String() {
+		case "up", "k":
+			if m.server.logs.scroll > 0 {
+				m.server.logs.scroll--
+				m.server.logs.following = false
+			}
+		case "down", "j":
+			maxScroll := max(0, len(m.server.logs.lines)-m.server.logs.visible)
+			if m.server.logs.scroll < maxScroll {
+				m.server.logs.scroll++
+			}
+			if m.server.logs.scroll >= maxScroll {
+				m.server.logs.following = true
+			}
+		case "f", "G":
+			m.server.logs.scroll = max(0, len(m.server.logs.lines)-m.server.logs.visible)
+			m.server.logs.following = true
+		}
 	}
 	return m, nil
 }
@@ -374,12 +397,6 @@ func (m model) viewServer() string {
 			return b.String()
 		}
 		renderSettingsView(&b, m.server.settings, m.server.settingsScroll, m.server.role)
-		return b.String()
-	}
-
-	// Log viewer
-	if m.server.logs.active {
-		renderLogViewer(&b, m.server.logs)
 		return b.String()
 	}
 
@@ -496,12 +513,31 @@ func (m model) viewServer() string {
 	}
 	var hotkeys []string
 	if m.server.role == agentapi.RoleAdmin {
-		hotkeys = []string{"s start", "d stop", "r restart", "p push", "l logs", "w settings", "` mode", "q quit"}
+		hotkeys = []string{"s start", "d stop", "r restart", "p push", "w settings", "l logs", "` mode", "tab next", "q quit"}
 	} else {
-		hotkeys = []string{"l logs", "w settings", "` mode", "q quit"}
+		hotkeys = []string{"w settings", "l logs", "` mode", "tab next", "q quit"}
 	}
 	renderHotkeyBar(&b, hotkeys, m.width)
 
+	return b.String()
+}
+
+func (m model) viewServerLogs() string {
+	var b strings.Builder
+
+	if m.server.client == nil {
+		b.WriteString("\n  \033[2mNo server configured.\033[0m\n\n")
+		hotkeys := []string{"` mode", "tab next", "q quit"}
+		renderHotkeyBar(&b, hotkeys, m.width)
+		return b.String()
+	}
+
+	if !m.server.logs.active {
+		b.WriteString("\n  \033[2mLoading logs...\033[0m\n\n")
+		return b.String()
+	}
+
+	renderLogViewer(&b, m.server.logs)
 	return b.String()
 }
 
