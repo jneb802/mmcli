@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -161,6 +162,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.server.statusErr = msg.err
 		} else {
 			m.server.statusErr = nil
+			if msg.resp != nil {
+				m.server.lastPush = msg.resp
+				m.server.lastPushTime = time.Now()
+			}
 		}
 		// Re-fetch status after push
 		if m.server.client != nil {

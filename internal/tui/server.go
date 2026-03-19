@@ -64,6 +64,8 @@ type serverModel struct {
 	confirmPush    bool
 	pushItems      []modListItem
 	pushScroll     int
+	lastPush       *agentapi.SyncResponse
+	lastPushTime   time.Time
 	confirmStart   bool
 	confirmStop    bool
 	confirmRestart bool
@@ -201,10 +203,21 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if m.server.cursor > 0 {
 			m.server.cursor--
+		} else if m.server.cursor == 0 && m.server.lastPush != nil {
+			m.server.cursor = -1
 		}
 	case "down", "j":
-		if m.server.cursor < len(m.server.mods)-1 {
+		if m.server.cursor == -1 {
+			m.server.cursor = 0
+		} else if m.server.cursor < len(m.server.mods)-1 {
 			m.server.cursor++
+		}
+	case "enter":
+		if m.server.cursor == -1 && m.server.lastPush != nil && m.server.role == agentapi.RoleAdmin {
+			if pushNeedsRestart(m.server.lastPush) {
+				m.server.confirmRestart = true
+				return m, nil
+			}
 		}
 	case "s":
 		if m.server.role != agentapi.RoleAdmin {
@@ -325,8 +338,46 @@ func (m model) viewServer() string {
 		roleTag = " \033[33m(player)\033[0m"
 	}
 	fmt.Fprintf(&b, "\n  Server: \033[1m%s\033[0m%s    Status: %s    Mods: %d\n", m.server.serverName, roleTag, statusText, modCount)
-	if m.server.modsResp != nil && m.server.modsResp.ManifestTime != "" {
-		fmt.Fprintf(&b, "  Last push: \033[2m%s\033[0m\n", m.server.modsResp.ManifestTime)
+	// Push status line
+	if m.server.lastPush != nil {
+		lp := m.server.lastPush
+		ago := time.Since(m.server.lastPushTime).Truncate(time.Second)
+		var parts []string
+		if lp.Downloaded > 0 {
+			parts = append(parts, fmt.Sprintf("%d downloaded", lp.Downloaded))
+		}
+		if lp.Cached > 0 {
+			parts = append(parts, fmt.Sprintf("%d cached", lp.Cached))
+		}
+		if lp.Removed > 0 {
+			parts = append(parts, fmt.Sprintf("%d removed", lp.Removed))
+		}
+		if lp.Skipped > 0 {
+			parts = append(parts, fmt.Sprintf("%d unchanged", lp.Skipped))
+		}
+		if len(lp.Failures) > 0 {
+			parts = append(parts, fmt.Sprintf("\033[31m%d failed\033[0m", len(lp.Failures)))
+		}
+		summary := strings.Join(parts, ", ")
+
+		if m.server.cursor == -1 {
+			hint := ""
+			if pushNeedsRestart(lp) && m.server.role == agentapi.RoleAdmin {
+				hint = "    \033[33menter restart\033[0m"
+			}
+			fmt.Fprintf(&b, "  \033[36m>\033[0m Last push: %s ago — %s%s\n", ago, summary, hint)
+		} else {
+			fmt.Fprintf(&b, "    Last push: \033[2m%s ago — %s\033[0m\n", ago, summary)
+		}
+
+		// Show failure details when selected
+		if m.server.cursor == -1 && len(lp.Failures) > 0 {
+			for _, f := range lp.Failures {
+				fmt.Fprintf(&b, "      \033[31m✗ %s: %s\033[0m\n", f.Mod, f.Reason)
+			}
+		}
+	} else if m.server.modsResp != nil && m.server.modsResp.ManifestTime != "" {
+		fmt.Fprintf(&b, "    Last push: \033[2m%s\033[0m\n", m.server.modsResp.ManifestTime)
 	}
 	b.WriteString("\n")
 
@@ -363,6 +414,12 @@ func (m model) viewServer() string {
 	renderHotkeyBar(&b, hotkeys, m.width)
 
 	return b.String()
+}
+
+// pushNeedsRestart returns true if the push result has actual changes and no failures.
+func pushNeedsRestart(lp *agentapi.SyncResponse) bool {
+	hasChanges := lp.Downloaded > 0 || lp.Cached > 0 || lp.Removed > 0
+	return hasChanges && len(lp.Failures) == 0
 }
 
 func buildPushItems(cfg config.Config, reg *config.Registry, serverMods []agentapi.ModInfo) []modListItem {
