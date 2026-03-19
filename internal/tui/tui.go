@@ -96,6 +96,7 @@ type model struct {
 	sync            syncModel
 	modpack         modpackModel
 	width           int
+	height          int
 	anticheatSystem string // resolved: "azu" or "enforcer"
 }
 
@@ -217,6 +218,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 		return m, nil
 
 	// --- Server async messages ---
@@ -544,6 +546,10 @@ func (m model) View() string {
 			b.WriteString(m.viewSyncModeration())
 		}
 	case modeModpack:
+		if m.modpack.editingPath {
+			b.WriteString(m.viewModpackPathInput())
+			break
+		}
 		b.WriteString(renderContentTabBar(modpackTabs, m.activeModpackTab))
 		switch m.activeModpackTab {
 		case contentModpackMods:

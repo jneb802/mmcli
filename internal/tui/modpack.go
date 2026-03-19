@@ -47,8 +47,10 @@ type modpackModel struct {
 	iconFile     string   // "icon.png" or ""
 	configFiles  []string // files in config/ subdir
 	configCursor int
-	loadErr      error // fatal: can't read manifest — blocks all tabs
+	loadErr      error  // fatal: can't read manifest — blocks all tabs
 	statusMsg    string // transient info/error shown on Mods tab only
+	editingPath  bool
+	pathInput    string
 
 	// Sync state
 	confirmSync bool
@@ -205,6 +207,32 @@ func publishModpack(cfg config.Config) tea.Cmd {
 // --- Key handlers ---
 
 func (m model) handleModpackNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Path input modal
+	if m.modpack.editingPath {
+		switch msg.String() {
+		case "esc":
+			m.modpack.editingPath = false
+		case "enter":
+			if m.modpack.pathInput != "" {
+				m.cfg.ModpackPath = m.modpack.pathInput
+				config.Save(m.paths, m.cfg)
+				m.modpack.editingPath = false
+				m.modpack.loadFromDisk(m.cfg.ModpackPath)
+			}
+		case "backspace":
+			if len(m.modpack.pathInput) > 0 {
+				m.modpack.pathInput = m.modpack.pathInput[:len(m.modpack.pathInput)-1]
+			}
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+				m.modpack.pathInput += string(msg.Runes)
+			}
+		}
+		return m, nil
+	}
+
 	// Sync confirmation modal
 	if m.modpack.confirmSync {
 		switch msg.String() {
@@ -264,6 +292,9 @@ func (m model) handleModpackNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.enterServerMode()
 	case "3":
 		return m, m.enterSyncMode()
+	case "d":
+		m.modpack.editingPath = true
+		m.modpack.pathInput = m.cfg.ModpackPath
 	case "tab":
 		cmd := m.cycleModpackTab(1)
 		return m, cmd
@@ -379,19 +410,26 @@ func (m model) handleModpackImageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // --- Views ---
 
+func (m model) viewModpackPathInput() string {
+	var b strings.Builder
+	b.WriteString("\n  Modpack directory path:\n\n")
+	fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.modpack.pathInput)
+	b.WriteString("\n  \033[2menter save • esc cancel\033[0m\n\n")
+	return b.String()
+}
+
 func (m model) modpackNotConfigured() (string, bool) {
 	if m.cfg.ModpackPath == "" {
 		var b strings.Builder
-		b.WriteString("\n  No modpack path configured.\n")
-		b.WriteString("  Set \033[36mmodpack_path\033[0m in ~/.config/mmcli/config.json\n\n")
-		hotkeys := []string{"` mode", "q quit"}
+		b.WriteString("\n  No modpack path configured.\n\n")
+		hotkeys := []string{"d set path", "` mode", "q quit"}
 		renderHotkeyBar(&b, hotkeys, m.width)
 		return b.String(), true
 	}
 	if m.modpack.loadErr != nil {
 		var b strings.Builder
 		fmt.Fprintf(&b, "\n  \033[31mError: %v\033[0m\n\n", m.modpack.loadErr)
-		hotkeys := []string{"` mode", "tab next", "q quit"}
+		hotkeys := []string{"d set path", "` mode", "tab next", "q quit"}
 		renderHotkeyBar(&b, hotkeys, m.width)
 		return b.String(), true
 	}
@@ -461,7 +499,15 @@ func (m model) viewModpackMods() string {
 			}
 		}
 
-		for i, dep := range m.modpack.deps {
+		vis := listVisible(m.height, 11)
+		start, end := listWindow(len(m.modpack.deps), m.modpack.depCursor, vis)
+
+		if start > 0 {
+			fmt.Fprintf(&b, "  \033[2m  ↑ %d more\033[0m\n", start)
+		}
+
+		for i := start; i < end; i++ {
+			dep := m.modpack.deps[i]
 			cur := "  "
 			if i == m.modpack.depCursor {
 				cur = "\033[36m>\033[0m "
@@ -478,6 +524,10 @@ func (m model) viewModpackMods() string {
 			} else {
 				fmt.Fprintf(&b, "  %s%s\n", cur, name)
 			}
+		}
+
+		if end < len(m.modpack.deps) {
+			fmt.Fprintf(&b, "  \033[2m  ↓ %d more\033[0m\n", len(m.modpack.deps)-end)
 		}
 	}
 
@@ -504,12 +554,21 @@ func (m model) viewModpackConfig() string {
 	if len(m.modpack.configFiles) == 0 {
 		b.WriteString("  No config files.\n")
 	} else {
-		for i, f := range m.modpack.configFiles {
+		vis := listVisible(m.height, 9)
+		start, end := listWindow(len(m.modpack.configFiles), m.modpack.configCursor, vis)
+
+		if start > 0 {
+			fmt.Fprintf(&b, "  \033[2m  ↑ %d more\033[0m\n", start)
+		}
+		for i := start; i < end; i++ {
 			cur := "  "
 			if i == m.modpack.configCursor {
 				cur = "\033[36m>\033[0m "
 			}
-			fmt.Fprintf(&b, "  %s%s\n", cur, f)
+			fmt.Fprintf(&b, "  %s%s\n", cur, m.modpack.configFiles[i])
+		}
+		if end < len(m.modpack.configFiles) {
+			fmt.Fprintf(&b, "  \033[2m  ↓ %d more\033[0m\n", len(m.modpack.configFiles)-end)
 		}
 	}
 

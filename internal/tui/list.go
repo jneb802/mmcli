@@ -8,6 +8,38 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+// listVisible returns how many list rows fit given the terminal height and
+// the number of non-list lines (chrome) above and below. Returns 0 (show all)
+// when height is unknown.
+func listVisible(termHeight, chrome int) int {
+	if termHeight <= 0 {
+		return 0
+	}
+	v := termHeight - chrome
+	if v < 5 {
+		return 5
+	}
+	return v
+}
+
+// listWindow computes the visible slice [start, end) of a list, keeping the
+// cursor in view. Returns (start, end). If visible <= 0 or >= len, shows all.
+func listWindow(length, cursor, visible int) (int, int) {
+	if visible <= 0 || visible >= length {
+		return 0, length
+	}
+	start := cursor - visible/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + visible
+	if end > length {
+		end = length
+		start = end - visible
+	}
+	return start, end
+}
+
 // modListItem is a unified representation for rendering mod lists in both tabs.
 type modListItem struct {
 	Name          string
@@ -57,7 +89,8 @@ func nextAnticheatValue(current, system string) string {
 
 // renderModList renders a list of mods with cursor, check/x, name, version, and update indicators.
 // If showAnticheat is true, an anticheat column is shown after version.
-func renderModList(b *strings.Builder, items []modListItem, cursor int, showAnticheat bool, anticheatSystem string) {
+// visible limits how many rows are shown (0 = all).
+func renderModList(b *strings.Builder, items []modListItem, cursor, visible int, showAnticheat bool, anticheatSystem string) {
 	if len(items) == 0 {
 		b.WriteString("  No mods.\n")
 		return
@@ -78,7 +111,14 @@ func renderModList(b *strings.Builder, items []modListItem, cursor int, showAnti
 		}
 	}
 
-	for i, item := range items {
+	start, end := listWindow(len(items), cursor, visible)
+
+	if start > 0 {
+		fmt.Fprintf(b, "  \033[2m  ↑ %d more\033[0m\n", start)
+	}
+
+	for i := start; i < end; i++ {
+		item := items[i]
 		cur := "  "
 		if i == cursor {
 			cur = "\033[36m>\033[0m "
@@ -106,10 +146,14 @@ func renderModList(b *strings.Builder, items []modListItem, cursor int, showAnti
 			fmt.Fprintf(b, "  %s[%s] %s%s%s\n", cur, check, item.Name, pad, version)
 		}
 	}
+
+	if end < len(items) {
+		fmt.Fprintf(b, "  \033[2m  ↓ %d more\033[0m\n", len(items)-end)
+	}
 }
 
 // renderSyncModList renders a mod list with dual local/server version columns and diff status.
-func renderSyncModList(b *strings.Builder, items []modListItem, cursor int) {
+func renderSyncModList(b *strings.Builder, items []modListItem, cursor, visible int) {
 	if len(items) == 0 {
 		b.WriteString("  No mods.\n")
 		return
@@ -147,7 +191,14 @@ func renderSyncModList(b *strings.Builder, items []modListItem, cursor int) {
 	serverPad := strings.Repeat(" ", maxServer-len("Server")+2)
 	fmt.Fprintf(b, "  \033[2m    Name%sLocal%sServer%sStatus\033[0m\n", namePad, localPad, serverPad)
 
-	for i, item := range items {
+	start, end := listWindow(len(items), cursor, visible)
+
+	if start > 0 {
+		fmt.Fprintf(b, "  \033[2m  ↑ %d more\033[0m\n", start)
+	}
+
+	for i := start; i < end; i++ {
+		item := items[i]
 		cur := "  "
 		if i == cursor {
 			cur = "\033[36m>\033[0m "
@@ -185,6 +236,10 @@ func renderSyncModList(b *strings.Builder, items []modListItem, cursor int) {
 		default:
 			fmt.Fprintf(b, "  %s\033[2m%s%s%s%s%s%s✓\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad)
 		}
+	}
+
+	if end < len(items) {
+		fmt.Fprintf(b, "  \033[2m  ↓ %d more\033[0m\n", len(items)-end)
 	}
 }
 

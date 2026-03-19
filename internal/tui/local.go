@@ -545,7 +545,7 @@ func (m model) viewLocal() string {
 			Update:   m.local.updates[mod.FullName()],
 		}
 	}
-	renderModList(&b, items, m.local.cursor, false, m.anticheatSystem)
+	renderModList(&b, items, m.local.cursor, listVisible(m.height, 11), false, m.anticheatSystem)
 
 	// Status bar
 	b.WriteString("\n")

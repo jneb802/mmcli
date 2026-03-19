@@ -445,7 +445,7 @@ func (m model) viewServer() string {
 		}
 		items[i] = item
 	}
-	renderModList(&b, items, m.server.cursor, true, m.anticheatSystem)
+	renderModList(&b, items, m.server.cursor, listVisible(m.height, 11), true, m.anticheatSystem)
 
 	// Status bar
 	b.WriteString("\n")

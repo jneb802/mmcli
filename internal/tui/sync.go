@@ -320,7 +320,7 @@ func (m model) viewSyncModeration() string {
 	}
 	fmt.Fprintf(&b, "  \033[1mModeration\033[0m  \033[2m%s\033[0m\n\n", systemLabel)
 
-	renderModerationList(&b, m.sync.modItems, m.sync.moderationCursor, m.anticheatSystem)
+	renderModerationList(&b, m.sync.modItems, m.sync.moderationCursor, listVisible(m.height, 12), m.anticheatSystem)
 
 	b.WriteString("\n")
 	if m.server.statusErr != nil {
@@ -338,7 +338,7 @@ func (m model) viewSyncModeration() string {
 	return b.String()
 }
 
-func renderModerationList(b *strings.Builder, items []modListItem, cursor int, anticheatSystem string) {
+func renderModerationList(b *strings.Builder, items []modListItem, cursor, visible int, anticheatSystem string) {
 	if len(items) == 0 {
 		b.WriteString("  No mods.\n")
 		return
@@ -355,7 +355,14 @@ func renderModerationList(b *strings.Builder, items []modListItem, cursor int, a
 	namePad := strings.Repeat(" ", maxName-len("Name")+2)
 	fmt.Fprintf(b, "  \033[2m    Name%sClassification\033[0m\n", namePad)
 
-	for i, item := range items {
+	start, end := listWindow(len(items), cursor, visible)
+
+	if start > 0 {
+		fmt.Fprintf(b, "  \033[2m  ↑ %d more\033[0m\n", start)
+	}
+
+	for i := start; i < end; i++ {
+		item := items[i]
 		cur := "  "
 		if i == cursor {
 			cur = "\033[36m>\033[0m "
@@ -385,6 +392,10 @@ func renderModerationList(b *strings.Builder, items []modListItem, cursor int, a
 		}
 
 		fmt.Fprintf(b, "  %s%s%s%s\n", cur, item.Name, pad, label)
+	}
+
+	if end < len(items) {
+		fmt.Fprintf(b, "  \033[2m  ↓ %d more\033[0m\n", len(items)-end)
 	}
 }
 
@@ -426,7 +437,7 @@ func (m model) viewSyncMods() string {
 	// Header
 	fmt.Fprintf(&b, "  \033[1mMod sync: %s → %s\033[0m\n\n", m.cfg.ActiveProfile, m.server.serverName)
 
-	renderSyncModList(&b, m.sync.modItems, m.sync.modCursor)
+	renderSyncModList(&b, m.sync.modItems, m.sync.modCursor, listVisible(m.height, 12))
 
 	// Status
 	b.WriteString("\n")
