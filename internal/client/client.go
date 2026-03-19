@@ -66,58 +66,67 @@ func (c *AgentClient) ListMods() (*agentapi.ModListResponse, error) {
 	return &resp, nil
 }
 
-func (c *AgentClient) SyncMods(manifest agentapi.PushManifest) (*agentapi.SyncResponse, error) {
-	req := agentapi.SyncRequest{Manifest: manifest}
-	var resp agentapi.SyncResponse
-	// Use a longer timeout — server needs time to download mods from Thunderstore
-	if err := c.doJSONWithTimeout("POST", agentapi.PathModsSync, req, &resp, 5*time.Minute); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-func (c *AgentClient) PushMods(archive io.Reader, clean bool) (*agentapi.ActionResponse, error) {
-	// Stream the multipart body via io.Pipe to avoid buffering large archives in memory
+// SyncMods sends a manifest and optional upload mod zips to the server.
+// The uploads map is keyed by DirName → zip data for mods with Source="upload".
+func (c *AgentClient) SyncMods(manifest agentapi.PushManifest, uploads map[string]io.Reader) (*agentapi.SyncResponse, error) {
 	pr, pw := io.Pipe()
 	w := multipart.NewWriter(pw)
 
 	go func() {
 		defer pw.Close()
-		w.WriteField("clean", fmt.Sprintf("%v", clean))
-		part, err := w.CreateFormFile("archive", "mods.tar.gz")
+
+		// Write manifest as JSON form field
+		data, err := json.Marshal(manifest)
 		if err != nil {
 			pw.CloseWithError(err)
 			return
 		}
-		if _, err := io.Copy(part, archive); err != nil {
+		if err := w.WriteField("manifest", string(data)); err != nil {
 			pw.CloseWithError(err)
 			return
 		}
+
+		// Write upload mod zips as file parts
+		for dirName, r := range uploads {
+			part, err := w.CreateFormFile(dirName, dirName+".zip")
+			if err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+			if _, err := io.Copy(part, r); err != nil {
+				pw.CloseWithError(err)
+				return
+			}
+		}
+
 		w.Close()
 	}()
 
-	req, err := http.NewRequest("POST", c.BaseURL+agentapi.PathMods, pr)
+	req, err := http.NewRequest("POST", c.BaseURL+agentapi.PathModsSync, pr)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set(agentapi.HeaderAPIKey, c.Secret)
 	req.Header.Set("Content-Type", w.FormDataContentType())
 
-	// No timeout — large uploads can take a long time
+	// No timeout — server may need to download from Thunderstore + receive uploads
 	httpClient := &http.Client{}
 	httpResp, err := httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("push failed: %w", err)
+		return nil, fmt.Errorf("sync failed: %w", err)
 	}
 	defer httpResp.Body.Close()
 
 	if httpResp.StatusCode != http.StatusOK {
 		var errResp agentapi.ErrorResponse
 		json.NewDecoder(httpResp.Body).Decode(&errResp)
-		return nil, fmt.Errorf("push failed (%d): %s", httpResp.StatusCode, errResp.Error)
+		if errResp.Error != "" {
+			return nil, fmt.Errorf("sync failed: %s", errResp.Error)
+		}
+		return nil, fmt.Errorf("sync failed with status %d", httpResp.StatusCode)
 	}
 
-	var resp agentapi.ActionResponse
+	var resp agentapi.SyncResponse
 	json.NewDecoder(httpResp.Body).Decode(&resp)
 	return &resp, nil
 }

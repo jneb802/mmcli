@@ -311,8 +311,9 @@ var serverPushCmd = &cobra.Command{
 	Short: "Push local profile mods to the active server",
 	Long: `Sync mods from a local profile to the active server. Only mods targeted
 at "both" or "server" are included. Client-only mods are skipped.
-The server downloads mods directly from Thunderstore. Mods removed from
-the local profile are also removed from the server.
+Thunderstore mods are downloaded directly by the server. Local mods
+(installed from a path) are uploaded from the client.
+Mods removed from the local profile are also removed from the server.
 Use --with-config to also push config files after mods.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireAdmin(); err != nil {
@@ -348,7 +349,11 @@ Use --with-config to also push config files after mods.`,
 		fmt.Printf("Syncing profile '%s' to server '%s'...\n", profileName, name)
 
 		manifest := profile.BuildManifest(profileName, reg)
-		resp, err := c.SyncMods(manifest, nil)
+		uploads, err := profile.BuildUploads(paths, profileName, manifest, reg)
+		if err != nil {
+			return err
+		}
+		resp, err := c.SyncMods(manifest, uploads)
 		if err != nil {
 			return err
 		}

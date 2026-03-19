@@ -682,7 +682,11 @@ func serverAction(c *client.AgentClient, action string) tea.Cmd {
 func pushMods(c *client.AgentClient, paths config.Paths, cfg config.Config, reg config.Registry) tea.Cmd {
 	return func() tea.Msg {
 		manifest := profile.BuildManifest(cfg.ActiveProfile, reg)
-		resp, err := c.SyncMods(manifest, nil)
+		uploads, err := profile.BuildUploads(paths, cfg.ActiveProfile, manifest, reg)
+		if err != nil {
+			return serverPushMsg{err: err}
+		}
+		resp, err := c.SyncMods(manifest, uploads)
 		return serverPushMsg{resp: resp, err: err}
 	}
 }

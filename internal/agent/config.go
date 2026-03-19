@@ -15,6 +15,14 @@ type AgentConfig struct {
 	ValheimDir   string `json:"valheim_dir"`
 	StartScript  string `json:"start_script"`
 	LogFile      string `json:"log_file,omitempty"`
+	ModAPIPort   int    `json:"mod_api_port,omitempty"`
+}
+
+func (c AgentConfig) ResolvedModAPIPort() int {
+	if c.ModAPIPort > 0 {
+		return c.ModAPIPort
+	}
+	return 9878
 }
 
 func (c AgentConfig) BepInExDir() string {

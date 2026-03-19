@@ -140,6 +140,56 @@ func extractZipFile(f *zip.File, destPath string) error {
 	return err
 }
 
+// extractUploadZip extracts a client-packaged upload zip into BepInEx directories.
+// Files are expected to have prefixes like plugins/, patchers/, monomod/.
+// Files without a recognized prefix default to plugins/<dirName>/.
+func extractUploadZip(file io.ReaderAt, size int64, bepDir, dirName string) error {
+	r, err := zip.NewReader(file, size)
+	if err != nil {
+		return fmt.Errorf("failed to open upload zip: %w", err)
+	}
+
+	type override struct {
+		prefix string
+		subdir string
+	}
+	overrides := []override{
+		{"plugins/", "plugins"},
+		{"patchers/", "patchers"},
+		{"monomod/", "monomod"},
+	}
+
+	for _, f := range r.File {
+		if f.FileInfo().IsDir() {
+			continue
+		}
+
+		fname := filepath.ToSlash(f.Name)
+		var destPath string
+		matched := false
+
+		for _, ov := range overrides {
+			if len(fname) > len(ov.prefix) && strings.EqualFold(fname[:len(ov.prefix)], ov.prefix) {
+				relPath := fname[len(ov.prefix):]
+				destPath = filepath.Join(bepDir, ov.subdir, dirName, relPath)
+				matched = true
+				break
+			}
+		}
+
+		if !matched {
+			// Default to plugins
+			destPath = filepath.Join(bepDir, "plugins", dirName, fname)
+		}
+
+		if err := extractZipFile(f, destPath); err != nil {
+			return fmt.Errorf("failed to extract %s: %w", fname, err)
+		}
+	}
+
+	return nil
+}
+
 // removeModDirs removes a mod's directories from all BepInEx locations.
 func removeModDirs(bepDir, dirName string) {
 	for _, sub := range []string{"plugins", "patchers", "monomod", "core"} {

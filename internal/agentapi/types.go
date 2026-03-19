@@ -169,10 +169,6 @@ type ConfigPushResponse struct {
 
 // Sync types for manifest-based push.
 
-type SyncRequest struct {
-	Manifest PushManifest `json:"manifest"`
-}
-
 type SyncResponse struct {
 	OK         bool             `json:"ok"`
 	Downloaded int              `json:"downloaded"`          // freshly downloaded from Thunderstore
