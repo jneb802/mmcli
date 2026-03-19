@@ -82,6 +82,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.local.gameRunning = msg.running
 		return m, nil
 
+	case gameStartMsg:
+		if msg.err != nil {
+			m.local.err = msg.err
+		} else {
+			m.local.err = nil
+			m.local.gameRunning = true
+		}
+		return m, nil
+
 	case localTickMsg:
 		if m.activeTab == tabLocal {
 			return m, tea.Batch(checkGameRunning(), localTick())

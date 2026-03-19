@@ -21,6 +21,7 @@ import (
 type installDoneMsg struct{ err error }
 type updateCheckDoneMsg struct{ updates map[string]string }
 type gameStatusMsg struct{ running bool }
+type gameStartMsg struct{ err error }
 type localTickMsg struct{}
 
 type localModel struct {
@@ -278,6 +279,10 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, updateMod(m.paths, m.cfg, m.reg, mod.FullName())
 			}
 		}
+	case "s":
+		if !m.local.gameRunning {
+			return m, startGame(m.paths, m.cfg)
+		}
 	case "l":
 		logFile := m.paths.BepInExLogFile()
 		data, err := os.ReadFile(logFile)
@@ -381,7 +386,7 @@ func (m model) viewLocal() string {
 	} else if m.local.err != nil {
 		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.local.err)
 	}
-	hotkeys := []string{"↑/↓ navigate", "space toggle", "x remove", "u update", "i install", "c config", "l logs", "p profile"}
+	hotkeys := []string{"↑/↓ navigate", "space toggle", "x remove", "u update", "i install", "c config", "s start", "l logs", "p profile"}
 	if m.cfg.ActiveServer != "" {
 		hotkeys = append(hotkeys, "tab server")
 	}
@@ -422,6 +427,29 @@ func installMod(paths config.Paths, cfg config.Config, reg *config.Registry, que
 			defer func() { os.Stdout = old }()
 		}
 		return installDoneMsg{err: installer.Install(paths, cfg, reg, query, "both")}
+	}
+}
+
+func startGame(paths config.Paths, cfg config.Config) tea.Cmd {
+	return func() tea.Msg {
+		os.Remove(paths.BepInExLogFile())
+
+		if err := profile.ActivateSymlinks(paths, cfg.ActiveProfile); err != nil {
+			return gameStartMsg{err: fmt.Errorf("failed to validate symlinks: %w", err)}
+		}
+
+		scriptPath := paths.RunBepInExScript()
+		if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
+			return gameStartMsg{err: fmt.Errorf("run_bepinex.sh not found — run `mmcli init` first")}
+		}
+
+		cmd := exec.Command("/bin/bash", scriptPath)
+		cmd.Dir = paths.ValheimDir
+		if err := cmd.Start(); err != nil {
+			return gameStartMsg{err: fmt.Errorf("failed to start game: %w", err)}
+		}
+
+		return gameStartMsg{}
 	}
 }
 
