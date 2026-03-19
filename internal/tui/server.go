@@ -311,6 +311,30 @@ func (m model) handleServerModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.server.pushItems = items
 		m.server.pushScroll = 0
 		return m, nil
+	case "a":
+		if m.server.role != agentapi.RoleAdmin || len(m.server.mods) == 0 {
+			return m, nil
+		}
+		mod := m.server.mods[m.server.cursor]
+		regMod, ok := m.reg.GetMod(m.cfg.ActiveProfile, mod.Name)
+		if !ok {
+			return m, nil
+		}
+		newValue := nextAnticheatValue(regMod.Anticheat, m.anticheatSystem)
+		regMod.Anticheat = newValue
+		m.reg.SetMod(m.cfg.ActiveProfile, regMod)
+		// Propagate to dependencies (mirrors cmd/anticheat.go)
+		for _, depName := range regMod.Dependencies {
+			dep, depOk := m.reg.GetMod(m.cfg.ActiveProfile, depName)
+			if !depOk {
+				continue
+			}
+			dep.Anticheat = newValue
+			m.reg.SetMod(m.cfg.ActiveProfile, dep)
+		}
+		config.SaveRegistry(m.paths, *m.reg)
+		m.server.mods[m.server.cursor].Anticheat = newValue
+		return m, nil
 	}
 	return m, nil
 }
@@ -405,7 +429,7 @@ func (m model) viewServer() string {
 		}
 		items[i] = item
 	}
-	renderModList(&b, items, m.server.cursor, true)
+	renderModList(&b, items, m.server.cursor, true, m.anticheatSystem)
 
 	// Status bar
 	b.WriteString("\n")
@@ -414,7 +438,7 @@ func (m model) viewServer() string {
 	}
 	var hotkeys []string
 	if m.server.role == agentapi.RoleAdmin {
-		hotkeys = []string{"s start", "d stop", "r restart", "p push", "w world", "l logs", "` mode", "tab next", "q quit"}
+		hotkeys = []string{"a anticheat", "s start", "d stop", "r restart", "p push", "w world", "l logs", "` mode", "tab next", "q quit"}
 	} else {
 		hotkeys = []string{"w world", "l logs", "` mode", "tab next", "q quit"}
 	}

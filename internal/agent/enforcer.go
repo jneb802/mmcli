@@ -217,6 +217,9 @@ func setupValheimEnforcer(bepDir string, mods []agentapi.ManifestMod, modAPIPort
 		case mod.Anticheat == "greylist":
 			cfg.OptionalMods[entry.guid] = modEntry
 			cfg.ActiveMods[entry.guid] = modEntry
+		case mod.Anticheat == "adminonly":
+			cfg.AdminOnlyMods[entry.guid] = modEntry
+			cfg.ActiveMods[entry.guid] = modEntry
 		default:
 			cfg.ActiveMods[entry.guid] = modEntry
 		}
@@ -244,8 +247,8 @@ func setupValheimEnforcer(bepDir string, mods []agentapi.ManifestMod, modAPIPort
 		return fmt.Errorf("enforcer: write Mods.yaml: %w", err)
 	}
 
-	log.Printf("Enforcer: wrote %s (%d active, %d required, %d optional, %d server-only)",
-		path, len(cfg.ActiveMods), len(cfg.RequiredMods), len(cfg.OptionalMods), len(cfg.ServerOnlyMods))
+	log.Printf("Enforcer: wrote %s (%d active, %d required, %d optional, %d admin-only, %d server-only)",
+		path, len(cfg.ActiveMods), len(cfg.RequiredMods), len(cfg.OptionalMods), len(cfg.AdminOnlyMods), len(cfg.ServerOnlyMods))
 
 	return nil
 }

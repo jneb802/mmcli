@@ -15,11 +15,12 @@ type ServerEntry struct {
 }
 
 type Config struct {
-	ActiveProfile string                  `json:"active_profile"`
-	ValheimPath   string                  `json:"valheim_path"`
-	Initialized   bool                    `json:"initialized"`
-	ActiveServer  string                  `json:"active_server,omitempty"`
-	Servers       map[string]ServerEntry  `json:"servers,omitempty"`
+	ActiveProfile   string                 `json:"active_profile"`
+	ValheimPath     string                 `json:"valheim_path"`
+	Initialized     bool                   `json:"initialized"`
+	ActiveServer    string                 `json:"active_server,omitempty"`
+	Servers         map[string]ServerEntry `json:"servers,omitempty"`
+	AnticheatSystem string                 `json:"anticheat_system,omitempty"` // "auto", "azu", "enforcer", "" (= auto)
 }
 
 type Paths struct {

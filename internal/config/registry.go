@@ -18,7 +18,7 @@ type ModEntry struct {
 	Files        []string `json:"files"`
 	Dependencies []string `json:"dependencies"`
 	Target    string   `json:"target,omitempty"`    // "client", "server", "both" (default/"" = both)
-	Anticheat string   `json:"anticheat,omitempty"` // "whitelist", "greylist", or "" (none)
+	Anticheat string   `json:"anticheat,omitempty"` // "whitelist", "greylist", "adminonly", or "" (none)
 }
 
 func (m ModEntry) ResolvedTarget() string {

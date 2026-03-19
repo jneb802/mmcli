@@ -74,7 +74,7 @@ type ManifestMod struct {
 	Name      string `json:"name"`      // "EpicLoot"
 	Version   string `json:"version"`   // "0.12.11"
 	Target    string `json:"target"`    // "server" or "both"
-	Anticheat string `json:"anticheat"` // "whitelist", "greylist", ""
+	Anticheat string `json:"anticheat"` // "whitelist", "greylist", "adminonly", ""
 	Source    string `json:"source"`    // "thunderstore" or "upload"
 }
 
