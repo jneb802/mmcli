@@ -98,6 +98,8 @@ type serverModel struct {
 	logStop  chan struct{}
 	modsResp *agentapi.ModListResponse
 
+	statusCursor int
+
 	settings       *agentapi.SettingsResponse
 	settingsScroll int
 
@@ -273,6 +275,8 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleServerLogsKeys(msg)
 	case contentWorld:
 		return m.handleServerWorldKeys(msg)
+	case contentStatus:
+		return m.handleServerStatusKeys(msg)
 	}
 	return m, nil
 }
@@ -478,48 +482,61 @@ func (m model) viewServerLogs() string {
 	return b.String()
 }
 
-func (m model) viewServerStatus() string {
-	var b strings.Builder
-
-	if m.server.client == nil {
-		b.WriteString("\n  \033[2mNo server configured.\033[0m\n\n")
-		hotkeys := []string{"` mode", "tab next", "q quit"}
-		renderHotkeyBar(&b, hotkeys, m.width)
-		return b.String()
-	}
-
-	b.WriteString("\n")
+func (m model) buildServerStatusItems() []settingsItem {
+	var items []settingsItem
 
 	// Server name
-	fmt.Fprintf(&b, "  Server:            \033[1m%s\033[0m\n", m.server.serverName)
+	items = append(items, settingsItem{
+		label:   "Server",
+		value:   m.server.serverName,
+		tooltip: "Name of the linked remote server.",
+	})
 
 	// Role
+	roleVal := "admin"
 	if m.server.role == agentapi.RolePlayer {
-		fmt.Fprintf(&b, "  Role:              \033[33mplayer\033[0m\n")
-	} else {
-		fmt.Fprintf(&b, "  Role:              admin\n")
+		roleVal = "\033[33mplayer\033[0m"
 	}
+	items = append(items, settingsItem{
+		label:   "Role",
+		value:   roleVal,
+		tooltip: "Your permission level. Admins can push mods, start/stop the server, and edit world settings.",
+	})
 
 	// Status
+	var statusVal string
 	if m.server.status != nil && m.server.status.Running {
-		fmt.Fprintf(&b, "  Status:            \033[32mrunning\033[0m (%s)\n", m.server.status.Uptime)
+		statusVal = fmt.Sprintf("\033[32mrunning\033[0m (%s)", m.server.status.Uptime)
 	} else if m.server.statusErr != nil {
-		fmt.Fprintf(&b, "  Status:            \033[31merror: %v\033[0m\n", m.server.statusErr)
+		statusVal = fmt.Sprintf("\033[31merror: %v\033[0m", m.server.statusErr)
 	} else if m.server.fetching {
-		fmt.Fprintf(&b, "  Status:            \033[2mfetching...\033[0m\n")
+		statusVal = "\033[2mfetching...\033[0m"
 	} else {
-		fmt.Fprintf(&b, "  Status:            \033[31mstopped\033[0m\n")
+		statusVal = "\033[31mstopped\033[0m"
 	}
+	items = append(items, settingsItem{
+		label:   "Status",
+		value:   statusVal,
+		tooltip: "Whether the Valheim dedicated server process is running.",
+	})
 
 	// Mod count
-	fmt.Fprintf(&b, "  Mods:              %d\n", len(m.server.mods))
+	items = append(items, settingsItem{
+		label:   "Mods",
+		value:   fmt.Sprintf("%d", len(m.server.mods)),
+		tooltip: "Number of mods installed on the server from the last push.",
+	})
 
 	// Agent version
+	agentVal := "\033[2m–\033[0m"
 	if m.server.status != nil && m.server.status.Version != "" {
-		fmt.Fprintf(&b, "  Agent:             \033[36m%s\033[0m\n", m.server.status.Version)
-	} else {
-		fmt.Fprintf(&b, "  Agent:             \033[2m–\033[0m\n")
+		agentVal = fmt.Sprintf("\033[36m%s\033[0m", m.server.status.Version)
 	}
+	items = append(items, settingsItem{
+		label:   "Agent",
+		value:   agentVal,
+		tooltip: "Version of the mmcli agent running on the server.",
+	})
 
 	// MMCLI Server Mod
 	serverModVer := ""
@@ -530,60 +547,133 @@ func (m model) viewServerStatus() string {
 			break
 		}
 	}
+	var serverModVal string
 	if m.server.modsResp != nil && m.server.modsResp.APIQueried {
 		if serverModVer != "" {
-			fmt.Fprintf(&b, "  MMCLI Server Mod:  \033[32m%s\033[0m\n", serverModVer)
+			serverModVal = fmt.Sprintf("\033[32m%s\033[0m", serverModVer)
 		} else {
-			fmt.Fprintf(&b, "  MMCLI Server Mod:  \033[32minstalled\033[0m\n")
+			serverModVal = "\033[32minstalled\033[0m"
 		}
 	} else {
-		fmt.Fprintf(&b, "  MMCLI Server Mod:  \033[2mnot installed\033[0m\n")
+		serverModVal = "\033[2mnot installed\033[0m"
 	}
+	items = append(items, settingsItem{
+		label:   "MMCLI Server Mod",
+		value:   serverModVal,
+		tooltip: "BepInEx plugin that exposes game state (day, time, players) to the agent API.",
+	})
 
 	// Player count
+	var playerVal string
 	if m.server.status != nil && m.server.status.Running && m.server.status.PlayerCount > 0 {
-		fmt.Fprintf(&b, "  Players:           \033[32m%d online\033[0m\n", m.server.status.PlayerCount)
+		playerVal = fmt.Sprintf("\033[32m%d online\033[0m", m.server.status.PlayerCount)
 	} else if m.server.status != nil && m.server.status.Running {
-		fmt.Fprintf(&b, "  Players:           0 online\n")
+		playerVal = "0 online"
 	} else {
-		fmt.Fprintf(&b, "  Players:           \033[2m–\033[0m\n")
+		playerVal = "\033[2m–\033[0m"
 	}
+	items = append(items, settingsItem{
+		label:   "Players",
+		value:   playerVal,
+		tooltip: "Number of players currently connected to the server.",
+	})
 
 	// Game day & time
+	var dayVal string
 	if m.server.status != nil && m.server.status.Running && m.server.status.Day > 0 {
 		dayNight := "Night"
-		dayNightColor := "\033[34m" // blue
+		dayNightColor := "\033[34m"
 		if m.server.status.IsDay != nil && *m.server.status.IsDay {
 			dayNight = "Day"
-			dayNightColor = "\033[33m" // yellow
+			dayNightColor = "\033[33m"
 		}
 		gameTime := m.server.status.GameTime
 		if gameTime == "" {
 			gameTime = "–"
 		}
-		fmt.Fprintf(&b, "  Game day:          Day %d  %s%s\033[0m  (%s)\n",
-			m.server.status.Day, dayNightColor, dayNight, gameTime)
+		dayVal = fmt.Sprintf("Day %d  %s%s\033[0m  (%s)", m.server.status.Day, dayNightColor, dayNight, gameTime)
 	} else if m.server.status != nil && m.server.status.Running {
-		fmt.Fprintf(&b, "  Game day:          \033[2mloading...\033[0m\n")
+		dayVal = "\033[2mloading...\033[0m"
 	} else {
-		fmt.Fprintf(&b, "  Game day:          \033[2m–\033[0m\n")
+		dayVal = "\033[2m–\033[0m"
 	}
+	items = append(items, settingsItem{
+		label:   "Game day",
+		value:   dayVal,
+		tooltip: "Current in-game day and time of day. Requires MMCLI Server Mod.",
+	})
 
 	// World
 	if m.server.status != nil && m.server.status.World != "" {
-		fmt.Fprintf(&b, "  World:             %s\n", m.server.status.World)
+		items = append(items, settingsItem{
+			label:   "World",
+			value:   m.server.status.World,
+			tooltip: "Name of the active Valheim world save.",
+		})
 	}
 
-	// Last restart (computed from uptime)
+	// Last restart
+	var restartVal string
 	if m.server.status != nil && m.server.status.Running && m.server.status.UptimeSecs > 0 {
 		restartTime := time.Now().Add(-time.Duration(m.server.status.UptimeSecs) * time.Second)
-		fmt.Fprintf(&b, "  Last restart:      %s\n", restartTime.Format("2006-01-02 15:04:05"))
+		restartVal = restartTime.Format("2006-01-02 15:04:05")
 	} else {
-		fmt.Fprintf(&b, "  Last restart:      \033[2m–\033[0m\n")
+		restartVal = "\033[2m–\033[0m"
+	}
+	items = append(items, settingsItem{
+		label:   "Last restart",
+		value:   restartVal,
+		tooltip: "When the server process was last started, computed from uptime.",
+	})
+
+	return items
+}
+
+func (m model) handleServerStatusKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	items := m.buildServerStatusItems()
+	switch msg.String() {
+	case "up", "k":
+		if m.server.statusCursor > 0 {
+			m.server.statusCursor--
+		}
+	case "down", "j":
+		if m.server.statusCursor < len(items)-1 {
+			m.server.statusCursor++
+		}
+	}
+	return m, nil
+}
+
+func (m model) viewServerStatus() string {
+	var b strings.Builder
+
+	if m.server.client == nil {
+		b.WriteString("\n  \033[2mNo server configured.\033[0m\n\n")
+		hotkeys := []string{"` mode", "tab next", "q quit"}
+		renderHotkeyBar(&b, hotkeys, m.width)
+		return b.String()
+	}
+
+	items := m.buildServerStatusItems()
+	b.WriteString("\n")
+
+	for i, item := range items {
+		cursor := "    "
+		if i == m.server.statusCursor {
+			cursor = "  \033[36m>\033[0m "
+		}
+		label := fmt.Sprintf("%-18s", item.Label()+":")
+		fmt.Fprintf(&b, "%s%s %s\n", cursor, label, item.value)
+	}
+
+	// Tooltip
+	b.WriteString("\n")
+	if m.server.statusCursor < len(items) {
+		fmt.Fprintf(&b, "  \033[2m%s\033[0m\n", items[m.server.statusCursor].tooltip)
 	}
 
 	b.WriteString("\n")
-	hotkeys := []string{"` mode", "tab next", "q quit"}
+	hotkeys := []string{"↑/↓ navigate", "` mode", "tab next", "q quit"}
 	renderHotkeyBar(&b, hotkeys, m.width)
 
 	return b.String()
