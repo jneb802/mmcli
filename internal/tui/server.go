@@ -455,49 +455,61 @@ func (m model) viewServerStatus() string {
 	b.WriteString("\n")
 
 	// Server name
-	fmt.Fprintf(&b, "  Server:         \033[1m%s\033[0m\n", m.server.serverName)
+	fmt.Fprintf(&b, "  Server:            \033[1m%s\033[0m\n", m.server.serverName)
 
 	// Role
 	if m.server.role == agentapi.RolePlayer {
-		fmt.Fprintf(&b, "  Role:           \033[33mplayer\033[0m\n")
+		fmt.Fprintf(&b, "  Role:              \033[33mplayer\033[0m\n")
 	} else {
-		fmt.Fprintf(&b, "  Role:           admin\n")
+		fmt.Fprintf(&b, "  Role:              admin\n")
 	}
 
 	// Status
 	if m.server.status != nil && m.server.status.Running {
-		fmt.Fprintf(&b, "  Status:         \033[32mrunning\033[0m (%s)\n", m.server.status.Uptime)
+		fmt.Fprintf(&b, "  Status:            \033[32mrunning\033[0m (%s)\n", m.server.status.Uptime)
 	} else if m.server.statusErr != nil {
-		fmt.Fprintf(&b, "  Status:         \033[31merror: %v\033[0m\n", m.server.statusErr)
+		fmt.Fprintf(&b, "  Status:            \033[31merror: %v\033[0m\n", m.server.statusErr)
 	} else if m.server.fetching {
-		fmt.Fprintf(&b, "  Status:         \033[2mfetching...\033[0m\n")
+		fmt.Fprintf(&b, "  Status:            \033[2mfetching...\033[0m\n")
 	} else {
-		fmt.Fprintf(&b, "  Status:         \033[31mstopped\033[0m\n")
+		fmt.Fprintf(&b, "  Status:            \033[31mstopped\033[0m\n")
 	}
 
 	// Mod count
-	fmt.Fprintf(&b, "  Mods:           %d\n", len(m.server.mods))
+	fmt.Fprintf(&b, "  Mods:              %d\n", len(m.server.mods))
 
 	// Agent version
 	if m.server.status != nil && m.server.status.Version != "" {
-		fmt.Fprintf(&b, "  Agent:          \033[36m%s\033[0m\n", m.server.status.Version)
+		fmt.Fprintf(&b, "  Agent:             \033[36m%s\033[0m\n", m.server.status.Version)
 	} else {
-		fmt.Fprintf(&b, "  Agent:          \033[2m–\033[0m\n")
+		fmt.Fprintf(&b, "  Agent:             \033[2m–\033[0m\n")
 	}
 
-	// MMCLIServerMod
+	// MMCLI Server Mod
+	serverModVer := ""
+	for _, mod := range m.server.mods {
+		lower := strings.ToLower(mod.Name)
+		if strings.Contains(lower, "mmcliservermod") || strings.Contains(lower, "mmcli_servermod") || strings.Contains(lower, "mmcli-servermod") {
+			serverModVer = mod.Version
+			break
+		}
+	}
 	if m.server.modsResp != nil && m.server.modsResp.APIQueried {
-		fmt.Fprintf(&b, "  Server Mod:     \033[32minstalled\033[0m\n")
+		if serverModVer != "" {
+			fmt.Fprintf(&b, "  MMCLI Server Mod:  \033[32m%s\033[0m\n", serverModVer)
+		} else {
+			fmt.Fprintf(&b, "  MMCLI Server Mod:  \033[32minstalled\033[0m\n")
+		}
 	} else {
-		fmt.Fprintf(&b, "  Server Mod:     \033[2mnot installed\033[0m\n")
+		fmt.Fprintf(&b, "  MMCLI Server Mod:  \033[2mnot installed\033[0m\n")
 	}
 
 	// Last restart (computed from uptime)
 	if m.server.status != nil && m.server.status.Running && m.server.status.UptimeSecs > 0 {
 		restartTime := time.Now().Add(-time.Duration(m.server.status.UptimeSecs) * time.Second)
-		fmt.Fprintf(&b, "  Last restart:   %s\n", restartTime.Format("2006-01-02 15:04:05"))
+		fmt.Fprintf(&b, "  Last restart:      %s\n", restartTime.Format("2006-01-02 15:04:05"))
 	} else {
-		fmt.Fprintf(&b, "  Last restart:   \033[2m–\033[0m\n")
+		fmt.Fprintf(&b, "  Last restart:      \033[2m–\033[0m\n")
 	}
 
 	b.WriteString("\n")
