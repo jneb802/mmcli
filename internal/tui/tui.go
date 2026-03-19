@@ -27,10 +27,11 @@ const (
 	contentMods contentTab = iota
 	contentLogs
 	contentStatus
+	contentWorld
 )
 
 var localTabs = []contentTab{contentMods, contentLogs, contentStatus}
-var serverTabs = []contentTab{contentMods, contentLogs}
+var serverTabs = []contentTab{contentMods, contentLogs, contentWorld}
 
 func contentTabName(t contentTab) string {
 	switch t {
@@ -40,6 +41,8 @@ func contentTabName(t contentTab) string {
 		return "Logs"
 	case contentStatus:
 		return "Status"
+	case contentWorld:
+		return "World"
 	default:
 		return "?"
 	}
@@ -253,7 +256,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.server.statusErr = msg.err
 		} else {
 			m.server.settings = msg.settings
-			m.server.settingsVisible = true
 			m.server.settingsScroll = 0
 			// Rebuild editor fields if active (e.g. after LC switch)
 			if m.server.editor.active {
@@ -375,6 +377,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	var b strings.Builder
 	b.WriteString(renderModeBar(m.activeMode))
+	b.WriteString(renderSeparator(m.width))
 
 	if m.activeMode == modeLocal {
 		b.WriteString(renderContentTabBar(localTabs, m.activeLocalTab))
@@ -393,6 +396,8 @@ func (m model) View() string {
 			b.WriteString(m.viewServer())
 		case contentLogs:
 			b.WriteString(m.viewServerLogs())
+		case contentWorld:
+			b.WriteString(m.viewServerWorld())
 		}
 	}
 
@@ -401,9 +406,9 @@ func (m model) View() string {
 
 func renderModeBar(active mode) string {
 	if active == modeLocal {
-		return fmt.Sprintf("  \033[1;36m[Local]\033[0m  \033[2mServer\033[0m\n")
+		return fmt.Sprintf("  \033[1;37m[Local]\033[0m  \033[2mServer\033[0m\n")
 	}
-	return fmt.Sprintf("  \033[2mLocal\033[0m  \033[1;36m[Server]\033[0m\n")
+	return fmt.Sprintf("  \033[2mLocal\033[0m  \033[1;37m[Server]\033[0m\n")
 }
 
 func renderContentTabBar(tabs []contentTab, active contentTab) string {
@@ -422,6 +427,13 @@ func renderContentTabBar(tabs []contentTab, active contentTab) string {
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+func renderSeparator(width int) string {
+	if width <= 0 {
+		width = 80
+	}
+	return fmt.Sprintf("  \033[37m%s\033[0m\n", strings.Repeat("─", width-4))
 }
 
 // --- Tab lifecycle helpers ---
@@ -452,6 +464,9 @@ func (m *model) switchServerTab(to contentTab) tea.Cmd {
 	}
 	if to == contentLogs && m.server.client != nil {
 		return m.loadServerLogs()
+	}
+	if to == contentWorld && m.server.client != nil && m.server.settings == nil {
+		return fetchSettings(m.server.client)
 	}
 	return nil
 }
