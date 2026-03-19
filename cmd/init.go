@@ -105,6 +105,17 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("\033[32mdone\033[0m")
 
+	fmt.Print("Removing macOS quarantine attributes... ")
+	bepinex.RemoveQuarantine(paths)
+	fmt.Println("\033[32mdone\033[0m")
+
+	fmt.Print("Removing Valheim code signature (required for BepInEx injection)... ")
+	if err := bepinex.RemoveCodeSignature(paths); err != nil {
+		fmt.Printf("\033[33mwarning: %s\033[0m\n", err)
+	} else {
+		fmt.Println("\033[32mdone\033[0m")
+	}
+
 	// Create default profile
 	fmt.Print("Creating default profile... ")
 	if err := profile.Create(paths, "default"); err != nil {

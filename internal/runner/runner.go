@@ -10,6 +10,7 @@ import (
 
 	"github.com/nxadm/tail"
 
+	"mmcli/internal/bepinex"
 	"mmcli/internal/config"
 	"mmcli/internal/profile"
 )
@@ -28,6 +29,12 @@ func Start(paths config.Paths, cfg config.Config) error {
 	scriptPath := paths.RunBepInExScript()
 	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
 		return fmt.Errorf("run_bepinex.sh not found. Run `mmcli init` first")
+	}
+
+	// Strip code signature before every launch — Steam updates can re-sign the
+	// binary, and macOS blocks DYLD_INSERT_LIBRARIES for signed apps.
+	if err := bepinex.RemoveCodeSignature(paths); err != nil {
+		fmt.Printf("Warning: could not remove code signature: %v\n", err)
 	}
 
 	fmt.Printf("Launching Valheim (profile: %s)...\n", cfg.ActiveProfile)

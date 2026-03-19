@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -233,6 +234,41 @@ arch -x86_64 zsh -c "$launch"`
 		result = append(result, line)
 	}
 	return strings.Join(result, "\n")
+}
+
+// RemoveQuarantine strips the com.apple.quarantine extended attribute from the
+// Valheim directory. Downloaded files are tagged by macOS Gatekeeper and
+// quarantined dylibs (like libdoorstop.dylib) are silently blocked from loading.
+func RemoveQuarantine(paths config.Paths) error {
+	// xattr -rd removes the attribute recursively; errors are expected for files
+	// that don't have it, so we only fail on exec errors.
+	cmd := exec.Command("xattr", "-rd", "com.apple.quarantine", paths.ValheimDir)
+	cmd.Run() // ignore exit code — files without the attribute cause non-zero exit
+	return nil
+}
+
+// RemoveCodeSignature strips the code signature from the Valheim app bundle.
+// macOS refuses to honor DYLD_INSERT_LIBRARIES for code-signed applications,
+// which prevents libdoorstop from injecting BepInEx. Steam updates can re-sign
+// the binary, so this should run before every launch.
+func RemoveCodeSignature(paths config.Paths) error {
+	appPath := filepath.Join(paths.ValheimDir, "valheim.app")
+	if _, err := os.Stat(appPath); os.IsNotExist(err) {
+		return nil // no .app bundle, nothing to do
+	}
+
+	// Check if the app is code-signed
+	check := exec.Command("codesign", "-d", appPath)
+	if err := check.Run(); err != nil {
+		return nil // not signed or codesign not available
+	}
+
+	// Remove the signature so DYLD_INSERT_LIBRARIES works
+	remove := exec.Command("codesign", "--remove-signature", appPath)
+	if out, err := remove.CombinedOutput(); err != nil {
+		return fmt.Errorf("failed to remove code signature: %s", string(out))
+	}
+	return nil
 }
 
 // MakeExecutable sets executable permissions on required files.
