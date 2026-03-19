@@ -126,6 +126,12 @@ func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model
 		}
 	}
 
+	// Load last push result from disk
+	if resp, t := loadLastPush(paths); resp != nil {
+		m.server.lastPush = resp
+		m.server.lastPushTime = t
+	}
+
 	return m
 }
 
@@ -278,6 +284,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.resp != nil {
 				m.server.lastPush = msg.resp
 				m.server.lastPushTime = time.Now()
+				saveLastPush(m.paths, msg.resp, m.server.lastPushTime)
 			}
 		}
 		// Show push result screen in sync mode

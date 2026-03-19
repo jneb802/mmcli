@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -882,4 +883,35 @@ func renderSyncPushResult(b *strings.Builder, lp *agentapi.SyncResponse, pushTim
 	}
 
 	fmt.Fprintf(b, "\n  \033[2mesc/enter done\033[0m\n\n")
+}
+
+// --- Last push persistence ---
+
+type savedPush struct {
+	Response agentapi.SyncResponse `json:"response"`
+	PushedAt time.Time             `json:"pushed_at"`
+}
+
+func lastPushPath(paths config.Paths) string {
+	return filepath.Join(paths.ConfigDir, "last_push.json")
+}
+
+func saveLastPush(paths config.Paths, resp *agentapi.SyncResponse, t time.Time) {
+	data, err := json.Marshal(savedPush{Response: *resp, PushedAt: t})
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(lastPushPath(paths), data, 0644)
+}
+
+func loadLastPush(paths config.Paths) (*agentapi.SyncResponse, time.Time) {
+	data, err := os.ReadFile(lastPushPath(paths))
+	if err != nil {
+		return nil, time.Time{}
+	}
+	var sp savedPush
+	if err := json.Unmarshal(data, &sp); err != nil {
+		return nil, time.Time{}
+	}
+	return &sp.Response, sp.PushedAt
 }
