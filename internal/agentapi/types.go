@@ -45,6 +45,7 @@ type ModListResponse struct {
 	Mods         []ModInfo `json:"mods"`
 	ManifestTime string    `json:"manifest_time,omitempty"` // RFC3339 when last push occurred
 	LogParsed    bool      `json:"log_parsed"`              // whether BepInEx log was available
+	APIQueried   bool      `json:"api_queried"`             // whether MMCLIServerMod API was reachable
 }
 
 type ModInfo struct {
@@ -68,6 +69,7 @@ type ManifestMod struct {
 	Version   string `json:"version"`   // "0.12.11"
 	Target    string `json:"target"`    // "server" or "both"
 	Anticheat string `json:"anticheat"` // "whitelist", "greylist", ""
+	Source    string `json:"source"`    // "thunderstore" or "upload"
 }
 
 type PushManifest struct {
@@ -165,25 +167,34 @@ type ConfigPushResponse struct {
 	Message string `json:"message"`
 }
 
-// Sync types for manifest-based push (server downloads from Thunderstore).
+// Sync types for manifest-based push.
 
 type SyncRequest struct {
 	Manifest PushManifest `json:"manifest"`
 }
 
 type SyncResponse struct {
-	OK         bool          `json:"ok"`
-	Downloaded int           `json:"downloaded"`          // freshly downloaded from Thunderstore
-	Cached     int           `json:"cached"`              // already in server cache, re-extracted
-	Skipped    int           `json:"skipped"`             // already at correct version, untouched
-	Removed    int           `json:"removed"`             // old mods cleaned up
-	Failures   []SyncFailure `json:"failures,omitempty"`
-	Message    string        `json:"message"`
+	OK         bool             `json:"ok"`
+	Downloaded int              `json:"downloaded"`          // freshly downloaded from Thunderstore
+	Uploaded   int              `json:"uploaded"`            // installed from client upload
+	Cached     int              `json:"cached"`              // already in server cache, re-extracted
+	Skipped    int              `json:"skipped"`             // already at correct version, untouched
+	Removed    int              `json:"removed"`             // old mods cleaned up
+	Failures   []SyncFailure    `json:"failures,omitempty"`
+	Results    []SyncModResult  `json:"results,omitempty"`   // per-mod sync status
+	Message    string           `json:"message"`
 }
 
 type SyncFailure struct {
 	Mod    string `json:"mod"`    // "Owner-Name"
 	Reason string `json:"reason"` // e.g. "download failed: HTTP 404"
+}
+
+type SyncModResult struct {
+	Mod     string `json:"mod"`              // "Owner-Name"
+	Version string `json:"version,omitempty"`
+	Status  string `json:"status"`           // "downloaded", "cached", "skipped", "removed", "failed"
+	Reason  string `json:"reason,omitempty"` // failure reason
 }
 
 type UpdateResponse struct {

@@ -137,17 +137,49 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Layer 3: BepInEx log enrichment
+	// Layer 3: Plugin load enrichment (mod API preferred, log parsing fallback)
 	logParsed := false
-	logPlugins, _ := ParseBepInExLog(h.cfg.ResolvedLogFile())
-	if logPlugins != nil {
-		logParsed = true
-		matched := MatchLogToManifest(logPlugins, manifestNames)
-		for dirName, lp := range matched {
+	apiQueried := false
+
+	apiPlugins, _ := QueryModAPI(h.cfg.ResolvedModAPIPort())
+	if apiPlugins != nil {
+		apiQueried = true
+		matched, unmatched := MatchAPIToMods(apiPlugins, modMap, manifestNames)
+
+		// Update matched mods with authoritative version + loaded status
+		for dirName, ap := range matched {
 			if info, ok := modMap[dirName]; ok {
-				info.Version = lp.Version // log version is most authoritative
+				info.Version = ap.Version
 				t := true
 				info.Loaded = &t
+			}
+		}
+
+		// Add unmatched plugins (mods not in manifest or filesystem)
+		for _, ap := range unmatched {
+			// Skip BepInEx core plugins — infrastructure, not user mods
+			if strings.HasPrefix(ap.GUID, "BepInEx.") || ap.GUID == "BepInEx" {
+				continue
+			}
+			t := true
+			modMap[ap.GUID] = &agentapi.ModInfo{
+				Name:    ap.Name,
+				Version: ap.Version,
+				Loaded:  &t,
+			}
+		}
+	} else {
+		// Fallback: BepInEx log enrichment
+		logPlugins, _ := ParseBepInExLog(h.cfg.ResolvedLogFile())
+		if logPlugins != nil {
+			logParsed = true
+			matched := MatchLogToManifest(logPlugins, manifestNames)
+			for dirName, lp := range matched {
+				if info, ok := modMap[dirName]; ok {
+					info.Version = lp.Version
+					t := true
+					info.Loaded = &t
+				}
 			}
 		}
 	}
@@ -165,6 +197,7 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 		Mods:         mods,
 		ManifestTime: manifestTime,
 		LogParsed:    logParsed,
+		APIQueried:   apiQueried,
 	})
 }
 
@@ -294,6 +327,9 @@ func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Sync: removing %s (no longer in manifest)", dirName)
 			removeModDirs(bepDir, dirName)
 			resp.Removed++
+			resp.Results = append(resp.Results, agentapi.SyncModResult{
+				Mod: dirName, Status: "removed",
+			})
 		}
 	}
 
@@ -302,6 +338,9 @@ func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
 		// Check if unchanged
 		if oldVersion, exists := oldMods[mod.DirName]; exists && oldVersion == mod.Version {
 			resp.Skipped++
+			resp.Results = append(resp.Results, agentapi.SyncModResult{
+				Mod: mod.DirName, Version: mod.Version, Status: "skipped",
+			})
 			continue
 		}
 
@@ -316,6 +355,9 @@ func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
 				Mod:    mod.DirName,
 				Reason: err.Error(),
 			})
+			resp.Results = append(resp.Results, agentapi.SyncModResult{
+				Mod: mod.DirName, Version: mod.Version, Status: "failed", Reason: err.Error(),
+			})
 			continue
 		}
 
@@ -324,9 +366,13 @@ func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
 			log.Printf("Sync: failed to extract %s: %v", mod.DirName, err)
 			// Delete potentially corrupt cache entry and report failure
 			os.Remove(zipPath)
+			reason := "extract failed: " + err.Error()
 			resp.Failures = append(resp.Failures, agentapi.SyncFailure{
 				Mod:    mod.DirName,
-				Reason: "extract failed: " + err.Error(),
+				Reason: reason,
+			})
+			resp.Results = append(resp.Results, agentapi.SyncModResult{
+				Mod: mod.DirName, Version: mod.Version, Status: "failed", Reason: reason,
 			})
 			continue
 		}
@@ -334,9 +380,15 @@ func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
 		if wasCached {
 			log.Printf("Sync: extracted %s (cached)", mod.DirName)
 			resp.Cached++
+			resp.Results = append(resp.Results, agentapi.SyncModResult{
+				Mod: mod.DirName, Version: mod.Version, Status: "cached",
+			})
 		} else {
 			log.Printf("Sync: downloaded and extracted %s", mod.DirName)
 			resp.Downloaded++
+			resp.Results = append(resp.Results, agentapi.SyncModResult{
+				Mod: mod.DirName, Version: mod.Version, Status: "downloaded",
+			})
 		}
 	}
 

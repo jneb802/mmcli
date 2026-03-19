@@ -348,7 +348,7 @@ Use --with-config to also push config files after mods.`,
 		fmt.Printf("Syncing profile '%s' to server '%s'...\n", profileName, name)
 
 		manifest := profile.BuildManifest(profileName, reg)
-		resp, err := c.SyncMods(manifest)
+		resp, err := c.SyncMods(manifest, nil)
 		if err != nil {
 			return err
 		}

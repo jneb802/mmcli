@@ -64,9 +64,11 @@ type serverModel struct {
 	confirmPush    bool
 	pushItems      []modListItem
 	pushScroll     int
-	lastPush       *agentapi.SyncResponse
-	lastPushTime   time.Time
-	confirmStart   bool
+	lastPush        *agentapi.SyncResponse
+	lastPushTime    time.Time
+	pushDetail      bool // push detail view open
+	pushDetailScroll int
+	confirmStart    bool
 	confirmStop    bool
 	confirmRestart bool
 
@@ -99,6 +101,28 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	// Log viewer mode
 	if m.server.logs.active {
 		if !handleLogViewerKeys(&m.server.logs, msg) {
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
+	// Push detail view
+	if m.server.pushDetail {
+		switch msg.String() {
+		case "q", "esc":
+			m.server.pushDetail = false
+			m.server.pushDetailScroll = 0
+		case "up", "k":
+			if m.server.pushDetailScroll > 0 {
+				m.server.pushDetailScroll--
+			}
+		case "down", "j":
+			m.server.pushDetailScroll++
+		case "r":
+			if m.server.role == agentapi.RoleAdmin && pushNeedsRestart(m.server.lastPush) {
+				m.server.confirmRestart = true
+			}
+		case "ctrl+c":
 			return m, tea.Quit
 		}
 		return m, nil
@@ -212,12 +236,11 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		} else if m.server.cursor < len(m.server.mods)-1 {
 			m.server.cursor++
 		}
-	case "enter":
-		if m.server.cursor == -1 && m.server.lastPush != nil && m.server.role == agentapi.RoleAdmin {
-			if pushNeedsRestart(m.server.lastPush) {
-				m.server.confirmRestart = true
-				return m, nil
-			}
+	case "enter", " ":
+		if m.server.cursor == -1 && m.server.lastPush != nil {
+			m.server.pushDetail = true
+			m.server.pushDetailScroll = 0
+			return m, nil
 		}
 	case "s":
 		if m.server.role != agentapi.RoleAdmin {
@@ -287,6 +310,12 @@ func (m model) viewServer() string {
 	// Log viewer
 	if m.server.logs.active {
 		renderLogViewer(&b, m.server.logs)
+		return b.String()
+	}
+
+	// Push detail view
+	if m.server.pushDetail && m.server.lastPush != nil {
+		renderPushDetail(&b, m.server.lastPush, m.server.lastPushTime, m.server.pushDetailScroll, m.server.role)
 		return b.String()
 	}
 
@@ -361,21 +390,11 @@ func (m model) viewServer() string {
 		summary := strings.Join(parts, ", ")
 
 		if m.server.cursor == -1 {
-			hint := ""
-			if pushNeedsRestart(lp) && m.server.role == agentapi.RoleAdmin {
-				hint = "    \033[33menter restart\033[0m"
-			}
-			fmt.Fprintf(&b, "  \033[36m>\033[0m Last push: %s ago — %s%s\n", ago, summary, hint)
+			fmt.Fprintf(&b, "  \033[36m>\033[0m Last push: %s ago — %s    \033[33menter details\033[0m\n", ago, summary)
 		} else {
 			fmt.Fprintf(&b, "    Last push: \033[2m%s ago — %s\033[0m\n", ago, summary)
 		}
 
-		// Show failure details when selected
-		if m.server.cursor == -1 && len(lp.Failures) > 0 {
-			for _, f := range lp.Failures {
-				fmt.Fprintf(&b, "      \033[31m✗ %s: %s\033[0m\n", f.Mod, f.Reason)
-			}
-		}
 	} else if m.server.modsResp != nil && m.server.modsResp.ManifestTime != "" {
 		fmt.Fprintf(&b, "    Last push: \033[2m%s\033[0m\n", m.server.modsResp.ManifestTime)
 	}
@@ -420,6 +439,71 @@ func (m model) viewServer() string {
 func pushNeedsRestart(lp *agentapi.SyncResponse) bool {
 	hasChanges := lp.Downloaded > 0 || lp.Cached > 0 || lp.Removed > 0
 	return hasChanges && len(lp.Failures) == 0
+}
+
+func renderPushDetail(b *strings.Builder, lp *agentapi.SyncResponse, pushTime time.Time, scroll int, role string) {
+	ago := time.Since(pushTime).Truncate(time.Second)
+	fmt.Fprintf(b, "\n  \033[1mLast Push\033[0m  \033[2m%s ago\033[0m\n", ago)
+
+	total := lp.Downloaded + lp.Cached + lp.Skipped
+	fmt.Fprintf(b, "  %d mods synced", total)
+	if lp.Removed > 0 {
+		fmt.Fprintf(b, ", %d removed", lp.Removed)
+	}
+	if len(lp.Failures) > 0 {
+		fmt.Fprintf(b, ", \033[31m%d failed\033[0m", len(lp.Failures))
+	}
+	b.WriteString("\n\n")
+
+	// Per-mod results
+	if len(lp.Results) > 0 {
+		visible := 25
+		maxScroll := len(lp.Results) - visible
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		if scroll > maxScroll {
+			scroll = maxScroll
+		}
+		end := scroll + visible
+		if end > len(lp.Results) {
+			end = len(lp.Results)
+		}
+
+		maxName := 0
+		for _, r := range lp.Results {
+			if l := len(r.Mod); l > maxName {
+				maxName = l
+			}
+		}
+
+		for _, r := range lp.Results[scroll:end] {
+			pad := strings.Repeat(" ", maxName-len(r.Mod)+2)
+			switch r.Status {
+			case "downloaded":
+				fmt.Fprintf(b, "    \033[32m↓\033[0m %s%s%s  \033[32mdownloaded\033[0m\n", r.Mod, pad, r.Version)
+			case "cached":
+				fmt.Fprintf(b, "    \033[36m↓\033[0m %s%s%s  \033[36mcached\033[0m\n", r.Mod, pad, r.Version)
+			case "skipped":
+				fmt.Fprintf(b, "    \033[2m· %s%s%s  unchanged\033[0m\n", r.Mod, pad, r.Version)
+			case "removed":
+				fmt.Fprintf(b, "    \033[31m✗ %s%s     removed\033[0m\n", r.Mod, pad)
+			case "failed":
+				fmt.Fprintf(b, "    \033[31m✗ %s%s     %s\033[0m\n", r.Mod, pad, r.Reason)
+			}
+		}
+
+		if len(lp.Results) > visible {
+			fmt.Fprintf(b, "\n  \033[2m(%d more — ↑/↓ scroll)\033[0m\n", len(lp.Results)-visible)
+		}
+	}
+
+	// Hotkeys
+	hints := []string{"esc back"}
+	if role == agentapi.RoleAdmin && pushNeedsRestart(lp) {
+		hints = append(hints, "r restart server")
+	}
+	fmt.Fprintf(b, "\n  \033[2m%s\033[0m\n\n", strings.Join(hints, " • "))
 }
 
 func buildPushItems(cfg config.Config, reg *config.Registry, serverMods []agentapi.ModInfo) []modListItem {
@@ -598,7 +682,7 @@ func serverAction(c *client.AgentClient, action string) tea.Cmd {
 func pushMods(c *client.AgentClient, paths config.Paths, cfg config.Config, reg config.Registry) tea.Cmd {
 	return func() tea.Msg {
 		manifest := profile.BuildManifest(cfg.ActiveProfile, reg)
-		resp, err := c.SyncMods(manifest)
+		resp, err := c.SyncMods(manifest, nil)
 		return serverPushMsg{resp: resp, err: err}
 	}
 }
