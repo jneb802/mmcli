@@ -278,29 +278,6 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, updateMod(m.paths, m.cfg, m.reg, mod.FullName())
 			}
 		}
-	case "a":
-		if m.cfg.ActiveServer != "" && len(m.local.mods) > 0 {
-			mod := m.local.mods[m.local.cursor]
-			if mod.IsLocal {
-				m.local.err = fmt.Errorf("local mods cannot be classified for anticheat")
-			} else {
-				regMod, ok := m.reg.GetMod(m.cfg.ActiveProfile, mod.FullName())
-				if ok {
-					switch regMod.Anticheat {
-					case "":
-						regMod.Anticheat = "whitelist"
-					case "whitelist":
-						regMod.Anticheat = "greylist"
-					case "greylist":
-						regMod.Anticheat = ""
-					}
-					m.reg.SetMod(m.cfg.ActiveProfile, regMod)
-					config.SaveRegistry(m.paths, *m.reg)
-					m.refreshMods()
-					m.local.err = nil
-				}
-			}
-		}
 	case "l":
 		logFile := m.paths.BepInExLogFile()
 		data, err := os.ReadFile(logFile)
@@ -385,19 +362,14 @@ func (m model) viewLocal() string {
 	}
 
 	// Mod list
-	hasServer := m.cfg.ActiveServer != ""
 	items := make([]modListItem, len(m.local.mods))
 	for i, mod := range m.local.mods {
-		item := modListItem{
+		items[i] = modListItem{
 			Name:     mod.FullName(),
 			Version:  mod.Version,
 			Disabled: mod.Disabled,
 			Update:   m.local.updates[mod.FullName()],
 		}
-		if hasServer {
-			item.Anticheat = mod.Anticheat
-		}
-		items[i] = item
 	}
 	renderModList(&b, items, m.local.cursor, false)
 
@@ -409,11 +381,12 @@ func (m model) viewLocal() string {
 	} else if m.local.err != nil {
 		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.local.err)
 	}
-	if hasServer {
-		renderHotkeyBar(&b, []string{"↑/↓ navigate", "space toggle", "a anticheat", "x remove", "u update", "i install", "c config", "l logs", "p profile", "tab server", "q quit"}, m.width)
-	} else {
-		renderHotkeyBar(&b, []string{"↑/↓ navigate", "space toggle", "x remove", "u update", "i install", "c config", "l logs", "p profile", "q quit"}, m.width)
+	hotkeys := []string{"↑/↓ navigate", "space toggle", "x remove", "u update", "i install", "c config", "l logs", "p profile"}
+	if m.cfg.ActiveServer != "" {
+		hotkeys = append(hotkeys, "tab server")
 	}
+	hotkeys = append(hotkeys, "q quit")
+	renderHotkeyBar(&b, hotkeys, m.width)
 
 	return b.String()
 }
