@@ -10,11 +10,13 @@ import (
 
 // modListItem is a unified representation for rendering mod lists in both tabs.
 type modListItem struct {
-	Name      string
-	Version   string
-	Disabled  bool
-	Update    string // latest version, empty if no update
-	Anticheat string // "whitelist", "greylist", or ""
+	Name          string
+	Version       string
+	Disabled      bool
+	Update        string // latest version, empty if no update
+	Anticheat     string // "whitelist", "greylist", or ""
+	Status        string // push diff: "added", "removed", "changed", "" (unchanged)
+	ServerVersion string // push diff: previous version on server (for "changed" items)
 }
 
 // renderModList renders a list of mods with cursor, check/x, name, version, and update indicators.

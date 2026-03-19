@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
@@ -232,7 +233,7 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.server.role != agentapi.RoleAdmin {
 			return m, nil
 		}
-		items := buildPushItems(m.cfg, m.reg)
+		items := buildPushItems(m.cfg, m.reg, m.server.mods)
 		if len(items) == 0 {
 			m.server.statusErr = fmt.Errorf("no mods to push")
 			return m, nil
@@ -364,12 +365,15 @@ func (m model) viewServer() string {
 	return b.String()
 }
 
-func buildPushItems(cfg config.Config, reg *config.Registry) []modListItem {
+func buildPushItems(cfg config.Config, reg *config.Registry, serverMods []agentapi.ModInfo) []modListItem {
+	// Build local mod list (non-client)
 	var items []modListItem
+	localSet := make(map[string]bool)
 	for _, mod := range reg.ListMods(cfg.ActiveProfile) {
 		if mod.ResolvedTarget() == "client" {
 			continue
 		}
+		localSet[mod.FullName()] = true
 		items = append(items, modListItem{
 			Name:      mod.FullName(),
 			Version:   mod.Version,
@@ -377,19 +381,79 @@ func buildPushItems(cfg config.Config, reg *config.Registry) []modListItem {
 			Anticheat: mod.Anticheat,
 		})
 	}
+
+	// If we have server mods, compute diff
+	if len(serverMods) > 0 {
+		serverMap := make(map[string]agentapi.ModInfo)
+		for _, sm := range serverMods {
+			serverMap[sm.Name] = sm
+		}
+
+		// Tag local items
+		for i := range items {
+			sm, onServer := serverMap[items[i].Name]
+			if !onServer {
+				items[i].Status = "added"
+			} else if sm.Version != "" && items[i].Version != "" && sm.Version != items[i].Version {
+				items[i].Status = "changed"
+				items[i].ServerVersion = sm.Version
+			}
+		}
+
+		// Add removed items (on server but not local)
+		for _, sm := range serverMods {
+			if !localSet[sm.Name] {
+				items = append(items, modListItem{
+					Name:      sm.Name,
+					Version:   sm.Version,
+					Anticheat: sm.Anticheat,
+					Status:    "removed",
+				})
+			}
+		}
+
+		// Sort: changes first (added, removed, changed), then unchanged
+		statusOrder := map[string]int{"added": 0, "removed": 1, "changed": 2, "": 3}
+		sort.SliceStable(items, func(i, j int) bool {
+			return statusOrder[items[i].Status] < statusOrder[items[j].Status]
+		})
+	}
+
 	return items
 }
 
 func renderPushConfirm(b *strings.Builder, serverName, profileName string, items []modListItem, scroll int, status *agentapi.StatusResponse) {
 	fmt.Fprintf(b, "\n  \033[1mPush mods to %s?\033[0m\n", serverName)
-	fmt.Fprintf(b, "  Profile: \033[36m%s\033[0m    Mods: %d\n", profileName, len(items))
+
+	// Count changes
+	changes := 0
+	unchanged := 0
+	for _, item := range items {
+		if item.Status != "" {
+			changes++
+		} else {
+			unchanged++
+		}
+	}
+
+	if changes > 0 {
+		fmt.Fprintf(b, "  Profile: \033[36m%s\033[0m    %d changes, %d unchanged\n", profileName, changes, unchanged)
+	} else {
+		fmt.Fprintf(b, "  Profile: \033[36m%s\033[0m    Mods: %d\n", profileName, len(items))
+	}
 	if status != nil && status.Running {
 		b.WriteString("  Server: \033[32mrunning\033[0m — will restart after push\n")
 	}
 	b.WriteString("\n")
 
+	// Display list: items are sorted changes-first, so just slice
+	displayItems := items
+	if changes > 0 {
+		displayItems = items[:changes]
+	}
+
 	visible := 20
-	maxScroll := len(items) - visible
+	maxScroll := len(displayItems) - visible
 	if maxScroll < 0 {
 		maxScroll = 0
 	}
@@ -397,32 +461,46 @@ func renderPushConfirm(b *strings.Builder, serverName, profileName string, items
 		scroll = maxScroll
 	}
 	end := scroll + visible
-	if end > len(items) {
-		end = len(items)
+	if end > len(displayItems) {
+		end = len(displayItems)
 	}
 
 	maxName := 0
-	for _, item := range items {
+	for _, item := range displayItems {
 		if l := len(item.Name); l > maxName {
 			maxName = l
 		}
 	}
 
-	for _, item := range items[scroll:end] {
+	for _, item := range displayItems[scroll:end] {
 		pad := strings.Repeat(" ", maxName-len(item.Name)+2)
 		version := item.Version
 		if version == "" {
 			version = "-"
 		}
-		target := ""
-		if item.Disabled {
-			target = "  \033[2m(server-only)\033[0m"
+
+		switch item.Status {
+		case "added":
+			fmt.Fprintf(b, "    \033[32m+ %s%s%s\033[0m\n", item.Name, pad, version)
+		case "removed":
+			fmt.Fprintf(b, "    \033[31m- %s%s%s\033[0m\n", item.Name, pad, version)
+		case "changed":
+			fmt.Fprintf(b, "    \033[33m~ %s%s%s → %s\033[0m\n", item.Name, pad, item.ServerVersion, version)
+		default:
+			target := ""
+			if item.Disabled {
+				target = "  \033[2m(server-only)\033[0m"
+			}
+			fmt.Fprintf(b, "    \033[2m  %s%s%s%s\033[0m\n", item.Name, pad, version, target)
 		}
-		fmt.Fprintf(b, "    %s%s%s%s\n", item.Name, pad, version, target)
 	}
 
-	if len(items) > visible {
-		fmt.Fprintf(b, "\n  \033[2m(%d more — ↑/↓ scroll)\033[0m\n", len(items)-visible)
+	if len(displayItems) > visible {
+		fmt.Fprintf(b, "\n  \033[2m(%d more — ↑/↓ scroll)\033[0m\n", len(displayItems)-visible)
+	}
+
+	if changes > 0 && unchanged > 0 {
+		fmt.Fprintf(b, "\n  \033[2m%d unchanged mods not shown\033[0m\n", unchanged)
 	}
 
 	b.WriteString("\n  \033[33my push • any key cancel\033[0m\n\n")
