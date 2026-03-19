@@ -59,6 +59,10 @@ type serverModel struct {
 	actionBusy bool
 	actionMsg  string
 
+	confirmPush bool
+	pushItems   []modListItem
+	pushScroll  int
+
 	logs     logViewerState
 	modsResp *agentapi.ModListResponse
 
@@ -89,6 +93,28 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.server.logs.active {
 		if !handleLogViewerKeys(&m.server.logs, msg) {
 			return m, tea.Quit
+		}
+		return m, nil
+	}
+
+	// Push confirmation
+	if m.server.confirmPush {
+		switch msg.String() {
+		case "y":
+			m.server.confirmPush = false
+			m.server.actionBusy = true
+			m.server.actionMsg = "Pushing mods..."
+			return m, pushMods(m.server.client, m.paths, m.cfg, *m.reg)
+		case "up", "k":
+			if m.server.pushScroll > 0 {
+				m.server.pushScroll--
+			}
+		case "down", "j":
+			m.server.pushScroll++
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			m.server.confirmPush = false
 		}
 		return m, nil
 	}
@@ -140,9 +166,15 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.server.actionMsg = "Restarting server..."
 		return m, serverAction(m.server.client, "restart")
 	case "p":
-		m.server.actionBusy = true
-		m.server.actionMsg = "Pushing mods..."
-		return m, pushMods(m.server.client, m.paths, m.cfg, *m.reg)
+		items := buildPushItems(m.cfg, m.reg)
+		if len(items) == 0 {
+			m.server.statusErr = fmt.Errorf("no mods to push")
+			return m, nil
+		}
+		m.server.confirmPush = true
+		m.server.pushItems = items
+		m.server.pushScroll = 0
+		return m, nil
 	case "l":
 		m.server.actionBusy = true
 		m.server.actionMsg = "Fetching logs..."
@@ -175,6 +207,12 @@ func (m model) viewServer() string {
 	// Log viewer
 	if m.server.logs.active {
 		renderLogViewer(&b, m.server.logs)
+		return b.String()
+	}
+
+	// Push confirmation
+	if m.server.confirmPush {
+		renderPushConfirm(&b, m.server.serverName, m.cfg.ActiveProfile, m.server.pushItems, m.server.pushScroll, m.server.status)
 		return b.String()
 	}
 
@@ -230,6 +268,70 @@ func (m model) viewServer() string {
 	renderHotkeyBar(&b, []string{"s start", "d stop", "r restart", "p push", "l logs", "w settings", "tab local", "q quit"}, m.width)
 
 	return b.String()
+}
+
+func buildPushItems(cfg config.Config, reg *config.Registry) []modListItem {
+	var items []modListItem
+	for _, mod := range reg.ListMods(cfg.ActiveProfile) {
+		if mod.ResolvedTarget() == "client" {
+			continue
+		}
+		items = append(items, modListItem{
+			Name:      mod.FullName(),
+			Version:   mod.Version,
+			Disabled:  mod.Disabled,
+			Anticheat: mod.Anticheat,
+		})
+	}
+	return items
+}
+
+func renderPushConfirm(b *strings.Builder, serverName, profileName string, items []modListItem, scroll int, status *agentapi.StatusResponse) {
+	fmt.Fprintf(b, "\n  \033[1mPush mods to %s?\033[0m\n", serverName)
+	fmt.Fprintf(b, "  Profile: \033[36m%s\033[0m    Mods: %d\n", profileName, len(items))
+	if status != nil && status.Running {
+		b.WriteString("  Server: \033[32mrunning\033[0m — will restart after push\n")
+	}
+	b.WriteString("\n")
+
+	visible := 20
+	maxScroll := len(items) - visible
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if scroll > maxScroll {
+		scroll = maxScroll
+	}
+	end := scroll + visible
+	if end > len(items) {
+		end = len(items)
+	}
+
+	maxName := 0
+	for _, item := range items {
+		if l := len(item.Name); l > maxName {
+			maxName = l
+		}
+	}
+
+	for _, item := range items[scroll:end] {
+		pad := strings.Repeat(" ", maxName-len(item.Name)+2)
+		version := item.Version
+		if version == "" {
+			version = "-"
+		}
+		target := ""
+		if item.Disabled {
+			target = "  \033[2m(server-only)\033[0m"
+		}
+		fmt.Fprintf(b, "    %s%s%s%s\n", item.Name, pad, version, target)
+	}
+
+	if len(items) > visible {
+		fmt.Fprintf(b, "\n  \033[2m(%d more — ↑/↓ scroll)\033[0m\n", len(items)-visible)
+	}
+
+	b.WriteString("\n  \033[33my push • any key cancel\033[0m\n\n")
 }
 
 // --- Async commands ---
@@ -350,14 +452,14 @@ func renderSettingsView(b *strings.Builder, s *agentapi.SettingsResponse, scroll
 	// World
 	lines = append(lines, "  \033[36mWorld\033[0m")
 	if s.Crossplay {
-		lines = append(lines, "    Crossplay:      \033[32myes\033[0m")
+		lines = append(lines, fmt.Sprintf("    %-18s \033[32myes\033[0m", "Crossplay:"))
 	} else {
-		lines = append(lines, "    Crossplay:      \033[2mno\033[0m")
+		lines = append(lines, fmt.Sprintf("    %-18s \033[2mno\033[0m", "Crossplay:"))
 	}
 	if s.Preset != "" {
-		lines = append(lines, fmt.Sprintf("    Preset:         %s", s.Preset))
+		lines = append(lines, fmt.Sprintf("    %-18s %s", "Preset:", s.Preset))
 	} else {
-		lines = append(lines, "    Preset:         \033[2mnone\033[0m")
+		lines = append(lines, fmt.Sprintf("    %-18s \033[2mnone\033[0m", "Preset:"))
 	}
 	for _, mod := range []struct{ key, label string }{
 		{"combat", "Combat"},
@@ -367,9 +469,9 @@ func renderSettingsView(b *strings.Builder, s *agentapi.SettingsResponse, scroll
 		{"portals", "Portals"},
 	} {
 		if v, ok := s.Modifiers[mod.key]; ok {
-			lines = append(lines, fmt.Sprintf("    %-16s %s", mod.label+":", v))
+			lines = append(lines, fmt.Sprintf("    %-18s %s", mod.label+":", v))
 		} else {
-			lines = append(lines, fmt.Sprintf("    %-16s \033[2mnot set\033[0m", mod.label+":"))
+			lines = append(lines, fmt.Sprintf("    %-18s \033[2mnot set\033[0m", mod.label+":"))
 		}
 	}
 	setKeys := make(map[string]bool)
@@ -378,9 +480,9 @@ func renderSettingsView(b *strings.Builder, s *agentapi.SettingsResponse, scroll
 	}
 	for _, k := range []string{"nobuildcost", "playerevents", "passivemobs", "nomap"} {
 		if setKeys[k] {
-			lines = append(lines, fmt.Sprintf("    %-16s \033[32mon\033[0m", k+":"))
+			lines = append(lines, fmt.Sprintf("    %-18s \033[32mon\033[0m", k+":"))
 		} else {
-			lines = append(lines, fmt.Sprintf("    %-16s \033[2moff\033[0m", k+":"))
+			lines = append(lines, fmt.Sprintf("    %-18s \033[2moff\033[0m", k+":"))
 		}
 	}
 	lines = append(lines, "")
