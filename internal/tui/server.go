@@ -101,6 +101,8 @@ type serverModel struct {
 	modsResp *agentapi.ModListResponse
 
 	statusCursor int
+	configFiles  []string
+	configCursor int
 
 	settings       *agentapi.SettingsResponse
 	settingsScroll int
@@ -304,6 +306,8 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.activeServerTab {
 	case contentMods:
 		return m.handleServerModsKeys(msg)
+	case contentConfig:
+		return m.handleServerConfigKeys(msg)
 	case contentLogs:
 		return m.handleServerLogsKeys(msg)
 	case contentWorld:
@@ -508,6 +512,26 @@ func (m model) viewServer() string {
 	renderHotkeyBar(&b, hotkeys, m.width)
 
 	return b.String()
+}
+
+func (m model) viewServerConfig() string {
+	var b strings.Builder
+	b.WriteString("\n")
+	renderProfileConfigList(&b, m.server.configFiles, m.server.configCursor, listVisible(m.height, 9))
+	b.WriteString("\n")
+	hotkeys := []string{"↑/↓ navigate", "o open", "tab next", "` mode", "q quit"}
+	renderHotkeyBar(&b, hotkeys, m.width)
+	return b.String()
+}
+
+func (m model) handleServerConfigKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	configDir := m.paths.ProfileConfigDir(m.cfg.ActiveProfile)
+	newCursor, cmd := handleConfigKeys(msg, m.server.configFiles, m.server.configCursor, configDir)
+	m.server.configCursor = newCursor
+	if cmd != nil {
+		return m, cmd
+	}
+	return m, nil
 }
 
 func (m model) viewServerLogs() string {

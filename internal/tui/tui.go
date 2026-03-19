@@ -32,6 +32,7 @@ const (
 	contentWorld
 	contentSettings
 	contentPlayers
+	contentConfig
 	contentSyncMods
 	contentSyncConfigs
 	contentSyncModeration
@@ -42,8 +43,8 @@ const (
 	contentModpackImage
 )
 
-var localTabs = []contentTab{contentMods, contentLogs, contentStatus, contentSettings}
-var serverTabs = []contentTab{contentMods, contentLogs, contentPlayers, contentWorld, contentStatus}
+var localTabs = []contentTab{contentMods, contentConfig, contentLogs, contentStatus, contentSettings}
+var serverTabs = []contentTab{contentMods, contentConfig, contentLogs, contentPlayers, contentWorld, contentStatus}
 var syncTabs = []contentTab{contentSyncMods, contentSyncConfigs, contentSyncModeration}
 var modpackTabs = []contentTab{contentModpackMods, contentModpackConfig, contentModpackReadme, contentModpackManifest, contentModpackImage}
 
@@ -61,6 +62,8 @@ func contentTabName(t contentTab) string {
 		return "Settings"
 	case contentPlayers:
 		return "Players"
+	case contentConfig:
+		return "Config"
 	case contentSyncMods:
 		return "Mods"
 	case contentSyncConfigs:
@@ -514,6 +517,8 @@ func (m model) View() string {
 		switch m.activeLocalTab {
 		case contentMods:
 			b.WriteString(m.viewLocal())
+		case contentConfig:
+			b.WriteString(m.viewLocalConfig())
 		case contentLogs:
 			b.WriteString(m.viewLocalLogs())
 		case contentStatus:
@@ -526,6 +531,8 @@ func (m model) View() string {
 		switch m.activeServerTab {
 		case contentMods:
 			b.WriteString(m.viewServer())
+		case contentConfig:
+			b.WriteString(m.viewServerConfig())
 		case contentLogs:
 			b.WriteString(m.viewServerLogs())
 		case contentWorld:
@@ -639,6 +646,9 @@ func (m *model) switchLocalTab(to contentTab) tea.Cmd {
 	if old == contentLogs {
 		m.stopLocalLogStream()
 	}
+	if to == contentConfig {
+		m.local.configFiles = listProfileConfigs(m.paths, m.cfg.ActiveProfile)
+	}
 	if to == contentLogs {
 		return m.loadLocalLogs()
 	}
@@ -653,6 +663,9 @@ func (m *model) switchServerTab(to contentTab) tea.Cmd {
 	}
 	if old == contentLogs {
 		m.stopServerLogStream()
+	}
+	if to == contentConfig {
+		m.server.configFiles = listProfileConfigs(m.paths, m.cfg.ActiveProfile)
 	}
 	if to == contentLogs && m.server.client != nil {
 		return m.loadServerLogs()

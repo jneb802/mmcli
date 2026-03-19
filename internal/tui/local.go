@@ -92,6 +92,9 @@ type localModel struct {
 	settingsCursor int
 	editingPath    bool
 	pathInput      string
+
+	configFiles  []string
+	configCursor int
 }
 
 func (m *model) refreshMods() {
@@ -284,6 +287,8 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.activeLocalTab {
 	case contentMods:
 		return m.handleLocalModsKeys(msg)
+	case contentConfig:
+		return m.handleLocalConfigKeys(msg)
 	case contentLogs:
 		return m.handleLocalLogsKeys(msg)
 	case contentStatus:
@@ -560,6 +565,26 @@ func (m model) viewLocal() string {
 	renderHotkeyBar(&b, hotkeys, m.width)
 
 	return b.String()
+}
+
+func (m model) viewLocalConfig() string {
+	var b strings.Builder
+	b.WriteString("\n")
+	renderProfileConfigList(&b, m.local.configFiles, m.local.configCursor, listVisible(m.height, 9))
+	b.WriteString("\n")
+	hotkeys := []string{"↑/↓ navigate", "o open", "tab next", "` mode", "q quit"}
+	renderHotkeyBar(&b, hotkeys, m.width)
+	return b.String()
+}
+
+func (m model) handleLocalConfigKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	configDir := m.paths.ProfileConfigDir(m.cfg.ActiveProfile)
+	newCursor, cmd := handleConfigKeys(msg, m.local.configFiles, m.local.configCursor, configDir)
+	m.local.configCursor = newCursor
+	if cmd != nil {
+		return m, cmd
+	}
+	return m, nil
 }
 
 func (m model) viewLocalLogs() string {

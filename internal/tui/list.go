@@ -2,10 +2,14 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
+
+	"mmcli/internal/cfgfile"
+	"mmcli/internal/config"
 )
 
 // listVisible returns how many list rows fit given the terminal height and
@@ -327,4 +331,58 @@ func renderHotkeyBar(b *strings.Builder, items []string, width int) {
 		col += itemWidth
 	}
 	b.WriteString("\033[0m\n\n")
+}
+
+// listProfileConfigs returns the config file names for a profile.
+func listProfileConfigs(paths config.Paths, profileName string) []string {
+	configDir := paths.ProfileConfigDir(profileName)
+	files, err := cfgfile.ListConfigFiles(configDir)
+	if err != nil {
+		return nil
+	}
+	return files
+}
+
+// renderProfileConfigList renders a config file list with cursor and scroll.
+func renderProfileConfigList(b *strings.Builder, files []string, cursor, visible int) {
+	if len(files) == 0 {
+		b.WriteString("  No config files.\n")
+		return
+	}
+
+	start, end := listWindow(len(files), cursor, visible)
+
+	if start > 0 {
+		fmt.Fprintf(b, "  \033[2m  ↑ %d more\033[0m\n", start)
+	}
+	for i := start; i < end; i++ {
+		cur := "  "
+		if i == cursor {
+			cur = "\033[36m>\033[0m "
+		}
+		fmt.Fprintf(b, "  %s%s\n", cur, files[i])
+	}
+	if end < len(files) {
+		fmt.Fprintf(b, "  \033[2m  ↓ %d more\033[0m\n", len(files)-end)
+	}
+}
+
+// handleConfigKeys handles shared up/down/o keys for a config file list.
+// Returns (newCursor, openCmd). openCmd is non-nil if 'o' was pressed.
+func handleConfigKeys(msg tea.KeyMsg, files []string, cursor int, configDir string) (int, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if cursor > 0 {
+			cursor--
+		}
+	case "down", "j":
+		if cursor < len(files)-1 {
+			cursor++
+		}
+	case "o":
+		if len(files) > 0 && cursor < len(files) {
+			return cursor, openFile(filepath.Join(configDir, files[cursor]))
+		}
+	}
+	return cursor, nil
 }
