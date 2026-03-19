@@ -23,6 +23,9 @@ func RoleFromContext(r *http.Request) string {
 
 func Run(cfg AgentConfig, addr, version string) error {
 	pm := NewProcessManager(cfg)
+	if pm.TryAdopt() {
+		log.Printf("Re-adopted running Valheim server")
+	}
 	h := NewHandlers(cfg, pm, version)
 
 	mux := http.NewServeMux()
