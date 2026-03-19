@@ -260,7 +260,7 @@ func (m model) handleModpackNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case contentModpackReadme:
 		return m.handleModpackReadmeKeys(msg)
 	case contentModpackManifest:
-		// no interactive keys
+		return m.handleModpackManifestKeys(msg)
 	case contentModpackImage:
 		return m.handleModpackImageKeys(msg)
 	case contentModpackSettings:
@@ -574,9 +574,19 @@ func (m model) viewModpackManifest() string {
 	fmt.Fprintf(&b, "  Dependencies:  %d\n", len(man.Dependencies))
 
 	b.WriteString("\n")
-	hotkeys := []string{"tab next", "` mode", "q quit"}
+	hotkeys := []string{"o open", "tab next", "` mode", "q quit"}
 	renderHotkeyBar(&b, hotkeys, m.width)
 	return b.String()
+}
+
+func (m model) handleModpackManifestKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "o":
+		if m.cfg.ModpackPath != "" {
+			return m, openFile(filepath.Join(m.cfg.ModpackPath, "manifest.json"))
+		}
+	}
+	return m, nil
 }
 
 func (m model) viewModpackImage() string {
