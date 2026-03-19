@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"text/tabwriter"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -384,6 +385,56 @@ Shows the last N lines (default 100). Use -f to stream new lines continuously.`,
 	},
 }
 
+var serverUpdateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Update the server-side agent to the latest release",
+	Long: `Download and install the latest mmcli-agent binary from GitHub Releases
+on the remote server. The agent restarts automatically after updating.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, c, err := resolveActiveServer()
+		if err != nil {
+			return err
+		}
+
+		status, err := c.Status()
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Agent version: %s, checking for updates...\n", status.Version)
+
+		resp, err := c.Update()
+		if err != nil {
+			// Connection reset is expected — agent re-execs after update
+			fmt.Println("Update in progress (agent is restarting)...")
+			time.Sleep(2 * time.Second)
+
+			newStatus, err := c.Status()
+			if err != nil {
+				return fmt.Errorf("agent did not come back after update: %w", err)
+			}
+			fmt.Printf("\033[32mAgent updated: %s → %s\033[0m\n", status.Version, newStatus.Version)
+			return nil
+		}
+
+		if resp.Message == "already up to date" {
+			fmt.Printf("Agent is already up to date (%s).\n", resp.NewVersion)
+			return nil
+		}
+
+		fmt.Printf("\033[32mAgent updated: %s → %s\033[0m\n", resp.OldVersion, resp.NewVersion)
+
+		// Wait for restart and verify
+		time.Sleep(2 * time.Second)
+		newStatus, err := c.Status()
+		if err != nil {
+			fmt.Println("Warning: could not verify agent restarted.")
+		} else {
+			fmt.Printf("Agent confirmed running: %s\n", newStatus.Version)
+		}
+		return nil
+	},
+}
+
 var serverSettingsCmd = &cobra.Command{
 	Use:   "settings",
 	Short: "Show the server's world settings",
@@ -526,6 +577,7 @@ func init() {
 	serverCmd.AddCommand(serverPushCmd)
 	serverCmd.AddCommand(serverLogsCmd)
 	serverCmd.AddCommand(serverSettingsCmd)
+	serverCmd.AddCommand(serverUpdateCmd)
 	serverSettingsCmd.AddCommand(serverSettingsSetCmd)
 
 	// settings set flags

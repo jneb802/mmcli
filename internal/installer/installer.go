@@ -254,6 +254,23 @@ func ToggleLocalMod(pluginsDir string, mod config.ModEntry) error {
 	return fmt.Errorf("local mod '%s' not found", mod.Name)
 }
 
+// RemoveLocalMod deletes a local (untracked) mod from the plugins directory.
+func RemoveLocalMod(pluginsDir string, mod config.ModEntry) error {
+	dirPath := filepath.Join(pluginsDir, mod.Name)
+	if info, err := os.Stat(dirPath); err == nil && info.IsDir() {
+		return os.RemoveAll(dirPath)
+	}
+
+	// Loose DLL file
+	for _, suffix := range []string{".dll", ".dll.old"} {
+		p := filepath.Join(pluginsDir, mod.Name+suffix)
+		if _, err := os.Stat(p); err == nil {
+			return os.Remove(p)
+		}
+	}
+	return fmt.Errorf("local mod '%s' not found", mod.Name)
+}
+
 // modDirs returns all directories where a mod may have files installed.
 func modDirs(paths config.Paths, profile, modSubdir string) []string {
 	return []string{

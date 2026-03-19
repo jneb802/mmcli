@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"mmcli/internal/agentapi"
@@ -20,12 +21,13 @@ import (
 )
 
 type Handlers struct {
-	cfg AgentConfig
-	pm  *ProcessManager
+	cfg     AgentConfig
+	pm      *ProcessManager
+	version string
 }
 
-func NewHandlers(cfg AgentConfig, pm *ProcessManager) *Handlers {
-	return &Handlers{cfg: cfg, pm: pm}
+func NewHandlers(cfg AgentConfig, pm *ProcessManager, version string) *Handlers {
+	return &Handlers{cfg: cfg, pm: pm, version: version}
 }
 
 func (h *Handlers) HandleStatus(w http.ResponseWriter, r *http.Request) {
@@ -37,7 +39,7 @@ func (h *Handlers) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		ModCount: len(mods),
 		Mods:     mods,
 		BepInEx:  bepinexErr == nil,
-		Version:  "0.1.0",
+		Version:  h.version,
 	}
 
 	if resp.Running {
@@ -538,6 +540,125 @@ func formatDuration(d time.Duration) string {
 		return fmt.Sprintf("%dm%ds", m, s)
 	}
 	return fmt.Sprintf("%ds", s)
+}
+
+func (h *Handlers) HandleUpdate(w http.ResponseWriter, r *http.Request) {
+	log.Println("Update request received, checking GitHub for latest release...")
+
+	// Query GitHub API for latest release
+	resp, err := http.Get(fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", agentapi.GitHubRepo))
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to check GitHub: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		writeError(w, http.StatusBadGateway, fmt.Sprintf("GitHub API returned %d", resp.StatusCode))
+		return
+	}
+
+	var release struct {
+		TagName string `json:"tag_name"`
+		Assets  []struct {
+			Name               string `json:"name"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		writeError(w, http.StatusBadGateway, "failed to parse GitHub response: "+err.Error())
+		return
+	}
+
+	newVersion := strings.TrimPrefix(release.TagName, "v")
+	oldVersion := strings.TrimPrefix(h.version, "v")
+
+	if newVersion == oldVersion {
+		writeJSON(w, http.StatusOK, agentapi.UpdateResponse{
+			OK:         true,
+			OldVersion: h.version,
+			NewVersion: release.TagName,
+			Message:    "already up to date",
+		})
+		return
+	}
+
+	// Find agent binary asset
+	var downloadURL string
+	for _, asset := range release.Assets {
+		if asset.Name == agentapi.AgentBinaryName {
+			downloadURL = asset.BrowserDownloadURL
+			break
+		}
+	}
+	if downloadURL == "" {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("release %s has no %s asset", release.TagName, agentapi.AgentBinaryName))
+		return
+	}
+
+	// Download to temp file in same directory as current binary (for atomic rename)
+	exePath, err := os.Executable()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "cannot determine executable path: "+err.Error())
+		return
+	}
+	exePath, _ = filepath.EvalSymlinks(exePath)
+
+	log.Printf("Update: downloading %s → %s", release.TagName, exePath)
+
+	dlResp, err := http.Get(downloadURL)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to download binary: "+err.Error())
+		return
+	}
+	defer dlResp.Body.Close()
+
+	tmpFile, err := os.CreateTemp(filepath.Dir(exePath), "mmcli-agent-update-*")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create temp file: "+err.Error())
+		return
+	}
+	tmpPath := tmpFile.Name()
+
+	if _, err := io.Copy(tmpFile, dlResp.Body); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		writeError(w, http.StatusInternalServerError, "failed to download binary: "+err.Error())
+		return
+	}
+	tmpFile.Close()
+
+	if err := os.Chmod(tmpPath, 0755); err != nil {
+		os.Remove(tmpPath)
+		writeError(w, http.StatusInternalServerError, "failed to set permissions: "+err.Error())
+		return
+	}
+
+	// Atomic rename
+	if err := os.Rename(tmpPath, exePath); err != nil {
+		os.Remove(tmpPath)
+		writeError(w, http.StatusInternalServerError, "cannot overwrite binary — ensure it is owned by the agent user: "+err.Error())
+		return
+	}
+
+	log.Printf("Update: replaced binary, restarting as %s", release.TagName)
+
+	writeJSON(w, http.StatusOK, agentapi.UpdateResponse{
+		OK:         true,
+		OldVersion: h.version,
+		NewVersion: release.TagName,
+		Message:    "updated, restarting",
+	})
+
+	// Flush response then re-exec with new binary
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		exe, _ := os.Executable()
+		syscall.Exec(exe, os.Args, os.Environ())
+	}()
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

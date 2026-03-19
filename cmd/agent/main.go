@@ -12,6 +12,9 @@ import (
 	"mmcli/internal/agentapi"
 )
 
+// Version is set at build time via -ldflags "-X main.Version=vX.Y.Z"
+var Version = "dev"
+
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "init" {
 		runInit()
@@ -27,7 +30,7 @@ func main() {
 		log.Fatalf("Error: %v", err)
 	}
 
-	if err := agent.Run(cfg, *listenAddr); err != nil {
+	if err := agent.Run(cfg, *listenAddr, Version); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }

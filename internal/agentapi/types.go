@@ -11,6 +11,10 @@ const (
 	PathMods     = "/api/v1/mods"
 	PathLogs     = "/api/v1/logs"
 	PathSettings = "/api/v1/settings"
+	PathUpdate   = "/api/v1/update"
+
+	GitHubRepo      = "jneb802/mmcli"
+	AgentBinaryName = "mmcli-agent-linux-amd64"
 )
 
 type StatusResponse struct {
@@ -154,4 +158,11 @@ type ConfigPushResponse struct {
 	Applied int    `json:"applied"` // .cfg patches applied
 	Written int    `json:"written"` // whole files written
 	Message string `json:"message"`
+}
+
+type UpdateResponse struct {
+	OK         bool   `json:"ok"`
+	OldVersion string `json:"old_version"`
+	NewVersion string `json:"new_version"`
+	Message    string `json:"message"`
 }

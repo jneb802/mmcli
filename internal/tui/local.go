@@ -186,7 +186,14 @@ func (m model) handleConfirmRemove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y":
 		mod := m.local.mods[m.local.cursor]
-		if err := installer.Remove(m.paths, m.cfg, m.reg, mod.FullName()); err != nil {
+		var err error
+		if mod.IsLocal {
+			pluginsDir := m.paths.ProfilePluginsDir(m.cfg.ActiveProfile)
+			err = installer.RemoveLocalMod(pluginsDir, mod)
+		} else {
+			err = installer.Remove(m.paths, m.cfg, m.reg, mod.FullName())
+		}
+		if err != nil {
 			m.local.err = err
 		} else {
 			m.local.err = nil

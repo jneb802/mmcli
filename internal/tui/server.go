@@ -59,9 +59,11 @@ type serverModel struct {
 	actionBusy bool
 	actionMsg  string
 
-	confirmPush bool
-	pushItems   []modListItem
-	pushScroll  int
+	confirmPush    bool
+	pushItems      []modListItem
+	pushScroll     int
+	confirmStop    bool
+	confirmRestart bool
 
 	logs     logViewerState
 	modsResp *agentapi.ModListResponse
@@ -119,6 +121,38 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Stop confirmation
+	if m.server.confirmStop {
+		switch msg.String() {
+		case "y":
+			m.server.confirmStop = false
+			m.server.actionBusy = true
+			m.server.actionMsg = "Stopping server..."
+			return m, serverAction(m.server.client, "stop")
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			m.server.confirmStop = false
+		}
+		return m, nil
+	}
+
+	// Restart confirmation
+	if m.server.confirmRestart {
+		switch msg.String() {
+		case "y":
+			m.server.confirmRestart = false
+			m.server.actionBusy = true
+			m.server.actionMsg = "Restarting server..."
+			return m, serverAction(m.server.client, "restart")
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			m.server.confirmRestart = false
+		}
+		return m, nil
+	}
+
 	// Action busy — only allow quit
 	if m.server.actionBusy {
 		if msg.String() == "ctrl+c" {
@@ -158,13 +192,11 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.server.actionMsg = "Starting server..."
 		return m, serverAction(m.server.client, "start")
 	case "d":
-		m.server.actionBusy = true
-		m.server.actionMsg = "Stopping server..."
-		return m, serverAction(m.server.client, "stop")
+		m.server.confirmStop = true
+		return m, nil
 	case "r":
-		m.server.actionBusy = true
-		m.server.actionMsg = "Restarting server..."
-		return m, serverAction(m.server.client, "restart")
+		m.server.confirmRestart = true
+		return m, nil
 	case "p":
 		items := buildPushItems(m.cfg, m.reg)
 		if len(items) == 0 {
@@ -213,6 +245,18 @@ func (m model) viewServer() string {
 	// Push confirmation
 	if m.server.confirmPush {
 		renderPushConfirm(&b, m.server.serverName, m.cfg.ActiveProfile, m.server.pushItems, m.server.pushScroll, m.server.status)
+		return b.String()
+	}
+
+	// Stop confirmation
+	if m.server.confirmStop {
+		fmt.Fprintf(&b, "\n  \033[33mStop server %s? (y/n)\033[0m\n\n", m.server.serverName)
+		return b.String()
+	}
+
+	// Restart confirmation
+	if m.server.confirmRestart {
+		fmt.Fprintf(&b, "\n  \033[33mRestart server %s? (y/n)\033[0m\n\n", m.server.serverName)
 		return b.String()
 	}
 

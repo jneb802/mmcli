@@ -176,6 +176,14 @@ func (c *AgentClient) UpdateSettings(req *agentapi.SettingsUpdateRequest) (*agen
 	return &resp, nil
 }
 
+func (c *AgentClient) Update() (*agentapi.UpdateResponse, error) {
+	var resp agentapi.UpdateResponse
+	if err := c.doJSON("POST", agentapi.PathUpdate, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *AgentClient) doJSON(method, path string, body any, result any) error {
 	var reqBody io.Reader
 	if body != nil {

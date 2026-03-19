@@ -8,9 +8,9 @@ import (
 	"mmcli/internal/agentapi"
 )
 
-func Run(cfg AgentConfig, addr string) error {
+func Run(cfg AgentConfig, addr, version string) error {
 	pm := NewProcessManager(cfg)
-	h := NewHandlers(cfg, pm)
+	h := NewHandlers(cfg, pm, version)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+agentapi.PathStatus, h.HandleStatus)
@@ -25,6 +25,7 @@ func Run(cfg AgentConfig, addr string) error {
 	mux.HandleFunc("POST "+agentapi.PathConfigs, h.HandleConfigPush)
 	mux.HandleFunc("GET "+agentapi.PathSettings, h.HandleSettingsGet)
 	mux.HandleFunc("POST "+agentapi.PathSettings, h.HandleSettingsUpdate)
+	mux.HandleFunc("POST "+agentapi.PathUpdate, h.HandleUpdate)
 
 	handler := authMiddleware(cfg.Secret, mux)
 
