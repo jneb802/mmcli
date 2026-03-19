@@ -185,6 +185,7 @@ func (m model) handleProfilePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) handleConfirmRemove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y":
+		m.local.confirmRemove = false
 		mod := m.local.mods[m.local.cursor]
 		var err error
 		if mod.IsLocal {
@@ -200,8 +201,11 @@ func (m model) handleConfirmRemove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			config.SaveRegistry(m.paths, *m.reg)
 			m.refreshMods()
 		}
+	case "ctrl+c":
+		return m, tea.Quit
+	default:
+		m.local.confirmRemove = false
 	}
-	m.local.confirmRemove = false
 	return m, nil
 }
 
@@ -358,6 +362,13 @@ func (m model) viewLocal() string {
 		return b.String()
 	}
 
+	// Remove confirmation
+	if m.local.confirmRemove {
+		mod := m.local.mods[m.local.cursor]
+		fmt.Fprintf(&b, "\n  \033[33mRemove %s? (y/n)\033[0m\n\n", mod.FullName())
+		return b.String()
+	}
+
 	// Header
 	gameStatus := "\033[2mstopped\033[0m"
 	if m.local.gameRunning {
@@ -387,10 +398,7 @@ func (m model) viewLocal() string {
 
 	// Status bar
 	b.WriteString("\n")
-	if m.local.confirmRemove {
-		mod := m.local.mods[m.local.cursor]
-		fmt.Fprintf(&b, "  \033[33mRemove %s? (y/n)\033[0m\n", mod.FullName())
-	} else if m.local.err != nil {
+	if m.local.err != nil {
 		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.local.err)
 	}
 	hotkeys := []string{"↑/↓ navigate", "space toggle", "x remove", "u update", "i install", "c config", "s start", "l logs", "p profile"}
