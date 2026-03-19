@@ -30,6 +30,10 @@ func main() {
 		log.Fatalf("Error: %v", err)
 	}
 
+	if cfg.PlayerSecret != "" && cfg.PlayerSecret == cfg.Secret {
+		log.Fatalf("Error: admin and player secrets must be different")
+	}
+
 	if err := agent.Run(cfg, *listenAddr, Version); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
@@ -57,15 +61,21 @@ func runInit() {
 		startScript = "start_server_bepinex.sh"
 	}
 
-	secret, err := agent.GenerateSecret()
+	adminSecret, err := agent.GenerateSecret()
 	if err != nil {
-		log.Fatalf("Failed to generate secret: %v", err)
+		log.Fatalf("Failed to generate admin secret: %v", err)
+	}
+
+	playerSecret, err := agent.GenerateSecret()
+	if err != nil {
+		log.Fatalf("Failed to generate player secret: %v", err)
 	}
 
 	cfg := agent.AgentConfig{
-		Secret:      secret,
-		ValheimDir:  valheimDir,
-		StartScript: startScript,
+		Secret:       adminSecret,
+		PlayerSecret: playerSecret,
+		ValheimDir:   valheimDir,
+		StartScript:  startScript,
 	}
 
 	if err := agent.SaveConfig(*configPath, cfg); err != nil {
@@ -73,8 +83,10 @@ func runInit() {
 	}
 
 	fmt.Printf("\nConfig written to: %s\n", *configPath)
-	fmt.Printf("\nYour agent secret (save this for mmcli server add):\n")
-	fmt.Printf("\n  %s\n\n", secret)
+	fmt.Printf("\nYour admin secret (full control — keep private):\n")
+	fmt.Printf("\n  %s\n\n", adminSecret)
+	fmt.Printf("Your player secret (read-only — share with players):\n")
+	fmt.Printf("\n  %s\n\n", playerSecret)
 	fmt.Printf("Start the agent with:\n")
 	fmt.Printf("  mmcli-agent\n\n")
 }

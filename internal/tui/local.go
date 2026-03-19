@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"mmcli/internal/agentapi"
 	"mmcli/internal/config"
 	"mmcli/internal/installer"
 	"mmcli/internal/profile"
@@ -47,6 +48,10 @@ type localModel struct {
 
 	updates         map[string]string
 	checkingUpdates bool
+
+	confirmStart      bool
+	preflightWarnings []string
+	preflightFetching bool
 }
 
 func (m *model) refreshMods() {
@@ -292,6 +297,20 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "s":
 		if !m.local.gameRunning {
+			// Preflight check if server is linked
+			if m.server.client != nil {
+				if len(m.server.mods) == 0 {
+					// Need to fetch server mods first
+					m.local.preflightFetching = true
+					return m, fetchServerStatus(m.server.client)
+				}
+				warnings := preflightCheck(m.local.mods, m.server.mods)
+				if len(warnings) > 0 {
+					m.local.preflightWarnings = warnings
+					m.local.confirmStart = true
+					return m, nil
+				}
+			}
 			return m, startGame(m.paths, m.cfg)
 		}
 	case "l":
@@ -313,6 +332,22 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m model) viewLocal() string {
 	var b strings.Builder
+
+	// Preflight fetching
+	if m.local.preflightFetching {
+		b.WriteString("\n  \033[33mChecking server mods...\033[0m\n\n")
+		return b.String()
+	}
+
+	// Preflight confirmation
+	if m.local.confirmStart {
+		b.WriteString("\n  \033[33mMod mismatch with server:\033[0m\n\n")
+		for _, w := range m.local.preflightWarnings {
+			fmt.Fprintf(&b, "    %s\n", w)
+		}
+		b.WriteString("\n  \033[33mStart anyway? (y/n)\033[0m\n\n")
+		return b.String()
+	}
 
 	// Log viewer
 	if m.local.logs.active {
@@ -520,4 +555,62 @@ func openFile(path string) tea.Cmd {
 		exec.Command("open", path).Start()
 		return nil
 	}
+}
+
+func (m model) handleConfirmStart(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y":
+		m.local.confirmStart = false
+		return m, startGame(m.paths, m.cfg)
+	case "ctrl+c":
+		return m, tea.Quit
+	default:
+		m.local.confirmStart = false
+	}
+	return m, nil
+}
+
+// preflightCheck compares local mods against server mods and returns warnings.
+func preflightCheck(localMods []config.ModEntry, serverMods []agentapi.ModInfo) []string {
+	// Build server mod lookup by name
+	type serverMod struct {
+		version   string
+		anticheat string
+	}
+	serverSet := make(map[string]serverMod)
+	for _, m := range serverMods {
+		serverSet[m.Name] = serverMod{version: m.Version, anticheat: m.Anticheat}
+	}
+
+	// Build local mod lookup by full name
+	localSet := make(map[string]bool)
+	for _, m := range localMods {
+		if !m.Disabled {
+			localSet[m.FullName()] = true
+		}
+	}
+
+	var warnings []string
+
+	// Check for missing whitelisted mods (server requires, player doesn't have)
+	for _, sm := range serverMods {
+		if sm.Anticheat == "whitelist" && !localSet[sm.Name] {
+			warnings = append(warnings, fmt.Sprintf("\033[31mmissing\033[0m  %s (whitelisted — required)", sm.Name))
+		}
+	}
+
+	// Check local mods against server
+	for _, lm := range localMods {
+		if lm.Disabled || lm.ResolvedTarget() == "client" {
+			continue
+		}
+		sm, onServer := serverSet[lm.FullName()]
+		if !onServer {
+			warnings = append(warnings, fmt.Sprintf("\033[33mextra\033[0m    %s (not on server whitelist/greylist)", lm.FullName()))
+		} else if sm.anticheat == "whitelist" && sm.version != "" && lm.Version != "" && sm.version != lm.Version {
+			warnings = append(warnings, fmt.Sprintf("\033[33mversion\033[0m  %s (local %s, server %s)", lm.FullName(), lm.Version, sm.version))
+		}
+	}
+
+	return warnings
 }

@@ -44,6 +44,10 @@ func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model
 		if srv, ok := cfg.Servers[cfg.ActiveServer]; ok {
 			m.server.client = client.New(srv.Host, srv.Port, srv.Secret)
 			m.server.serverName = cfg.ActiveServer
+			m.server.role = srv.Role
+			if m.server.role == "" {
+				m.server.role = "admin"
+			}
 		}
 	}
 
@@ -107,6 +111,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.server.statusErr = msg.err
 		if msg.status != nil {
 			m.server.status = msg.status
+			if msg.status.Role != "" {
+				m.server.role = msg.status.Role
+			}
 		}
 		if msg.mods != nil {
 			m.server.mods = msg.mods
@@ -116,6 +123,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.modsResp != nil {
 			m.server.modsResp = msg.modsResp
+		}
+		// If we were waiting for server data to run preflight check
+		if m.local.preflightFetching {
+			m.local.preflightFetching = false
+			if msg.err != nil {
+				m.local.err = fmt.Errorf("could not reach server for mod check: %v", msg.err)
+				return m, startGame(m.paths, m.cfg)
+			}
+			warnings := preflightCheck(m.local.mods, m.server.mods)
+			if len(warnings) > 0 {
+				m.local.preflightWarnings = warnings
+				m.local.confirmStart = true
+				return m, nil
+			}
+			return m, startGame(m.paths, m.cfg)
 		}
 		return m, nil
 
@@ -198,6 +220,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.local.confirmRemove {
 				return m.handleConfirmRemove(msg)
+			}
+			if m.local.confirmStart {
+				return m.handleConfirmStart(msg)
+			}
+			if m.local.preflightFetching {
+				if msg.String() == "ctrl+c" {
+					return m, tea.Quit
+				}
+				return m, nil
 			}
 			return m.handleLocalNormal(msg)
 		}

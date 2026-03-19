@@ -11,6 +11,7 @@ type ServerEntry struct {
 	Host   string `json:"host"`
 	Port   int    `json:"port"`
 	Secret string `json:"secret"`
+	Role   string `json:"role,omitempty"`
 }
 
 type Config struct {

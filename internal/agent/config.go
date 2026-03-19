@@ -10,10 +10,11 @@ import (
 )
 
 type AgentConfig struct {
-	Secret      string `json:"secret"`
-	ValheimDir  string `json:"valheim_dir"`
-	StartScript string `json:"start_script"`
-	LogFile     string `json:"log_file,omitempty"`
+	Secret       string `json:"secret"`
+	PlayerSecret string `json:"player_secret,omitempty"`
+	ValheimDir   string `json:"valheim_dir"`
+	StartScript  string `json:"start_script"`
+	LogFile      string `json:"log_file,omitempty"`
 }
 
 func (c AgentConfig) BepInExDir() string {

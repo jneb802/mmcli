@@ -40,6 +40,7 @@ func (h *Handlers) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		Mods:     mods,
 		BepInEx:  bepinexErr == nil,
 		Version:  h.version,
+		Role:     RoleFromContext(r),
 	}
 
 	if resp.Running {

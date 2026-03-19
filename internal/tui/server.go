@@ -48,6 +48,7 @@ type serverTickMsg struct{}
 type serverModel struct {
 	client     *client.AgentClient
 	serverName string
+	role       string
 
 	status    *agentapi.StatusResponse
 	statusErr error
@@ -188,16 +189,28 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.server.cursor++
 		}
 	case "s":
+		if m.server.role != agentapi.RoleAdmin {
+			return m, nil
+		}
 		m.server.actionBusy = true
 		m.server.actionMsg = "Starting server..."
 		return m, serverAction(m.server.client, "start")
 	case "d":
+		if m.server.role != agentapi.RoleAdmin {
+			return m, nil
+		}
 		m.server.confirmStop = true
 		return m, nil
 	case "r":
+		if m.server.role != agentapi.RoleAdmin {
+			return m, nil
+		}
 		m.server.confirmRestart = true
 		return m, nil
 	case "p":
+		if m.server.role != agentapi.RoleAdmin {
+			return m, nil
+		}
 		items := buildPushItems(m.cfg, m.reg)
 		if len(items) == 0 {
 			m.server.statusErr = fmt.Errorf("no mods to push")
@@ -279,7 +292,11 @@ func (m model) viewServer() string {
 	}
 
 	modCount := len(m.server.mods)
-	fmt.Fprintf(&b, "\n  Server: \033[1m%s\033[0m    Status: %s    Mods: %d\n", m.server.serverName, statusText, modCount)
+	roleTag := ""
+	if m.server.role == agentapi.RolePlayer {
+		roleTag = " \033[33m(player)\033[0m"
+	}
+	fmt.Fprintf(&b, "\n  Server: \033[1m%s\033[0m%s    Status: %s    Mods: %d\n", m.server.serverName, roleTag, statusText, modCount)
 	if m.server.modsResp != nil && m.server.modsResp.ManifestTime != "" {
 		fmt.Fprintf(&b, "  Last push: \033[2m%s\033[0m\n", m.server.modsResp.ManifestTime)
 	}
@@ -309,7 +326,13 @@ func (m model) viewServer() string {
 	if m.server.statusErr != nil {
 		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.server.statusErr)
 	}
-	renderHotkeyBar(&b, []string{"s start", "d stop", "r restart", "p push", "l logs", "w settings", "tab local", "q quit"}, m.width)
+	var hotkeys []string
+	if m.server.role == agentapi.RoleAdmin {
+		hotkeys = []string{"s start", "d stop", "r restart", "p push", "l logs", "w settings", "tab local", "q quit"}
+	} else {
+		hotkeys = []string{"l logs", "w settings", "tab local", "q quit"}
+	}
+	renderHotkeyBar(&b, hotkeys, m.width)
 
 	return b.String()
 }

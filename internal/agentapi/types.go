@@ -4,6 +4,9 @@ const (
 	DefaultPort  = 9877
 	HeaderAPIKey = "X-API-Key"
 
+	RoleAdmin  = "admin"
+	RolePlayer = "player"
+
 	PathStatus  = "/api/v1/status"
 	PathStart   = "/api/v1/start"
 	PathStop    = "/api/v1/stop"
@@ -25,6 +28,7 @@ type StatusResponse struct {
 	Mods       []string `json:"mods,omitempty"`
 	BepInEx    bool     `json:"bepinex"`
 	Version    string   `json:"version"`
+	Role       string   `json:"role,omitempty"`
 }
 
 type ErrorResponse struct {

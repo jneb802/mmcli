@@ -63,10 +63,16 @@ Requires --host and --secret flags. Validates connectivity before saving.`,
 			return fmt.Errorf("could not reach agent: %w", err)
 		}
 
+		role := status.Role
+		if role == "" {
+			role = agentapi.RoleAdmin
+		}
+
 		cfg.Servers[name] = config.ServerEntry{
 			Host:   host,
 			Port:   port,
 			Secret: secret,
+			Role:   role,
 		}
 		cfg.ActiveServer = name
 
@@ -74,7 +80,7 @@ Requires --host and --secret flags. Validates connectivity before saving.`,
 			return fmt.Errorf("failed to save config: %w", err)
 		}
 
-		fmt.Printf("\033[32mServer '%s' added and set as active.\033[0m\n", name)
+		fmt.Printf("\033[32mServer '%s' added as %s and set as active.\033[0m\n", name, role)
 		printStatus(name, status, nil)
 		return nil
 	},
@@ -105,14 +111,20 @@ Use --json for machine-readable output.`,
 				Name   string `json:"name"`
 				Host   string `json:"host"`
 				Port   int    `json:"port"`
+				Role   string `json:"role"`
 				Active bool   `json:"active"`
 			}
 			var items []serverJSON
 			for name, srv := range cfg.Servers {
+				role := srv.Role
+				if role == "" {
+					role = "admin"
+				}
 				items = append(items, serverJSON{
 					Name:   name,
 					Host:   srv.Host,
 					Port:   srv.Port,
+					Role:   role,
 					Active: name == cfg.ActiveServer,
 				})
 			}
@@ -120,13 +132,17 @@ Use --json for machine-readable output.`,
 		}
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "NAME\tHOST\tPORT\tACTIVE")
+		fmt.Fprintln(w, "NAME\tHOST\tPORT\tROLE\tACTIVE")
 		for name, srv := range cfg.Servers {
 			active := ""
 			if name == cfg.ActiveServer {
 				active = "\033[32m*\033[0m"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s\n", name, srv.Host, srv.Port, active)
+			role := srv.Role
+			if role == "" {
+				role = "admin"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%d\t%s\t%s\n", name, srv.Host, srv.Port, role, active)
 		}
 		w.Flush()
 		return nil
@@ -226,6 +242,9 @@ var serverStartCmd = &cobra.Command{
 	Short: "Start the Valheim server",
 	Long:  `Send a start command to the active server's agent. Returns immediately after the server begins starting.`,
 	RunE:  func(cmd *cobra.Command, args []string) error {
+		if err := requireAdmin(); err != nil {
+			return err
+		}
 		name, c, err := resolveActiveServer()
 		if err != nil {
 			return err
@@ -246,6 +265,9 @@ var serverStopCmd = &cobra.Command{
 	Short: "Stop the Valheim server",
 	Long:  `Send a stop command to the active server's agent. Returns after the server process is terminated.`,
 	RunE:  func(cmd *cobra.Command, args []string) error {
+		if err := requireAdmin(); err != nil {
+			return err
+		}
 		name, c, err := resolveActiveServer()
 		if err != nil {
 			return err
@@ -266,6 +288,9 @@ var serverRestartCmd = &cobra.Command{
 	Short: "Restart the Valheim server",
 	Long:  `Stop and restart the Valheim server via the active server's agent.`,
 	RunE:  func(cmd *cobra.Command, args []string) error {
+		if err := requireAdmin(); err != nil {
+			return err
+		}
 		name, c, err := resolveActiveServer()
 		if err != nil {
 			return err
@@ -289,6 +314,9 @@ at "both" or "server" are included. Client-only mods are skipped.
 Push is always additive — existing server files are not deleted.
 Use --with-config to also push config files after mods.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := requireAdmin(); err != nil {
+			return err
+		}
 		profileName, _ := cmd.Flags().GetString("profile")
 
 		name, c, err := resolveActiveServer()
@@ -391,6 +419,9 @@ var serverUpdateCmd = &cobra.Command{
 	Long: `Download and install the latest mmcli-agent binary from GitHub Releases
 on the remote server. The agent restarts automatically after updating.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := requireAdmin(); err != nil {
+			return err
+		}
 		_, c, err := resolveActiveServer()
 		if err != nil {
 			return err
@@ -472,6 +503,9 @@ Examples:
   mmcli server settings set --name "My Server" --public 1
   mmcli server settings set --preset hard --modifier "raids=none"`,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := requireAdmin(); err != nil {
+			return err
+		}
 		_, c, err := resolveActiveServer()
 		if err != nil {
 			return err
@@ -609,6 +643,21 @@ func init() {
 
 	serverLogsCmd.Flags().Int("lines", 100, "number of log lines to show")
 	serverLogsCmd.Flags().BoolP("follow", "f", false, "stream new log lines")
+}
+
+// requireAdmin returns an error if the active server's cached role is not admin.
+func requireAdmin() error {
+	_, cfg, err := loadServerConfig()
+	if err != nil {
+		return err
+	}
+	if cfg.ActiveServer == "" {
+		return nil // resolveActiveServer will handle this
+	}
+	if srv, ok := cfg.Servers[cfg.ActiveServer]; ok && srv.Role == agentapi.RolePlayer {
+		return fmt.Errorf("this action requires admin access (your key has player role)")
+	}
+	return nil
 }
 
 // resolveActiveServer loads config and returns a client for the active server.
@@ -763,7 +812,13 @@ func printStatus(name string, s *agentapi.StatusResponse, modsResp *agentapi.Mod
 		bepinex = "\033[32minstalled\033[0m"
 	}
 
+	role := s.Role
+	if role == "" {
+		role = "admin"
+	}
+
 	fmt.Printf("\n  Server:  %s\n", name)
+	fmt.Printf("  Role:    %s\n", role)
 	fmt.Printf("  Status:  %s\n", status)
 	fmt.Printf("  BepInEx: %s\n", bepinex)
 	fmt.Printf("  Mods:    %d\n", s.ModCount)

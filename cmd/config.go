@@ -125,6 +125,9 @@ For .yaml/.json files: sends the entire file (with confirmation).
 If no filename given, requires --all flag.`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := requireAdmin(); err != nil {
+			return err
+		}
 		all, _ := cmd.Flags().GetBool("all")
 
 		if len(args) == 0 && !all {
