@@ -26,7 +26,10 @@ type syncModel struct {
 	configFetching bool
 	configErr      error
 
-	// Push state (mods)
+	// Moderation sub-tab
+	moderationCursor int
+
+	// Push state (mods — shared by Mods and Moderation tabs)
 	confirmModPush bool
 	pushScroll     int
 
@@ -132,6 +135,8 @@ func (m model) handleSyncNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSyncModsKeys(msg)
 	case contentSyncConfigs:
 		return m.handleSyncConfigsKeys(msg)
+	case contentSyncModeration:
+		return m.handleSyncModerationKeys(msg)
 	}
 	return m, nil
 }
@@ -189,6 +194,164 @@ func (m model) handleSyncConfigsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m model) handleSyncModerationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	items := m.sync.modItems
+	switch msg.String() {
+	case "up", "k":
+		if m.sync.moderationCursor > 0 {
+			m.sync.moderationCursor--
+		}
+	case "down", "j":
+		if m.sync.moderationCursor < len(items)-1 {
+			m.sync.moderationCursor++
+		}
+	case "a":
+		if m.server.role != agentapi.RoleAdmin || len(items) == 0 {
+			return m, nil
+		}
+		modName := items[m.sync.moderationCursor].Name
+		regMod, ok := m.reg.GetMod(m.cfg.ActiveProfile, modName)
+		if !ok {
+			return m, nil
+		}
+		newValue := nextAnticheatValue(regMod.Anticheat, m.anticheatSystem)
+		regMod.Anticheat = newValue
+		m.reg.SetMod(m.cfg.ActiveProfile, regMod)
+		// Propagate to dependencies
+		for _, depName := range regMod.Dependencies {
+			dep, depOk := m.reg.GetMod(m.cfg.ActiveProfile, depName)
+			if !depOk {
+				continue
+			}
+			dep.Anticheat = newValue
+			m.reg.SetMod(m.cfg.ActiveProfile, dep)
+		}
+		config.SaveRegistry(m.paths, *m.reg)
+		// Refresh mod items to reflect the change
+		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.server.mods)
+		return m, nil
+	case "p":
+		if m.server.role != agentapi.RoleAdmin {
+			return m, nil
+		}
+		pushItems := buildPushItems(m.cfg, m.reg, m.server.mods)
+		if len(pushItems) == 0 {
+			return m, nil
+		}
+		m.sync.modItems = pushItems
+		m.sync.confirmModPush = true
+		m.sync.pushScroll = 0
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m model) viewSyncModeration() string {
+	var b strings.Builder
+
+	if m.server.client == nil {
+		b.WriteString("\n  No server configured.\n")
+		b.WriteString("  Run \033[36mmmcli server add\033[0m to register one.\n\n")
+		b.WriteString("  \033[2m` mode • q quit\033[0m\n\n")
+		return b.String()
+	}
+
+	// Push confirmation modal (shared with Mods tab)
+	if m.sync.confirmModPush {
+		renderPushConfirm(&b, m.server.serverName, m.cfg.ActiveProfile, m.sync.modItems, m.sync.pushScroll, m.server.status)
+		return b.String()
+	}
+
+	// Action busy
+	if m.server.actionBusy {
+		fmt.Fprintf(&b, "\n  \033[33m%s\033[0m\n\n", m.server.actionMsg)
+		return b.String()
+	}
+
+	if m.server.fetching && len(m.sync.modItems) == 0 {
+		b.WriteString("\n  \033[2mFetching server data...\033[0m\n\n")
+		return b.String()
+	}
+
+	b.WriteString("\n")
+
+	// Header with system info
+	systemLabel := m.anticheatSystem
+	if systemLabel == "azu" {
+		systemLabel = "AzuAntiCheat"
+	} else {
+		systemLabel = "ValheimEnforcer"
+	}
+	fmt.Fprintf(&b, "  \033[1mModeration\033[0m  \033[2m%s\033[0m\n\n", systemLabel)
+
+	renderModerationList(&b, m.sync.modItems, m.sync.moderationCursor, m.anticheatSystem)
+
+	b.WriteString("\n")
+	if m.server.statusErr != nil {
+		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.server.statusErr)
+	}
+
+	var hotkeys []string
+	if m.server.role == agentapi.RoleAdmin {
+		hotkeys = []string{"a classify", "p push", "` mode", "tab next", "q quit"}
+	} else {
+		hotkeys = []string{"` mode", "tab next", "q quit"}
+	}
+	renderHotkeyBar(&b, hotkeys, m.width)
+
+	return b.String()
+}
+
+func renderModerationList(b *strings.Builder, items []modListItem, cursor int, anticheatSystem string) {
+	if len(items) == 0 {
+		b.WriteString("  No mods.\n")
+		return
+	}
+
+	maxName := 0
+	for _, item := range items {
+		if l := len(item.Name); l > maxName {
+			maxName = l
+		}
+	}
+
+	// Header
+	namePad := strings.Repeat(" ", maxName-len("Name")+2)
+	fmt.Fprintf(b, "  \033[2m    Name%sClassification\033[0m\n", namePad)
+
+	for i, item := range items {
+		cur := "  "
+		if i == cursor {
+			cur = "\033[36m>\033[0m "
+		}
+
+		pad := strings.Repeat(" ", maxName-len(item.Name)+2)
+
+		ac := item.Anticheat
+		var label string
+		switch ac {
+		case "whitelist":
+			if anticheatSystem == "enforcer" {
+				label = "\033[32mR  required\033[0m"
+			} else {
+				label = "\033[32mW  whitelist\033[0m"
+			}
+		case "greylist":
+			if anticheatSystem == "enforcer" {
+				label = "\033[33mO  optional\033[0m"
+			} else {
+				label = "\033[33mG  greylist\033[0m"
+			}
+		case "adminonly":
+			label = "\033[35mA  admin only\033[0m"
+		default:
+			label = "\033[2m-  none\033[0m"
+		}
+
+		fmt.Fprintf(b, "  %s%s%s%s\n", cur, item.Name, pad, label)
+	}
 }
 
 func (m model) viewSyncMods() string {

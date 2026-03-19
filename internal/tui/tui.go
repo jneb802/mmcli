@@ -33,11 +33,12 @@ const (
 	contentPlayers
 	contentSyncMods
 	contentSyncConfigs
+	contentSyncModeration
 )
 
 var localTabs = []contentTab{contentMods, contentLogs, contentStatus, contentSettings}
 var serverTabs = []contentTab{contentMods, contentLogs, contentPlayers, contentWorld, contentStatus}
-var syncTabs = []contentTab{contentSyncMods, contentSyncConfigs}
+var syncTabs = []contentTab{contentSyncMods, contentSyncConfigs, contentSyncModeration}
 
 func contentTabName(t contentTab) string {
 	switch t {
@@ -57,6 +58,8 @@ func contentTabName(t contentTab) string {
 		return "Mods"
 	case contentSyncConfigs:
 		return "Configs"
+	case contentSyncModeration:
+		return "Moderation"
 	default:
 		return "?"
 	}
@@ -491,6 +494,8 @@ func (m model) View() string {
 			b.WriteString(m.viewSyncMods())
 		case contentSyncConfigs:
 			b.WriteString(m.viewSyncConfigs())
+		case contentSyncModeration:
+			b.WriteString(m.viewSyncModeration())
 		}
 	}
 
