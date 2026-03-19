@@ -62,7 +62,7 @@ var listCmd = &cobra.Command{
 		fmt.Printf("Mods in profile '\033[36m%s\033[0m':\n\n", cfg.ActiveProfile)
 
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "MOD\tVERSION\tTYPE\tTARGET\tSTATUS")
+		fmt.Fprintln(w, "MOD\tVERSION\tTYPE\tTARGET\tANTICHEAT\tSTATUS")
 		for _, mod := range mods {
 			modType := "\033[32minstalled\033[0m"
 			if mod.IsLocal {
@@ -86,7 +86,14 @@ var listCmd = &cobra.Command{
 			case "server":
 				targetColor = "\033[35mserver\033[0m"
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", mod.FullName(), version, modType, targetColor, status)
+			anticheat := "-"
+			switch mod.Anticheat {
+			case "whitelist":
+				anticheat = "\033[32mwhitelist\033[0m"
+			case "greylist":
+				anticheat = "\033[33mgreylist\033[0m"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\t%s\n", mod.FullName(), version, modType, targetColor, anticheat, status)
 		}
 		w.Flush()
 		return nil

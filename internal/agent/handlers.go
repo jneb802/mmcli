@@ -150,6 +150,11 @@ func (h *Handlers) HandleModsPush(w http.ResponseWriter, r *http.Request) {
 	}
 	defer gz.Close()
 
+	// Clean anticheat folders before extraction so pushed state is authoritative.
+	// These folders are managed exclusively by mmcli — the fresh push recreates them.
+	os.RemoveAll(filepath.Join(bepDir, "config", "AzuAntiCheat_Whitelist"))
+	os.RemoveAll(filepath.Join(bepDir, "config", "AzuAntiCheat_Greylist"))
+
 	tr := tar.NewReader(gz)
 	count := 0
 	for {

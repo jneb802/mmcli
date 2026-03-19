@@ -117,5 +117,116 @@ func BuildProfileArchive(w io.Writer, paths config.Paths, profileName string, re
 		}
 	}
 
+	// Add AzuAntiCheat whitelist/greylist DLL entries
+	if err := addAnticheatEntries(tw, paths.ProfilePluginsDir(profileName), reg, profileName, serverMods); err != nil {
+		return fmt.Errorf("failed to add anticheat entries: %w", err)
+	}
+
+	return nil
+}
+
+// addAnticheatEntries collects DLLs from classified mods and writes them into
+// config/AzuAntiCheat_Whitelist/ and config/AzuAntiCheat_Greylist/ in the tar.
+// These folders are used by AzuAntiCheat for hash comparison only (not loaded).
+func addAnticheatEntries(tw *tar.Writer, pluginsDir string, reg config.Registry,
+	profileName string, serverMods map[string]bool) error {
+
+	type classifiedMod struct {
+		dirName string
+		folder  string // "config/AzuAntiCheat_Whitelist" or "config/AzuAntiCheat_Greylist"
+	}
+
+	var classified []classifiedMod
+	for _, mod := range reg.ListMods(profileName) {
+		if mod.ResolvedTarget() == "client" || mod.Anticheat == "" {
+			continue
+		}
+		folder := "config/AzuAntiCheat_Whitelist"
+		if mod.Anticheat == "greylist" {
+			folder = "config/AzuAntiCheat_Greylist"
+		}
+		classified = append(classified, classifiedMod{
+			dirName: mod.FullName(),
+			folder:  folder,
+		})
+	}
+
+	if len(classified) == 0 {
+		return nil
+	}
+
+	// Write directory entries
+	dirs := map[string]bool{}
+	for _, cm := range classified {
+		dirs[cm.folder] = true
+	}
+	for dir := range dirs {
+		if err := tw.WriteHeader(&tar.Header{
+			Name:     dir + "/",
+			Typeflag: tar.TypeDir,
+			Mode:     0755,
+		}); err != nil {
+			return err
+		}
+	}
+
+	// Collect DLLs from each classified mod
+	seen := map[string]bool{} // track archive paths to warn on collisions
+	for _, cm := range classified {
+		modDir := filepath.Join(pluginsDir, cm.dirName)
+		isServerMod := serverMods[cm.dirName]
+
+		err := filepath.Walk(modDir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || info.IsDir() {
+				return nil
+			}
+			lower := strings.ToLower(info.Name())
+			isDLL := strings.HasSuffix(lower, ".dll")
+			isDisabledDLL := strings.HasSuffix(lower, ".dll.old")
+			if !isDLL && !isDisabledDLL {
+				return nil
+			}
+
+			// Skip genuinely disabled DLLs (not server-targeted)
+			if isDisabledDLL && !isServerMod {
+				return nil
+			}
+
+			baseName := info.Name()
+			if isDisabledDLL && isServerMod {
+				baseName = strings.TrimSuffix(baseName, ".old")
+			}
+
+			archivePath := cm.folder + "/" + baseName
+
+			if seen[archivePath] {
+				fmt.Fprintf(os.Stderr, "Warning: anticheat DLL collision: %s (overwritten)\n", archivePath)
+			}
+			seen[archivePath] = true
+
+			header := &tar.Header{
+				Name:     archivePath,
+				Size:     info.Size(),
+				Mode:     int64(info.Mode()),
+				Typeflag: tar.TypeReg,
+			}
+			if err := tw.WriteHeader(header); err != nil {
+				return err
+			}
+
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			_, err = io.Copy(tw, f)
+			return err
+		})
+
+		if err != nil {
+			return fmt.Errorf("anticheat: failed to walk %s: %w", cm.dirName, err)
+		}
+	}
+
 	return nil
 }

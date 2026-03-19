@@ -9,10 +9,11 @@ import (
 
 // modListItem is a unified representation for rendering mod lists in both tabs.
 type modListItem struct {
-	Name     string
-	Version  string
-	Disabled bool
-	Update   string // latest version, empty if no update
+	Name      string
+	Version   string
+	Disabled  bool
+	Update    string // latest version, empty if no update
+	Anticheat string // "whitelist", "greylist", or ""
 }
 
 // renderModList renders a list of mods with cursor, check/x, name, version, and update indicators.
@@ -40,6 +41,14 @@ func renderModList(b *strings.Builder, items []modListItem, cursor int) {
 			check = "\033[31m✗\033[0m"
 		}
 
+		badge := ""
+		switch item.Anticheat {
+		case "whitelist":
+			badge = " \033[32m[W]\033[0m"
+		case "greylist":
+			badge = " \033[33m[G]\033[0m"
+		}
+
 		pad := strings.Repeat(" ", maxName-len(item.Name)+2)
 
 		version := item.Version
@@ -48,9 +57,9 @@ func renderModList(b *strings.Builder, items []modListItem, cursor int) {
 		}
 
 		if item.Update != "" {
-			fmt.Fprintf(b, "  %s[%s] %s%s\033[33m%s → %s\033[0m\n", cur, check, item.Name, pad, version, item.Update)
+			fmt.Fprintf(b, "  %s[%s] %s%s%s\033[33m%s → %s\033[0m\n", cur, check, item.Name, badge, pad, version, item.Update)
 		} else {
-			fmt.Fprintf(b, "  %s[%s] %s%s%s\n", cur, check, item.Name, pad, version)
+			fmt.Fprintf(b, "  %s[%s] %s%s%s%s\n", cur, check, item.Name, badge, pad, version)
 		}
 	}
 }
