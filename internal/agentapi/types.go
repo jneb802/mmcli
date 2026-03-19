@@ -33,12 +33,38 @@ type ActionResponse struct {
 }
 
 type ModListResponse struct {
-	Mods []ModInfo `json:"mods"`
+	Mods         []ModInfo `json:"mods"`
+	ManifestTime string    `json:"manifest_time,omitempty"` // RFC3339 when last push occurred
+	LogParsed    bool      `json:"log_parsed"`              // whether BepInEx log was available
 }
 
 type ModInfo struct {
-	Name     string `json:"name"`
-	Disabled bool   `json:"disabled"`
+	Name      string `json:"name"`
+	Version   string `json:"version,omitempty"`
+	Owner     string `json:"owner,omitempty"`
+	Disabled  bool   `json:"disabled"`
+	Anticheat string `json:"anticheat,omitempty"`
+	Target    string `json:"target,omitempty"`
+	Loaded    *bool  `json:"loaded,omitempty"` // true=confirmed loaded, nil=unknown
+}
+
+// Manifest types for server-side mod metadata.
+
+const ManifestFileName = "mmcli-manifest.json"
+
+type ManifestMod struct {
+	DirName   string `json:"dir_name"`  // "RandyKnapp-EpicLoot"
+	Owner     string `json:"owner"`     // "RandyKnapp"
+	Name      string `json:"name"`      // "EpicLoot"
+	Version   string `json:"version"`   // "0.12.11"
+	Target    string `json:"target"`    // "server" or "both"
+	Anticheat string `json:"anticheat"` // "whitelist", "greylist", ""
+}
+
+type PushManifest struct {
+	PushedAt string        `json:"pushed_at"` // RFC3339 timestamp
+	Profile  string        `json:"profile"`
+	Mods     []ManifestMod `json:"mods"`
 }
 
 // Config management paths
@@ -100,6 +126,27 @@ type SettingsResponse struct {
 	Admins    []string `json:"admins,omitempty"`
 	Banned    []string `json:"banned,omitempty"`
 	Permitted []string `json:"permitted,omitempty"`
+}
+
+// SettingsUpdateRequest contains fields to update in the start script.
+// Pointer fields: nil means "don't change". Non-nil means "set to this value".
+type SettingsUpdateRequest struct {
+	Name         *string           `json:"name,omitempty"`
+	Port         *int              `json:"port,omitempty"`
+	World        *string           `json:"world,omitempty"`
+	Password     *string           `json:"password,omitempty"`
+	SaveDir      *string           `json:"savedir,omitempty"`
+	Public       *int              `json:"public,omitempty"`
+	LogFile      *string           `json:"logfile,omitempty"`
+	InstanceID   *string           `json:"instanceid,omitempty"`
+	SaveInterval *int              `json:"saveinterval,omitempty"`
+	Backups      *int              `json:"backups,omitempty"`
+	BackupShort  *int              `json:"backupshort,omitempty"`
+	BackupLong   *int              `json:"backuplong,omitempty"`
+	Crossplay    *bool             `json:"crossplay,omitempty"`
+	Preset       *string           `json:"preset,omitempty"`
+	Modifiers    map[string]string `json:"modifiers,omitempty"`
+	SetKeys      []string          `json:"setkeys,omitempty"`
 }
 
 type ConfigPushResponse struct {

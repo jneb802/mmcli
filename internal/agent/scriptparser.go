@@ -11,23 +11,38 @@ import (
 	"mmcli/internal/agentapi"
 )
 
-// ParseStartScript reads a start script and extracts Valheim server settings
-// from the exec/binary invocation line.
+// ParsedScript holds the start script decomposed into preamble, binary, and settings.
+type ParsedScript struct {
+	Preamble []string // all lines before the exec line
+	Prefix   string   // "exec " or ""
+	Binary   string   // e.g. "./valheim_server.x86_64"
+}
+
+// ParseStartScript reads a start script and extracts Valheim server settings.
 func ParseStartScript(path string) (*agentapi.SettingsResponse, error) {
+	_, settings, err := ParseStartScriptFull(path)
+	return settings, err
+}
+
+// ParseStartScriptFull reads a start script, returning the parsed structure
+// (preamble + binary) and the extracted settings.
+func ParseStartScriptFull(path string) (*ParsedScript, *agentapi.SettingsResponse, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
 
+	var preamble []string
 	var execLine string
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
 		trimmed := strings.TrimSpace(line)
 
-		// Skip comments and blank lines
+		// Skip comments and blank lines — they go into preamble
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			preamble = append(preamble, line)
 			continue
 		}
 
@@ -36,21 +51,30 @@ func ParseStartScript(path string) (*agentapi.SettingsResponse, error) {
 			execLine = trimmed
 			break
 		}
+
+		// Non-comment, non-exec lines go into preamble (e.g. export statements)
+		preamble = append(preamble, line)
 	}
 	if err := scanner.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	if execLine == "" {
-		return nil, fmt.Errorf("no valheim_server invocation found in %s", path)
+		return nil, nil, fmt.Errorf("no valheim_server invocation found in %s", path)
 	}
 
 	tokens := tokenizeExecLine(execLine)
 
-	// Skip leading tokens until we hit one starting with "-"
-	// (skips "exec", binary path, etc.)
+	// Extract prefix and binary from leading tokens
+	ps := &ParsedScript{Preamble: preamble}
 	startIdx := 0
 	for startIdx < len(tokens) && !strings.HasPrefix(tokens[startIdx], "-") {
+		tok := tokens[startIdx]
+		if tok == "exec" {
+			ps.Prefix = "exec "
+		} else if strings.Contains(tok, "valheim_server") {
+			ps.Binary = tok
+		}
 		startIdx++
 	}
 
@@ -63,7 +87,131 @@ func ParseStartScript(path string) (*agentapi.SettingsResponse, error) {
 		settings.Permitted = readPermissionFile(filepath.Join(settings.SaveDir, "permittedlist.txt"))
 	}
 
-	return settings, nil
+	return ps, settings, nil
+}
+
+// RebuildStartScript produces the new file content from a parsed script and settings.
+func RebuildStartScript(ps *ParsedScript, s *agentapi.SettingsResponse) string {
+	var b strings.Builder
+
+	// Write preamble
+	for _, line := range ps.Preamble {
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+
+	// Build exec line
+	b.WriteString(ps.Prefix)
+	b.WriteString(ps.Binary)
+
+	// Core string settings — always quote
+	if s.Name != "" {
+		fmt.Fprintf(&b, " -name %q", s.Name)
+	}
+	fmt.Fprintf(&b, " -port %d", s.Port)
+	if s.World != "" {
+		fmt.Fprintf(&b, " -world %q", s.World)
+	}
+	if s.Password != "" {
+		fmt.Fprintf(&b, " -password %q", s.Password)
+	}
+	if s.Public != 0 {
+		fmt.Fprintf(&b, " -public %d", s.Public)
+	} else {
+		b.WriteString(" -public 0")
+	}
+	if s.SaveDir != "" {
+		fmt.Fprintf(&b, " -savedir %s", s.SaveDir)
+	}
+	if s.LogFile != "" {
+		fmt.Fprintf(&b, " -logFile %q", s.LogFile)
+	}
+	if s.InstanceID != "" {
+		fmt.Fprintf(&b, " -instanceid %q", s.InstanceID)
+	}
+
+	// Backup settings — only emit if non-zero
+	if s.SaveInterval != 0 {
+		fmt.Fprintf(&b, " -saveinterval %d", s.SaveInterval)
+	}
+	if s.Backups != 0 {
+		fmt.Fprintf(&b, " -backups %d", s.Backups)
+	}
+	if s.BackupShort != 0 {
+		fmt.Fprintf(&b, " -backupshort %d", s.BackupShort)
+	}
+	if s.BackupLong != 0 {
+		fmt.Fprintf(&b, " -backuplong %d", s.BackupLong)
+	}
+
+	// World modifiers
+	if s.Crossplay {
+		b.WriteString(" -crossplay")
+	}
+	if s.Preset != "" {
+		fmt.Fprintf(&b, " -preset %s", s.Preset)
+	}
+	for k, v := range s.Modifiers {
+		fmt.Fprintf(&b, " -modifier %s %s", k, v)
+	}
+	for _, k := range s.SetKeys {
+		fmt.Fprintf(&b, " -setkey %s", k)
+	}
+
+	b.WriteByte('\n')
+	return b.String()
+}
+
+// ApplySettingsUpdate merges non-nil fields from the update request into current settings.
+func ApplySettingsUpdate(current *agentapi.SettingsResponse, req *agentapi.SettingsUpdateRequest) {
+	if req.Name != nil {
+		current.Name = *req.Name
+	}
+	if req.Port != nil {
+		current.Port = *req.Port
+	}
+	if req.World != nil {
+		current.World = *req.World
+	}
+	if req.Password != nil {
+		current.Password = *req.Password
+	}
+	if req.SaveDir != nil {
+		current.SaveDir = *req.SaveDir
+	}
+	if req.Public != nil {
+		current.Public = *req.Public
+	}
+	if req.LogFile != nil {
+		current.LogFile = *req.LogFile
+	}
+	if req.InstanceID != nil {
+		current.InstanceID = *req.InstanceID
+	}
+	if req.SaveInterval != nil {
+		current.SaveInterval = *req.SaveInterval
+	}
+	if req.Backups != nil {
+		current.Backups = *req.Backups
+	}
+	if req.BackupShort != nil {
+		current.BackupShort = *req.BackupShort
+	}
+	if req.BackupLong != nil {
+		current.BackupLong = *req.BackupLong
+	}
+	if req.Crossplay != nil {
+		current.Crossplay = *req.Crossplay
+	}
+	if req.Preset != nil {
+		current.Preset = *req.Preset
+	}
+	if req.Modifiers != nil {
+		current.Modifiers = req.Modifiers
+	}
+	if req.SetKeys != nil {
+		current.SetKeys = req.SetKeys
+	}
 }
 
 // tokenizeExecLine splits a command line respecting quoted strings.

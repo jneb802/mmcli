@@ -24,6 +24,7 @@ type model struct {
 	reg       *config.Registry
 	local     localModel
 	server    serverModel
+	width     int
 }
 
 func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model {
@@ -51,7 +52,7 @@ func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model
 
 func (m model) Init() tea.Cmd {
 	m.local.checkingUpdates = true
-	return checkUpdates(m.local.mods)
+	return tea.Batch(checkUpdates(m.local.mods), checkGameRunning(), localTick())
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -77,6 +78,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.local.updates = msg.updates
 		return m, nil
 
+	case gameStatusMsg:
+		m.local.gameRunning = msg.running
+		return m, nil
+
+	case localTickMsg:
+		if m.activeTab == tabLocal {
+			return m, tea.Batch(checkGameRunning(), localTick())
+		}
+		return m, nil
+
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		return m, nil
+
 	// --- Server async messages ---
 	case serverStatusMsg:
 		m.server.fetching = false
@@ -89,6 +104,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.server.cursor >= len(m.server.mods) {
 				m.server.cursor = max(0, len(m.server.mods)-1)
 			}
+		}
+		if msg.modsResp != nil {
+			m.server.modsResp = msg.modsResp
 		}
 		return m, nil
 

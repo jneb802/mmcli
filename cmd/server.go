@@ -74,7 +74,7 @@ Requires --host and --secret flags. Validates connectivity before saving.`,
 		}
 
 		fmt.Printf("\033[32mServer '%s' added and set as active.\033[0m\n", name)
-		printStatus(name, status)
+		printStatus(name, status, nil)
 		return nil
 	},
 }
@@ -209,11 +209,13 @@ BepInEx status, and installed mods. Use --json for machine-readable output.`,
 			return err
 		}
 
+		modsResp, _ := c.ListMods() // best-effort enrichment
+
 		if jsonOutput {
 			return json.NewEncoder(os.Stdout).Encode(status)
 		}
 
-		printStatus(name, status)
+		printStatus(name, status, modsResp)
 		return nil
 	},
 }
@@ -408,6 +410,108 @@ Use --json for machine-readable output.`,
 	},
 }
 
+var serverSettingsSetCmd = &cobra.Command{
+	Use:   "set",
+	Short: "Update server world settings",
+	Long: `Update one or more server settings. Only explicitly provided flags are changed.
+Changes are written to the start script and take effect on next server restart.
+
+Examples:
+  mmcli server settings set --world "newWorld"
+  mmcli server settings set --name "My Server" --public 1
+  mmcli server settings set --preset hard --modifier "raids=none"`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, c, err := resolveActiveServer()
+		if err != nil {
+			return err
+		}
+
+		req := &agentapi.SettingsUpdateRequest{}
+		anyChanged := false
+
+		// String flags
+		for _, sf := range []struct {
+			name string
+			dest **string
+		}{
+			{"name", &req.Name},
+			{"world", &req.World},
+			{"password", &req.Password},
+			{"savedir", &req.SaveDir},
+			{"logfile", &req.LogFile},
+			{"instanceid", &req.InstanceID},
+			{"preset", &req.Preset},
+		} {
+			if cmd.Flags().Changed(sf.name) {
+				v, _ := cmd.Flags().GetString(sf.name)
+				*sf.dest = &v
+				anyChanged = true
+			}
+		}
+
+		// Int flags
+		for _, nf := range []struct {
+			name string
+			dest **int
+		}{
+			{"port", &req.Port},
+			{"public", &req.Public},
+			{"saveinterval", &req.SaveInterval},
+			{"backups", &req.Backups},
+			{"backupshort", &req.BackupShort},
+			{"backuplong", &req.BackupLong},
+		} {
+			if cmd.Flags().Changed(nf.name) {
+				v, _ := cmd.Flags().GetInt(nf.name)
+				*nf.dest = &v
+				anyChanged = true
+			}
+		}
+
+		// Bool flag
+		if cmd.Flags().Changed("crossplay") {
+			v, _ := cmd.Flags().GetBool("crossplay")
+			req.Crossplay = &v
+			anyChanged = true
+		}
+
+		// StringSlice: modifiers (key=value format)
+		if cmd.Flags().Changed("modifier") {
+			mods, _ := cmd.Flags().GetStringSlice("modifier")
+			req.Modifiers = make(map[string]string)
+			for _, m := range mods {
+				parts := strings.SplitN(m, "=", 2)
+				if len(parts) == 2 {
+					req.Modifiers[strings.ToLower(parts[0])] = strings.ToLower(parts[1])
+				} else {
+					return fmt.Errorf("invalid modifier format %q, expected key=value", m)
+				}
+			}
+			anyChanged = true
+		}
+
+		// StringSlice: setkeys
+		if cmd.Flags().Changed("setkey") {
+			keys, _ := cmd.Flags().GetStringSlice("setkey")
+			req.SetKeys = keys
+			anyChanged = true
+		}
+
+		if !anyChanged {
+			return fmt.Errorf("no settings specified. Use flags like --world, --name, --preset, etc")
+		}
+
+		resp, err := c.UpdateSettings(req)
+		if err != nil {
+			return err
+		}
+
+		fmt.Printf("\033[32m%s\033[0m\n", resp.Message)
+		fmt.Println("Restart the server for changes to take effect.")
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(serverCmd)
 
@@ -422,6 +526,25 @@ func init() {
 	serverCmd.AddCommand(serverPushCmd)
 	serverCmd.AddCommand(serverLogsCmd)
 	serverCmd.AddCommand(serverSettingsCmd)
+	serverSettingsCmd.AddCommand(serverSettingsSetCmd)
+
+	// settings set flags
+	serverSettingsSetCmd.Flags().String("name", "", "server name")
+	serverSettingsSetCmd.Flags().Int("port", 0, "server port")
+	serverSettingsSetCmd.Flags().String("world", "", "world name (new name creates a new world)")
+	serverSettingsSetCmd.Flags().String("password", "", "server password")
+	serverSettingsSetCmd.Flags().String("savedir", "", "save directory path")
+	serverSettingsSetCmd.Flags().Int("public", 0, "server visibility (0 or 1)")
+	serverSettingsSetCmd.Flags().String("logfile", "", "log file path")
+	serverSettingsSetCmd.Flags().String("instanceid", "", "instance ID for multiple servers")
+	serverSettingsSetCmd.Flags().Int("saveinterval", 0, "save interval in seconds")
+	serverSettingsSetCmd.Flags().Int("backups", 0, "number of automatic backups")
+	serverSettingsSetCmd.Flags().Int("backupshort", 0, "short backup interval in seconds")
+	serverSettingsSetCmd.Flags().Int("backuplong", 0, "long backup interval in seconds")
+	serverSettingsSetCmd.Flags().Bool("crossplay", false, "enable crossplay")
+	serverSettingsSetCmd.Flags().String("preset", "", "world modifier preset (Normal, Casual, Easy, Hard, Hardcore, Immersive, Hammer)")
+	serverSettingsSetCmd.Flags().StringSlice("modifier", nil, "world modifier as key=value (e.g. raids=none)")
+	serverSettingsSetCmd.Flags().StringSlice("setkey", nil, "world modifier key (e.g. nomap)")
 
 	serverAddCmd.Flags().String("host", "", "server hostname or IP (required)")
 	serverAddCmd.Flags().Int("port", agentapi.DefaultPort, "agent port")
@@ -577,7 +700,7 @@ func humanDuration(seconds int) string {
 	return fmt.Sprintf("%ds", seconds)
 }
 
-func printStatus(name string, s *agentapi.StatusResponse) {
+func printStatus(name string, s *agentapi.StatusResponse, modsResp *agentapi.ModListResponse) {
 	status := "\033[31mstopped\033[0m"
 	if s.Running {
 		status = fmt.Sprintf("\033[32mrunning\033[0m (%s)", s.Uptime)
@@ -592,7 +715,20 @@ func printStatus(name string, s *agentapi.StatusResponse) {
 	fmt.Printf("  Status:  %s\n", status)
 	fmt.Printf("  BepInEx: %s\n", bepinex)
 	fmt.Printf("  Mods:    %d\n", s.ModCount)
-	if len(s.Mods) > 0 {
+
+	// Use enriched mod list if available, otherwise fall back to basic names
+	if modsResp != nil && len(modsResp.Mods) > 0 {
+		if modsResp.ManifestTime != "" {
+			fmt.Printf("  Pushed:  %s\n", modsResp.ManifestTime)
+		}
+		for _, mod := range modsResp.Mods {
+			version := ""
+			if mod.Version != "" {
+				version = " \033[2mv" + mod.Version + "\033[0m"
+			}
+			fmt.Printf("           - %s%s\n", mod.Name, version)
+		}
+	} else if len(s.Mods) > 0 {
 		for _, m := range s.Mods {
 			fmt.Printf("           - %s\n", m)
 		}

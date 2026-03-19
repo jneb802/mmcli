@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -135,4 +136,30 @@ func renderLogViewer(b *strings.Builder, lv logViewerState) {
 		}
 	}
 	b.WriteString("\n  \033[2m↑/↓ scroll • esc back\033[0m\n\n")
+}
+
+// renderHotkeyBar renders a hotkey hint bar that wraps to multiple lines
+// when the terminal is too narrow to fit everything on one line.
+func renderHotkeyBar(b *strings.Builder, items []string, width int) {
+	if width <= 0 {
+		width = 120
+	}
+
+	b.WriteString("  \033[2m")
+	col := 2 // 2-space indent
+	for i, item := range items {
+		itemWidth := utf8.RuneCountInString(item)
+		if i > 0 {
+			if col+3+itemWidth > width {
+				b.WriteString("\n  ")
+				col = 2
+			} else {
+				b.WriteString(" • ")
+				col += 3
+			}
+		}
+		b.WriteString(item)
+		col += itemWidth
+	}
+	b.WriteString("\033[0m\n\n")
 }

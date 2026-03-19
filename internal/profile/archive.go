@@ -3,12 +3,15 @@ package profile
 import (
 	"archive/tar"
 	"compress/gzip"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"mmcli/internal/agentapi"
 	"mmcli/internal/config"
 )
 
@@ -35,6 +38,11 @@ func BuildProfileArchive(w io.Writer, paths config.Paths, profileName string, re
 		case "server":
 			serverMods[dirName] = true
 		}
+	}
+
+	// Write push manifest as first tar entry
+	if err := writeManifest(tw, profileName, reg, clientMods); err != nil {
+		return fmt.Errorf("failed to write manifest: %w", err)
 	}
 
 	// Only push plugins, patchers, monomod — skip config
@@ -229,4 +237,46 @@ func addAnticheatEntries(tw *tar.Writer, pluginsDir string, reg config.Registry,
 	}
 
 	return nil
+}
+
+// writeManifest serializes mod metadata from the registry and writes it as a
+// JSON tar entry. The agent reads this to provide version info via the API.
+func writeManifest(tw *tar.Writer, profileName string, reg config.Registry, clientMods map[string]bool) error {
+	var mods []agentapi.ManifestMod
+	for _, mod := range reg.ListMods(profileName) {
+		if clientMods[mod.FullName()] {
+			continue
+		}
+		mods = append(mods, agentapi.ManifestMod{
+			DirName:   mod.FullName(),
+			Owner:     mod.Owner,
+			Name:      mod.Name,
+			Version:   mod.Version,
+			Target:    mod.ResolvedTarget(),
+			Anticheat: mod.Anticheat,
+		})
+	}
+
+	manifest := agentapi.PushManifest{
+		PushedAt: time.Now().UTC().Format(time.RFC3339),
+		Profile:  profileName,
+		Mods:     mods,
+	}
+
+	data, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	header := &tar.Header{
+		Name:     agentapi.ManifestFileName,
+		Size:     int64(len(data)),
+		Mode:     0644,
+		Typeflag: tar.TypeReg,
+	}
+	if err := tw.WriteHeader(header); err != nil {
+		return err
+	}
+	_, err = tw.Write(data)
+	return err
 }

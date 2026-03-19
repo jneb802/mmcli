@@ -24,6 +24,7 @@ func Run(cfg AgentConfig, addr string) error {
 	mux.HandleFunc("GET "+agentapi.PathConfigs+"/", h.HandleConfigGet)
 	mux.HandleFunc("POST "+agentapi.PathConfigs, h.HandleConfigPush)
 	mux.HandleFunc("GET "+agentapi.PathSettings, h.HandleSettingsGet)
+	mux.HandleFunc("POST "+agentapi.PathSettings, h.HandleSettingsUpdate)
 
 	handler := authMiddleware(cfg.Secret, mux)
 

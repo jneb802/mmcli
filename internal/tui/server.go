@@ -16,9 +16,10 @@ import (
 
 // Async message types for server tab.
 type serverStatusMsg struct {
-	status *agentapi.StatusResponse
-	mods   []agentapi.ModInfo
-	err    error
+	status   *agentapi.StatusResponse
+	mods     []agentapi.ModInfo
+	modsResp *agentapi.ModListResponse
+	err      error
 }
 
 type serverActionMsg struct {
@@ -58,7 +59,8 @@ type serverModel struct {
 	actionBusy bool
 	actionMsg  string
 
-	logs logViewerState
+	logs     logViewerState
+	modsResp *agentapi.ModListResponse
 
 	settings        *agentapi.SettingsResponse
 	settingsVisible bool
@@ -116,7 +118,7 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "tab":
 		m.activeTab = tabLocal
-		return m, nil
+		return m, tea.Batch(checkGameRunning(), localTick())
 	case "up", "k":
 		if m.server.cursor > 0 {
 			m.server.cursor--
@@ -195,17 +197,26 @@ func (m model) viewServer() string {
 	}
 
 	modCount := len(m.server.mods)
-	fmt.Fprintf(&b, "\n  Server: \033[1m%s\033[0m    Status: %s    Mods: %d\n\n", m.server.serverName, statusText, modCount)
+	fmt.Fprintf(&b, "\n  Server: \033[1m%s\033[0m    Status: %s    Mods: %d\n", m.server.serverName, statusText, modCount)
+	if m.server.modsResp != nil && m.server.modsResp.ManifestTime != "" {
+		fmt.Fprintf(&b, "  Last push: \033[2m%s\033[0m\n", m.server.modsResp.ManifestTime)
+	}
+	b.WriteString("\n")
 
-	// Mod list
+	// Mod list — use server-side data (manifest + log enrichment)
 	items := make([]modListItem, len(m.server.mods))
 	for i, mod := range m.server.mods {
 		item := modListItem{
-			Name:     mod.Name,
-			Disabled: mod.Disabled,
+			Name:      mod.Name,
+			Version:   mod.Version,
+			Disabled:  mod.Disabled,
+			Anticheat: mod.Anticheat,
 		}
-		if regMod, ok := m.reg.GetMod(m.cfg.ActiveProfile, mod.Name); ok {
-			item.Anticheat = regMod.Anticheat
+		// Fallback to local registry for anticheat if not in manifest
+		if item.Anticheat == "" {
+			if regMod, ok := m.reg.GetMod(m.cfg.ActiveProfile, mod.Name); ok {
+				item.Anticheat = regMod.Anticheat
+			}
 		}
 		items[i] = item
 	}
@@ -216,7 +227,7 @@ func (m model) viewServer() string {
 	if m.server.statusErr != nil {
 		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.server.statusErr)
 	}
-	b.WriteString("  \033[2ms start • d stop • r restart • p push • l logs • w settings • tab local • q quit\033[0m\n\n")
+	renderHotkeyBar(&b, []string{"s start", "d stop", "r restart", "p push", "l logs", "w settings", "tab local", "q quit"}, m.width)
 
 	return b.String()
 }
@@ -233,7 +244,7 @@ func fetchServerStatus(c *client.AgentClient) tea.Cmd {
 		if err != nil {
 			return serverStatusMsg{status: status, err: err}
 		}
-		return serverStatusMsg{status: status, mods: modsResp.Mods}
+		return serverStatusMsg{status: status, mods: modsResp.Mods, modsResp: modsResp}
 	}
 }
 
@@ -339,30 +350,38 @@ func renderSettingsView(b *strings.Builder, s *agentapi.SettingsResponse, scroll
 	// World
 	lines = append(lines, "  \033[36mWorld\033[0m")
 	if s.Crossplay {
-		lines = append(lines, "    Crossplay:  \033[32myes\033[0m")
+		lines = append(lines, "    Crossplay:      \033[32myes\033[0m")
 	} else {
-		lines = append(lines, "    Crossplay:  \033[2mno\033[0m")
+		lines = append(lines, "    Crossplay:      \033[2mno\033[0m")
 	}
 	if s.Preset != "" {
-		lines = append(lines, fmt.Sprintf("    Preset:     %s", s.Preset))
+		lines = append(lines, fmt.Sprintf("    Preset:         %s", s.Preset))
 	} else {
-		lines = append(lines, "    Preset:     \033[2mnone\033[0m")
+		lines = append(lines, "    Preset:         \033[2mnone\033[0m")
 	}
-	if len(s.Modifiers) > 0 {
-		lines = append(lines, "    Modifiers:")
-		for k, v := range s.Modifiers {
-			lines = append(lines, fmt.Sprintf("      %-14s %s", k, v))
+	for _, mod := range []struct{ key, label string }{
+		{"combat", "Combat"},
+		{"deathpenalty", "Death Penalty"},
+		{"resources", "Resources"},
+		{"raids", "Raids"},
+		{"portals", "Portals"},
+	} {
+		if v, ok := s.Modifiers[mod.key]; ok {
+			lines = append(lines, fmt.Sprintf("    %-16s %s", mod.label+":", v))
+		} else {
+			lines = append(lines, fmt.Sprintf("    %-16s \033[2mnot set\033[0m", mod.label+":"))
 		}
 	}
-	if len(s.SetKeys) > 0 {
-		keys := ""
-		for i, k := range s.SetKeys {
-			if i > 0 {
-				keys += ", "
-			}
-			keys += k
+	setKeys := make(map[string]bool)
+	for _, k := range s.SetKeys {
+		setKeys[k] = true
+	}
+	for _, k := range []string{"nobuildcost", "playerevents", "passivemobs", "nomap"} {
+		if setKeys[k] {
+			lines = append(lines, fmt.Sprintf("    %-16s \033[32mon\033[0m", k+":"))
+		} else {
+			lines = append(lines, fmt.Sprintf("    %-16s \033[2moff\033[0m", k+":"))
 		}
-		lines = append(lines, fmt.Sprintf("    Keys:       %s", keys))
 	}
 	lines = append(lines, "")
 

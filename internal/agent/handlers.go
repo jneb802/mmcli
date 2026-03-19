@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -92,13 +93,13 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var mods []agentapi.ModInfo
+	// Layer 1: Filesystem scan
+	modMap := make(map[string]*agentapi.ModInfo)
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
 		disabled := false
-		// Check if all DLLs are disabled (.dll.old)
 		dlls := findDLLs(filepath.Join(pluginsDir, e.Name()))
 		if len(dlls) > 0 {
 			allDisabled := true
@@ -110,10 +111,58 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 			}
 			disabled = allDisabled
 		}
-		mods = append(mods, agentapi.ModInfo{Name: e.Name(), Disabled: disabled})
+		modMap[e.Name()] = &agentapi.ModInfo{Name: e.Name(), Disabled: disabled}
 	}
 
-	writeJSON(w, http.StatusOK, agentapi.ModListResponse{Mods: mods})
+	// Layer 2: Manifest enrichment
+	var manifestTime string
+	manifestNames := make(map[string]string) // dirName -> modName (for log matching)
+	manifestPath := filepath.Join(h.cfg.BepInExDir(), agentapi.ManifestFileName)
+	if data, err := os.ReadFile(manifestPath); err == nil {
+		var manifest agentapi.PushManifest
+		if json.Unmarshal(data, &manifest) == nil {
+			manifestTime = manifest.PushedAt
+			for _, mm := range manifest.Mods {
+				manifestNames[mm.DirName] = mm.Name
+				if info, ok := modMap[mm.DirName]; ok {
+					info.Version = mm.Version
+					info.Owner = mm.Owner
+					info.Anticheat = mm.Anticheat
+					info.Target = mm.Target
+				}
+			}
+		}
+	}
+
+	// Layer 3: BepInEx log enrichment
+	logParsed := false
+	logPlugins, _ := ParseBepInExLog(h.cfg.ResolvedLogFile())
+	if logPlugins != nil {
+		logParsed = true
+		matched := MatchLogToManifest(logPlugins, manifestNames)
+		for dirName, lp := range matched {
+			if info, ok := modMap[dirName]; ok {
+				info.Version = lp.Version // log version is most authoritative
+				t := true
+				info.Loaded = &t
+			}
+		}
+	}
+
+	// Collect and sort
+	mods := make([]agentapi.ModInfo, 0, len(modMap))
+	for _, info := range modMap {
+		mods = append(mods, *info)
+	}
+	sort.Slice(mods, func(i, j int) bool {
+		return mods[i].Name < mods[j].Name
+	})
+
+	writeJSON(w, http.StatusOK, agentapi.ModListResponse{
+		Mods:         mods,
+		ManifestTime: manifestTime,
+		LogParsed:    logParsed,
+	})
 }
 
 func (h *Handlers) HandleModsPush(w http.ResponseWriter, r *http.Request) {
@@ -396,6 +445,56 @@ func (h *Handlers) HandleSettingsGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, settings)
+}
+
+func (h *Handlers) HandleSettingsUpdate(w http.ResponseWriter, r *http.Request) {
+	var req agentapi.SettingsUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+
+	scriptPath := h.cfg.ResolvedStartScript()
+	ps, settings, err := ParseStartScriptFull(scriptPath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to parse start script: "+err.Error())
+		return
+	}
+
+	ApplySettingsUpdate(settings, &req)
+	content := RebuildStartScript(ps, settings)
+
+	// Atomic write: temp file + chmod + rename
+	dir := filepath.Dir(scriptPath)
+	tmp, err := os.CreateTemp(dir, ".mmcli-script-*.sh")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create temp file: "+err.Error())
+		return
+	}
+	tmpName := tmp.Name()
+
+	if _, err := tmp.WriteString(content); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		writeError(w, http.StatusInternalServerError, "failed to write script: "+err.Error())
+		return
+	}
+	tmp.Close()
+
+	if err := os.Chmod(tmpName, 0755); err != nil {
+		os.Remove(tmpName)
+		writeError(w, http.StatusInternalServerError, "failed to set permissions: "+err.Error())
+		return
+	}
+
+	if err := os.Rename(tmpName, scriptPath); err != nil {
+		os.Remove(tmpName)
+		writeError(w, http.StatusInternalServerError, "failed to replace script: "+err.Error())
+		return
+	}
+
+	log.Printf("Settings updated: %s", scriptPath)
+	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "settings updated"})
 }
 
 // Helper functions

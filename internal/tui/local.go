@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -19,11 +20,15 @@ import (
 // Async message types for local tab.
 type installDoneMsg struct{ err error }
 type updateCheckDoneMsg struct{ updates map[string]string }
+type gameStatusMsg struct{ running bool }
+type localTickMsg struct{}
 
 type localModel struct {
 	mods    []config.ModEntry
 	cursor  int
 	err     error
+
+	gameRunning bool
 
 	confirmRemove bool
 
@@ -365,14 +370,18 @@ func (m model) viewLocal() string {
 	}
 
 	// Header
+	gameStatus := "\033[2mstopped\033[0m"
+	if m.local.gameRunning {
+		gameStatus = "\033[32mrunning\033[0m"
+	}
 	modCount := len(m.local.mods)
 	updateCount := len(m.local.updates)
 	if m.local.checkingUpdates {
-		fmt.Fprintf(&b, "\n  Profile: \033[36m%s\033[0m    Mods: %d    \033[2mchecking for updates...\033[0m\n\n", m.cfg.ActiveProfile, modCount)
+		fmt.Fprintf(&b, "\n  Profile: \033[36m%s\033[0m    Game: %s    Mods: %d    \033[2mchecking for updates...\033[0m\n\n", m.cfg.ActiveProfile, gameStatus, modCount)
 	} else if updateCount > 0 {
-		fmt.Fprintf(&b, "\n  Profile: \033[36m%s\033[0m    Mods: %d    \033[33m%d update(s) available\033[0m\n\n", m.cfg.ActiveProfile, modCount, updateCount)
+		fmt.Fprintf(&b, "\n  Profile: \033[36m%s\033[0m    Game: %s    Mods: %d    \033[33m%d update(s) available\033[0m\n\n", m.cfg.ActiveProfile, gameStatus, modCount, updateCount)
 	} else {
-		fmt.Fprintf(&b, "\n  Profile: \033[36m%s\033[0m    Mods: %d\n\n", m.cfg.ActiveProfile, modCount)
+		fmt.Fprintf(&b, "\n  Profile: \033[36m%s\033[0m    Game: %s    Mods: %d\n\n", m.cfg.ActiveProfile, gameStatus, modCount)
 	}
 
 	// Mod list
@@ -401,9 +410,9 @@ func (m model) viewLocal() string {
 		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.local.err)
 	}
 	if hasServer {
-		b.WriteString("  \033[2m↑/↓ navigate • space toggle • a anticheat • x remove • u update • i install • c config • l logs • p profile • tab server • q quit\033[0m\n\n")
+		renderHotkeyBar(&b, []string{"↑/↓ navigate", "space toggle", "a anticheat", "x remove", "u update", "i install", "c config", "l logs", "p profile", "tab server", "q quit"}, m.width)
 	} else {
-		b.WriteString("  \033[2m↑/↓ navigate • space toggle • x remove • u update • i install • c config • l logs • p profile • q quit\033[0m\n\n")
+		renderHotkeyBar(&b, []string{"↑/↓ navigate", "space toggle", "x remove", "u update", "i install", "c config", "l logs", "p profile", "q quit"}, m.width)
 	}
 
 	return b.String()
@@ -441,6 +450,19 @@ func installMod(paths config.Paths, cfg config.Config, reg *config.Registry, que
 		}
 		return installDoneMsg{err: installer.Install(paths, cfg, reg, query, "both")}
 	}
+}
+
+func checkGameRunning() tea.Cmd {
+	return func() tea.Msg {
+		err := exec.Command("pgrep", "-x", "Valheim").Run()
+		return gameStatusMsg{running: err == nil}
+	}
+}
+
+func localTick() tea.Cmd {
+	return tea.Tick(5*time.Second, func(time.Time) tea.Msg {
+		return localTickMsg{}
+	})
 }
 
 func updateMod(paths config.Paths, cfg config.Config, reg *config.Registry, fullName string) tea.Cmd {
