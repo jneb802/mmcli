@@ -20,6 +20,7 @@ const (
 	modeLocal  mode = iota
 	modeServer
 	modeSync
+	modeModpack
 )
 
 type contentTab int
@@ -34,11 +35,17 @@ const (
 	contentSyncMods
 	contentSyncConfigs
 	contentSyncModeration
+	contentModpackMods
+	contentModpackConfig
+	contentModpackReadme
+	contentModpackManifest
+	contentModpackImage
 )
 
 var localTabs = []contentTab{contentMods, contentLogs, contentStatus, contentSettings}
 var serverTabs = []contentTab{contentMods, contentLogs, contentPlayers, contentWorld, contentStatus}
 var syncTabs = []contentTab{contentSyncMods, contentSyncConfigs, contentSyncModeration}
+var modpackTabs = []contentTab{contentModpackMods, contentModpackConfig, contentModpackReadme, contentModpackManifest, contentModpackImage}
 
 func contentTabName(t contentTab) string {
 	switch t {
@@ -60,6 +67,16 @@ func contentTabName(t contentTab) string {
 		return "Configs"
 	case contentSyncModeration:
 		return "Moderation"
+	case contentModpackMods:
+		return "Mods"
+	case contentModpackConfig:
+		return "Config"
+	case contentModpackReadme:
+		return "README"
+	case contentModpackManifest:
+		return "Manifest"
+	case contentModpackImage:
+		return "Image"
 	default:
 		return "?"
 	}
@@ -69,21 +86,24 @@ type model struct {
 	activeMode      mode
 	activeLocalTab  contentTab
 	activeServerTab contentTab
-	activeSyncTab   contentTab
-	paths           config.Paths
+	activeSyncTab    contentTab
+	activeModpackTab contentTab
+	paths            config.Paths
 	cfg             config.Config
 	reg             *config.Registry
 	local           localModel
 	server          serverModel
 	sync            syncModel
+	modpack         modpackModel
 	width           int
 	anticheatSystem string // resolved: "azu" or "enforcer"
 }
 
 func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model {
 	m := model{
-		activeMode:    modeLocal,
-		activeSyncTab: contentSyncMods,
+		activeMode:       modeLocal,
+		activeSyncTab:    contentSyncMods,
+		activeModpackTab: contentModpackMods,
 		paths:         paths,
 		cfg:           cfg,
 		reg:           reg,
@@ -259,6 +279,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.server.lastPush = msg.resp
 				m.server.lastPushTime = time.Now()
 			}
+		}
+		// Show push result screen in sync mode
+		if m.activeMode == modeSync {
+			m.sync.pushResult = true
+			m.sync.pushResultScroll = 0
 		}
 		// Re-fetch status after push
 		if m.server.client != nil {
@@ -448,8 +473,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleServerNormal(msg)
 		}
 
-		// Sync mode
-		return m.handleSyncNormal(msg)
+		if m.activeMode == modeSync {
+			return m.handleSyncNormal(msg)
+		}
+
+		// Modpack mode
+		return m.handleModpackNormal(msg)
 	}
 
 	return m, nil
@@ -497,6 +526,20 @@ func (m model) View() string {
 		case contentSyncModeration:
 			b.WriteString(m.viewSyncModeration())
 		}
+	case modeModpack:
+		b.WriteString(renderContentTabBar(modpackTabs, m.activeModpackTab))
+		switch m.activeModpackTab {
+		case contentModpackMods:
+			b.WriteString(m.viewModpackMods())
+		case contentModpackConfig:
+			b.WriteString(m.viewModpackConfig())
+		case contentModpackReadme:
+			b.WriteString(m.viewModpackReadme())
+		case contentModpackManifest:
+			b.WriteString(m.viewModpackManifest())
+		case contentModpackImage:
+			b.WriteString(m.viewModpackImage())
+		}
 	}
 
 	return b.String()
@@ -509,6 +552,7 @@ func (m model) renderModeBar() string {
 		serverLabel = fmt.Sprintf("Server — %s", m.server.serverName)
 	}
 	syncLabel := "Sync"
+	modpackLabel := "Modpack"
 
 	labels := []struct {
 		text   string
@@ -517,6 +561,7 @@ func (m model) renderModeBar() string {
 		{localLabel, m.activeMode == modeLocal},
 		{serverLabel, m.activeMode == modeServer},
 		{syncLabel, m.activeMode == modeSync},
+		{modpackLabel, m.activeMode == modeModpack},
 	}
 
 	var b strings.Builder
@@ -632,6 +677,27 @@ func (m *model) cycleSyncTab(dir int) tea.Cmd {
 			return m.switchSyncTab(syncTabs[(i+dir+len(syncTabs))%len(syncTabs)])
 		}
 	}
+	return nil
+}
+
+func (m *model) switchModpackTab(to contentTab) tea.Cmd {
+	m.activeModpackTab = to
+	return nil
+}
+
+func (m *model) cycleModpackTab(dir int) tea.Cmd {
+	for i, t := range modpackTabs {
+		if t == m.activeModpackTab {
+			return m.switchModpackTab(modpackTabs[(i+dir+len(modpackTabs))%len(modpackTabs)])
+		}
+	}
+	return nil
+}
+
+// enterModpackMode loads modpack data and switches to modpack mode.
+func (m *model) enterModpackMode() tea.Cmd {
+	m.activeMode = modeModpack
+	m.modpack.loadFromDisk(m.cfg.ModpackPath)
 	return nil
 }
 

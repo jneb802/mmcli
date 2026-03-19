@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -30,8 +31,10 @@ type syncModel struct {
 	moderationCursor int
 
 	// Push state (mods — shared by Mods and Moderation tabs)
-	confirmModPush bool
-	pushScroll     int
+	confirmModPush   bool
+	pushScroll       int
+	pushResult       bool // showing push result screen
+	pushResultScroll int
 
 	// Push state (configs)
 	confirmConfigPush bool
@@ -57,6 +60,24 @@ type syncConfigPushMsg struct {
 }
 
 func (m model) handleSyncNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Push result screen — stay until dismissed
+	if m.sync.pushResult {
+		switch msg.String() {
+		case "esc", "enter", "q":
+			m.sync.pushResult = false
+			m.sync.pushResultScroll = 0
+		case "up", "k":
+			if m.sync.pushResultScroll > 0 {
+				m.sync.pushResultScroll--
+			}
+		case "down", "j":
+			m.sync.pushResultScroll++
+		case "ctrl+c":
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
 	// Mod push confirmation modal
 	if m.sync.confirmModPush {
 		switch msg.String() {
@@ -108,8 +129,15 @@ func (m model) handleSyncNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
 		case "`":
+			return m, m.enterModpackMode()
+		case "1":
 			m.activeMode = modeLocal
 			return m, tea.Batch(checkGameRunning(), localTick())
+		case "2":
+			m.activeMode = modeServer
+			return m, nil
+		case "4":
+			return m, m.enterModpackMode()
 		}
 		return m, nil
 	}
@@ -119,8 +147,24 @@ func (m model) handleSyncNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
 	case "`":
+		return m, m.enterModpackMode()
+	case "1":
 		m.activeMode = modeLocal
 		return m, tea.Batch(checkGameRunning(), localTick())
+	case "2":
+		m.stopServerLogStream()
+		m.activeMode = modeServer
+		cmds := []tea.Cmd{}
+		if m.server.client != nil && m.server.status == nil {
+			m.server.fetching = true
+			cmds = append(cmds, fetchServerStatus(m.server.client))
+		}
+		if m.server.client != nil {
+			cmds = append(cmds, serverTick())
+		}
+		return m, tea.Batch(cmds...)
+	case "4":
+		return m, m.enterModpackMode()
 	case "tab":
 		cmd := m.cycleSyncTab(1)
 		return m, cmd
@@ -258,15 +302,21 @@ func (m model) viewSyncModeration() string {
 		return b.String()
 	}
 
+	// Push result screen — stays until dismissed
+	if m.sync.pushResult && m.server.lastPush != nil {
+		renderSyncPushResult(&b, m.server.lastPush, m.server.lastPushTime, m.sync.pushResultScroll, m.server.role)
+		return b.String()
+	}
+
 	// Push confirmation modal (shared with Mods tab)
 	if m.sync.confirmModPush {
 		renderPushConfirm(&b, m.server.serverName, m.cfg.ActiveProfile, m.sync.modItems, m.sync.pushScroll, m.server.status)
 		return b.String()
 	}
 
-	// Action busy
+	// Action busy — show syncing progress
 	if m.server.actionBusy {
-		fmt.Fprintf(&b, "\n  \033[33m%s\033[0m\n\n", m.server.actionMsg)
+		renderSyncPushing(&b, m.sync.modItems)
 		return b.String()
 	}
 
@@ -364,15 +414,21 @@ func (m model) viewSyncMods() string {
 		return b.String()
 	}
 
+	// Push result screen — stays until dismissed
+	if m.sync.pushResult && m.server.lastPush != nil {
+		renderSyncPushResult(&b, m.server.lastPush, m.server.lastPushTime, m.sync.pushResultScroll, m.server.role)
+		return b.String()
+	}
+
 	// Push confirmation modal
 	if m.sync.confirmModPush {
 		renderPushConfirm(&b, m.server.serverName, m.cfg.ActiveProfile, m.sync.modItems, m.sync.pushScroll, m.server.status)
 		return b.String()
 	}
 
-	// Action busy
+	// Action busy — show syncing progress with mod list
 	if m.server.actionBusy {
-		fmt.Fprintf(&b, "\n  \033[33m%s\033[0m\n\n", m.server.actionMsg)
+		renderSyncPushing(&b, m.sync.modItems)
 		return b.String()
 	}
 
@@ -392,11 +448,6 @@ func (m model) viewSyncMods() string {
 	b.WriteString("\n")
 	if m.server.statusErr != nil {
 		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.server.statusErr)
-	}
-
-	// Last push result
-	if m.server.lastPush != nil {
-		fmt.Fprintf(&b, "  \033[2mLast push: %s\033[0m\n", m.server.lastPush.Message)
 	}
 
 	var hotkeys []string
@@ -718,4 +769,117 @@ func pushAllConfigs(c *client.AgentClient, paths config.Paths, cfg config.Config
 		})
 		return syncConfigPushMsg{resp: pushResp, err: err}
 	}
+}
+
+// renderSyncPushing shows the mod list with a "syncing" indicator while the push is in progress.
+func renderSyncPushing(b *strings.Builder, items []modListItem) {
+	fmt.Fprintf(b, "\n  \033[1mSyncing mods...\033[0m\n\n")
+
+	maxName := 0
+	for _, item := range items {
+		if l := len(item.Name); l > maxName {
+			maxName = l
+		}
+	}
+
+	for _, item := range items {
+		if item.Status == "" {
+			continue // skip unchanged
+		}
+		pad := strings.Repeat(" ", maxName-len(item.Name)+2)
+		version := item.Version
+		if version == "" {
+			version = "-"
+		}
+
+		switch item.Status {
+		case "added":
+			fmt.Fprintf(b, "    \033[33m⟳\033[0m %s%s%s  \033[33mdownloading...\033[0m\n", item.Name, pad, version)
+		case "changed":
+			fmt.Fprintf(b, "    \033[33m⟳\033[0m %s%s%s  \033[33mupdating...\033[0m\n", item.Name, pad, version)
+		case "removed":
+			fmt.Fprintf(b, "    \033[33m⟳\033[0m %s%s     \033[33mremoving...\033[0m\n", item.Name, pad)
+		}
+	}
+
+	b.WriteString("\n  \033[2mWaiting for server...\033[0m\n\n")
+}
+
+// renderSyncPushResult shows the push results and stays on screen until dismissed.
+func renderSyncPushResult(b *strings.Builder, lp *agentapi.SyncResponse, pushTime time.Time, scroll int, role string) {
+	if lp == nil {
+		return
+	}
+
+	ago := time.Since(pushTime).Truncate(time.Second)
+	fmt.Fprintf(b, "\n  \033[1mPush Complete\033[0m  \033[2m%s ago\033[0m\n", ago)
+
+	total := lp.Downloaded + lp.Uploaded + lp.Cached + lp.Skipped
+	fmt.Fprintf(b, "  %d mods synced", total)
+	if lp.Downloaded > 0 {
+		fmt.Fprintf(b, ", \033[32m%d downloaded\033[0m", lp.Downloaded)
+	}
+	if lp.Uploaded > 0 {
+		fmt.Fprintf(b, ", \033[32m%d uploaded\033[0m", lp.Uploaded)
+	}
+	if lp.Cached > 0 {
+		fmt.Fprintf(b, ", \033[36m%d cached\033[0m", lp.Cached)
+	}
+	if lp.Skipped > 0 {
+		fmt.Fprintf(b, ", %d unchanged", lp.Skipped)
+	}
+	if lp.Removed > 0 {
+		fmt.Fprintf(b, ", \033[31m%d removed\033[0m", lp.Removed)
+	}
+	if len(lp.Failures) > 0 {
+		fmt.Fprintf(b, ", \033[31m%d failed\033[0m", len(lp.Failures))
+	}
+	b.WriteString("\n\n")
+
+	// Per-mod results
+	if len(lp.Results) > 0 {
+		visible := 25
+		maxScroll := len(lp.Results) - visible
+		if maxScroll < 0 {
+			maxScroll = 0
+		}
+		if scroll > maxScroll {
+			scroll = maxScroll
+		}
+		end := scroll + visible
+		if end > len(lp.Results) {
+			end = len(lp.Results)
+		}
+
+		maxName := 0
+		for _, r := range lp.Results {
+			if l := len(r.Mod); l > maxName {
+				maxName = l
+			}
+		}
+
+		for _, r := range lp.Results[scroll:end] {
+			pad := strings.Repeat(" ", maxName-len(r.Mod)+2)
+			switch r.Status {
+			case "downloaded":
+				fmt.Fprintf(b, "    \033[32m↓\033[0m %s%s%s  \033[32mdownloaded\033[0m\n", r.Mod, pad, r.Version)
+			case "uploaded":
+				fmt.Fprintf(b, "    \033[32m↑\033[0m %s%s%s  \033[32muploaded\033[0m\n", r.Mod, pad, r.Version)
+			case "cached":
+				fmt.Fprintf(b, "    \033[36m↓\033[0m %s%s%s  \033[36mcached\033[0m\n", r.Mod, pad, r.Version)
+			case "skipped":
+				fmt.Fprintf(b, "    \033[2m· %s%s%s  unchanged\033[0m\n", r.Mod, pad, r.Version)
+			case "removed":
+				fmt.Fprintf(b, "    \033[31m✗ %s%s     removed\033[0m\n", r.Mod, pad)
+			case "failed":
+				fmt.Fprintf(b, "    \033[31m✗ %s%s     %s\033[0m\n", r.Mod, pad, r.Reason)
+			}
+		}
+
+		if len(lp.Results) > visible {
+			fmt.Fprintf(b, "\n  \033[2m(%d more — ↑/↓ scroll)\033[0m\n", len(lp.Results)-visible)
+		}
+	}
+
+	fmt.Fprintf(b, "\n  \033[2mesc/enter done\033[0m\n\n")
 }

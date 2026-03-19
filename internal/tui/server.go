@@ -220,6 +220,13 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "`":
 			return m, m.enterSyncMode()
+		case "1":
+			m.activeMode = modeLocal
+			return m, tea.Batch(checkGameRunning(), localTick())
+		case "3":
+			return m, m.enterSyncMode()
+		case "4":
+			return m, m.enterModpackMode()
 		}
 		return m, nil
 	}
@@ -231,6 +238,21 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "`":
 		m.stopServerLogStream()
 		return m, m.enterSyncMode()
+	case "1", "3", "4":
+		// Guard: don't intercept digits when settings editor is active (typing port numbers, etc.)
+		if m.server.editor.active {
+			break
+		}
+		m.stopServerLogStream()
+		switch msg.String() {
+		case "1":
+			m.activeMode = modeLocal
+			return m, tea.Batch(checkGameRunning(), localTick())
+		case "3":
+			return m, m.enterSyncMode()
+		case "4":
+			return m, m.enterModpackMode()
+		}
 	case "tab":
 		cmd := m.cycleServerTab(1)
 		return m, cmd

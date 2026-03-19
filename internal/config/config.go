@@ -21,6 +21,7 @@ type Config struct {
 	ActiveServer    string                 `json:"active_server,omitempty"`
 	Servers         map[string]ServerEntry `json:"servers,omitempty"`
 	AnticheatSystem string                 `json:"anticheat_system,omitempty"` // "auto", "azu", "enforcer", "" (= auto)
+	ModpackPath     string                 `json:"modpack_path,omitempty"`
 }
 
 type Paths struct {
