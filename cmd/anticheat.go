@@ -10,16 +10,26 @@ import (
 
 var anticheatCmd = &cobra.Command{
 	Use:   "anticheat <mod> <whitelist|greylist|none>",
-	Short: "Set AzuAntiCheat classification for a mod",
-	Long: `Classify a mod for AzuAntiCheat server-side enforcement.
+	Short: "Set anticheat classification for a mod",
+	Long: `Classify a mod for server-side anticheat enforcement.
+
+Supports both AzuAntiCheat and ValheimEnforcer. The classification
+is the same for both systems — mmcli detects which anticheat mods
+are installed and configures each one automatically on push.
 
   whitelist - players MUST have this mod (required)
   greylist  - players MAY have this mod (optional)
   none      - remove anticheat classification
 
-When pushing to a server, classified mods have their DLLs copied
-into the appropriate AzuAntiCheat folder. Dependencies are
-automatically classified to match.`,
+AzuAntiCheat: classified mod DLLs are copied into the appropriate
+AzuAntiCheat_Whitelist or AzuAntiCheat_Greylist config folder.
+
+ValheimEnforcer: classified mods are written to the Mods.yaml config
+with the correct category (requiredMods, optionalMods, serverOnlyMods).
+Mods with target "server" are placed in serverOnlyMods regardless of
+their anticheat classification.
+
+Dependencies are automatically classified to match.`,
 	Args: cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		modName := args[0]
@@ -101,7 +111,8 @@ automatically classified to match.`,
 var anticheatAutoCmd = &cobra.Command{
 	Use:   "auto",
 	Short: "Auto-classify all mods based on their target",
-	Long: `Automatically classify all mods for AzuAntiCheat:
+	Long: `Automatically classify all mods for anticheat enforcement
+(works with both AzuAntiCheat and ValheimEnforcer):
 
   server/both targets → whitelist (required)
   client targets      → greylist  (optional)`,

@@ -360,7 +360,7 @@ func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Rebuild anticheat folders
-	if err := setupAnticheat(bepDir, manifest.Mods); err != nil {
+	if err := setupAnticheatSystems(bepDir, manifest.Mods, h.cfg.ResolvedModAPIPort()); err != nil {
 		log.Printf("Sync: anticheat setup error: %v", err)
 	}
 

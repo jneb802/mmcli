@@ -197,9 +197,34 @@ func removeModDirs(bepDir, dirName string) {
 	}
 }
 
-// setupAnticheat rebuilds the AzuAntiCheat whitelist/greylist folders by
+// setupAnticheatSystems detects installed anticheat mods and dispatches to the
+// appropriate setup routines. AzuAntiCheat folder cleanup is unconditional to
+// prevent orphaned folders when switching anticheat systems.
+func setupAnticheatSystems(bepDir string, mods []agentapi.ManifestMod, modAPIPort int) error {
+	// Always clean stale AzuAntiCheat folders (prevents orphans)
+	os.RemoveAll(filepath.Join(bepDir, "config", "AzuAntiCheat_Whitelist"))
+	os.RemoveAll(filepath.Join(bepDir, "config", "AzuAntiCheat_Greylist"))
+
+	hasAzu, hasEnforcer := detectAnticheatSystems(bepDir, mods)
+
+	if hasAzu {
+		if err := setupAzuAntiCheat(bepDir, mods); err != nil {
+			return fmt.Errorf("azu anticheat: %w", err)
+		}
+	}
+
+	if hasEnforcer {
+		if err := setupValheimEnforcer(bepDir, mods, modAPIPort); err != nil {
+			return fmt.Errorf("valheim enforcer: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// setupAzuAntiCheat rebuilds the AzuAntiCheat whitelist/greylist folders by
 // copying DLLs from the mod plugin directories of classified mods.
-func setupAnticheat(bepDir string, mods []agentapi.ManifestMod) error {
+func setupAzuAntiCheat(bepDir string, mods []agentapi.ManifestMod) error {
 	// Clean existing anticheat folders
 	os.RemoveAll(filepath.Join(bepDir, "config", "AzuAntiCheat_Whitelist"))
 	os.RemoveAll(filepath.Join(bepDir, "config", "AzuAntiCheat_Greylist"))
