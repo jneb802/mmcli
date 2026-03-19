@@ -46,6 +46,11 @@ type modpackModel struct {
 	publishing     bool
 	publishErr     error
 	publishDone    bool
+
+	// Settings state
+	settingsCursor int    // 0=token, 1=author, 2=path
+	editingField   int    // -1=none, 0=token, 1=author, 2=path
+	fieldInput     string // current input buffer
 }
 
 const modpackReadmeVisible = 30
@@ -62,6 +67,7 @@ func (mp *modpackModel) loadFromDisk(modpackPath string) {
 	mp.configCursor = 0
 	mp.loadErr = nil
 	mp.statusMsg = ""
+	mp.editingField = -1
 
 	if modpackPath == "" {
 		return
@@ -116,6 +122,37 @@ func publishModpack(cfg config.Config) tea.Cmd {
 // --- Key handlers ---
 
 func (m model) handleModpackNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Settings field editing modal
+	if m.modpack.editingField >= 0 {
+		switch msg.String() {
+		case "esc":
+			m.modpack.editingField = -1
+		case "enter":
+			switch m.modpack.editingField {
+			case 0:
+				m.cfg.ThunderstoreToken = m.modpack.fieldInput
+			case 1:
+				m.cfg.ThunderstoreAuthor = m.modpack.fieldInput
+			case 2:
+				m.cfg.ModpackPath = m.modpack.fieldInput
+				m.modpack.loadFromDisk(m.cfg.ModpackPath)
+			}
+			config.Save(m.paths, m.cfg)
+			m.modpack.editingField = -1
+		case "backspace":
+			if len(m.modpack.fieldInput) > 0 {
+				m.modpack.fieldInput = m.modpack.fieldInput[:len(m.modpack.fieldInput)-1]
+			}
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+				m.modpack.fieldInput += string(msg.Runes)
+			}
+		}
+		return m, nil
+	}
+
 	// Path input modal
 	if m.modpack.editingPath {
 		switch msg.String() {
@@ -226,6 +263,8 @@ func (m model) handleModpackNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		// no interactive keys
 	case contentModpackImage:
 		return m.handleModpackImageKeys(msg)
+	case contentModpackSettings:
+		return m.handleModpackSettingsKeys(msg)
 	}
 	return m, nil
 }
@@ -556,6 +595,87 @@ func (m model) viewModpackImage() string {
 
 	b.WriteString("\n")
 	hotkeys := []string{"o open folder", "tab next", "` mode", "q quit"}
+	renderHotkeyBar(&b, hotkeys, m.width)
+	return b.String()
+}
+
+func (m model) handleModpackSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	settings := []struct{ field int }{{0}, {1}, {2}}
+	switch msg.String() {
+	case "up", "k":
+		if m.modpack.settingsCursor > 0 {
+			m.modpack.settingsCursor--
+		}
+	case "down", "j":
+		if m.modpack.settingsCursor < len(settings)-1 {
+			m.modpack.settingsCursor++
+		}
+	case "enter", "e":
+		m.modpack.editingField = m.modpack.settingsCursor
+		switch m.modpack.settingsCursor {
+		case 0:
+			m.modpack.fieldInput = m.cfg.ThunderstoreToken
+		case 1:
+			m.modpack.fieldInput = m.cfg.ThunderstoreAuthor
+		case 2:
+			m.modpack.fieldInput = m.cfg.ModpackPath
+		}
+	}
+	return m, nil
+}
+
+func (m model) viewModpackSettings() string {
+	// Show the field editing modal if active
+	if m.modpack.editingField >= 0 {
+		var label string
+		switch m.modpack.editingField {
+		case 0:
+			label = "Thunderstore Token"
+		case 1:
+			label = "Thunderstore Author"
+		case 2:
+			label = "Modpack Path"
+		}
+		var b strings.Builder
+		fmt.Fprintf(&b, "\n  %s:\n\n", label)
+		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.modpack.fieldInput)
+		b.WriteString("\n  \033[2menter save • esc cancel\033[0m\n\n")
+		return b.String()
+	}
+
+	var b strings.Builder
+	b.WriteString("\n")
+
+	type setting struct {
+		label string
+		value string
+		mask  bool
+	}
+	items := []setting{
+		{"Thunderstore Token", m.cfg.ThunderstoreToken, true},
+		{"Thunderstore Author", m.cfg.ThunderstoreAuthor, false},
+		{"Modpack Path", m.cfg.ModpackPath, false},
+	}
+
+	for i, s := range items {
+		cur := "  "
+		if i == m.modpack.settingsCursor {
+			cur = "\033[36m>\033[0m "
+		}
+		val := s.value
+		if val == "" {
+			val = "\033[2m(not set)\033[0m"
+		} else if s.mask {
+			// Show only last 4 chars of token
+			if len(val) > 4 {
+				val = strings.Repeat("*", len(val)-4) + val[len(val)-4:]
+			}
+		}
+		fmt.Fprintf(&b, "  %s%-22s %s\n", cur, s.label, val)
+	}
+
+	b.WriteString("\n")
+	hotkeys := []string{"↑/↓ navigate", "e edit", "tab next", "` mode", "q quit"}
 	renderHotkeyBar(&b, hotkeys, m.width)
 	return b.String()
 }

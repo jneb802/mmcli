@@ -41,12 +41,13 @@ const (
 	contentModpackReadme
 	contentModpackManifest
 	contentModpackImage
+	contentModpackSettings
 )
 
 var localTabs = []contentTab{contentMods, contentConfig, contentLogs, contentStatus, contentSettings}
 var serverTabs = []contentTab{contentMods, contentConfig, contentLogs, contentPlayers, contentWorld, contentSyncModeration, contentStatus}
 var syncTabs = []contentTab{contentSyncMods, contentSyncConfigs, contentSyncModeration}
-var modpackTabs = []contentTab{contentModpackMods, contentModpackConfig, contentModpackReadme, contentModpackManifest, contentModpackImage}
+var modpackTabs = []contentTab{contentModpackMods, contentModpackConfig, contentModpackReadme, contentModpackManifest, contentModpackImage, contentModpackSettings}
 
 func contentTabName(t contentTab) string {
 	switch t {
@@ -80,6 +81,8 @@ func contentTabName(t contentTab) string {
 		return "Manifest"
 	case contentModpackImage:
 		return "Image"
+	case contentModpackSettings:
+		return "Settings"
 	default:
 		return "?"
 	}
@@ -571,6 +574,8 @@ func (m model) View() string {
 			b.WriteString(m.viewModpackManifest())
 		case contentModpackImage:
 			b.WriteString(m.viewModpackImage())
+		case contentModpackSettings:
+			b.WriteString(m.viewModpackSettings())
 		}
 	}
 
