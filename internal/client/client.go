@@ -195,6 +195,121 @@ func (c *AgentClient) UpdateSettings(req *agentapi.SettingsUpdateRequest) (*agen
 	return &resp, nil
 }
 
+func (c *AgentClient) ListWorlds() (*agentapi.WorldListResponse, error) {
+	var resp agentapi.WorldListResponse
+	if err := c.doJSON("GET", agentapi.PathWorlds, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AgentClient) UploadWorld(name string, dbData, fwlData io.Reader) (*agentapi.WorldUploadResponse, error) {
+	pr, pw := io.Pipe()
+	w := multipart.NewWriter(pw)
+
+	go func() {
+		defer pw.Close()
+		if err := w.WriteField("name", name); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		dbPart, err := w.CreateFormFile("db", name+".db")
+		if err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		if _, err := io.Copy(dbPart, dbData); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		fwlPart, err := w.CreateFormFile("fwl", name+".fwl")
+		if err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		if _, err := io.Copy(fwlPart, fwlData); err != nil {
+			pw.CloseWithError(err)
+			return
+		}
+		w.Close()
+	}()
+
+	req, err := http.NewRequest("POST", c.BaseURL+agentapi.PathWorldUpload, pr)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(agentapi.HeaderAPIKey, c.Secret)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+
+	httpClient := &http.Client{}
+	httpResp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("world upload failed: %w", err)
+	}
+	defer httpResp.Body.Close()
+
+	if httpResp.StatusCode != http.StatusOK {
+		var errResp agentapi.ErrorResponse
+		json.NewDecoder(httpResp.Body).Decode(&errResp)
+		if errResp.Error != "" {
+			return nil, fmt.Errorf("world upload failed: %s", errResp.Error)
+		}
+		return nil, fmt.Errorf("world upload failed with status %d", httpResp.StatusCode)
+	}
+
+	var resp agentapi.WorldUploadResponse
+	json.NewDecoder(httpResp.Body).Decode(&resp)
+	return &resp, nil
+}
+
+func (c *AgentClient) ListLaunchConfigs() (*agentapi.LaunchConfigListResponse, error) {
+	var resp agentapi.LaunchConfigListResponse
+	if err := c.doJSON("GET", agentapi.PathLaunchConfigs, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AgentClient) CreateLaunchConfig(req agentapi.LaunchConfigCreateRequest) (*agentapi.ActionResponse, error) {
+	var resp agentapi.ActionResponse
+	if err := c.doJSON("POST", agentapi.PathLaunchConfigs, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AgentClient) GetLaunchConfig(name string) (*agentapi.LaunchConfig, error) {
+	var resp agentapi.LaunchConfig
+	if err := c.doJSON("GET", agentapi.PathLaunchConfigs+"/"+name, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AgentClient) UpdateLaunchConfig(name string, settings *agentapi.SettingsResponse) (*agentapi.ActionResponse, error) {
+	var resp agentapi.ActionResponse
+	if err := c.doJSON("PUT", agentapi.PathLaunchConfigs+"/"+name, settings, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AgentClient) DeleteLaunchConfig(name string) (*agentapi.ActionResponse, error) {
+	var resp agentapi.ActionResponse
+	if err := c.doJSON("DELETE", agentapi.PathLaunchConfigs+"/"+name, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AgentClient) ActivateLaunchConfig(name string) (*agentapi.ActionResponse, error) {
+	var resp agentapi.ActionResponse
+	if err := c.doJSON("POST", agentapi.PathLaunchConfigsActive, agentapi.LaunchConfigActivateRequest{Name: name}, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *AgentClient) Update() (*agentapi.UpdateResponse, error) {
 	var resp agentapi.UpdateResponse
 	if err := c.doJSON("POST", agentapi.PathUpdate, nil, &resp); err != nil {

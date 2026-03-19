@@ -17,6 +17,12 @@ const (
 	PathSettings = "/api/v1/settings"
 	PathUpdate   = "/api/v1/update"
 
+	PathWorlds      = "/api/v1/worlds"
+	PathWorldUpload = "/api/v1/worlds/upload"
+
+	PathLaunchConfigs       = "/api/v1/launch-configs"
+	PathLaunchConfigsActive = "/api/v1/launch-configs/active"
+
 	GitHubRepo      = "jneb802/mmcli"
 	AgentBinaryName = "mmcli-agent-linux-amd64"
 )
@@ -191,6 +197,58 @@ type SyncModResult struct {
 	Version string `json:"version,omitempty"`
 	Status  string `json:"status"`           // "downloaded", "cached", "skipped", "removed", "failed"
 	Reason  string `json:"reason,omitempty"` // failure reason
+}
+
+// World management types.
+
+type WorldListResponse struct {
+	Worlds  []WorldInfo `json:"worlds"`
+	SaveDir string      `json:"save_dir"`
+}
+
+type WorldInfo struct {
+	Name     string `json:"name"`
+	SizeDB   int64  `json:"size_db"`
+	SizeFWL  int64  `json:"size_fwl"`
+	Modified string `json:"modified"`
+}
+
+type WorldUploadResponse struct {
+	OK      bool   `json:"ok"`
+	Name    string `json:"name"`
+	Message string `json:"message,omitempty"`
+}
+
+// Launch config types.
+
+type LaunchConfig struct {
+	Name        string           `json:"name"`
+	CreatedAt   string           `json:"created_at"`
+	Description string           `json:"description,omitempty"`
+	Settings    SettingsResponse `json:"settings"`
+}
+
+type LaunchConfigListResponse struct {
+	Configs []LaunchConfigSummary `json:"configs"`
+	Active  string                `json:"active"`
+}
+
+type LaunchConfigSummary struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	World       string `json:"world"`
+	Preset      string `json:"preset"`
+}
+
+type LaunchConfigCreateRequest struct {
+	Name        string            `json:"name"`
+	Description string            `json:"description,omitempty"`
+	CopyFrom    string            `json:"copy_from,omitempty"`
+	Settings    *SettingsResponse `json:"settings,omitempty"`
+}
+
+type LaunchConfigActivateRequest struct {
+	Name string `json:"name"`
 }
 
 type UpdateResponse struct {
