@@ -381,7 +381,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	var b strings.Builder
-	b.WriteString(renderModeBar(m.activeMode))
+	b.WriteString(m.renderModeBar())
 	b.WriteString(renderSeparator(m.width))
 
 	if m.activeMode == modeLocal {
@@ -411,11 +411,16 @@ func (m model) View() string {
 	return b.String()
 }
 
-func renderModeBar(active mode) string {
-	if active == modeLocal {
-		return fmt.Sprintf("  \033[1;37m[Local]\033[0m  \033[2mServer\033[0m\n")
+func (m model) renderModeBar() string {
+	localLabel := fmt.Sprintf("Local — %s", m.cfg.ActiveProfile)
+	serverLabel := "Server"
+	if m.server.serverName != "" {
+		serverLabel = fmt.Sprintf("Server — %s", m.server.serverName)
 	}
-	return fmt.Sprintf("  \033[2mLocal\033[0m  \033[1;37m[Server]\033[0m\n")
+	if m.activeMode == modeLocal {
+		return fmt.Sprintf("  \033[1;37m[%s]\033[0m  \033[2m%s\033[0m\n", localLabel, serverLabel)
+	}
+	return fmt.Sprintf("  \033[2m%s\033[0m  \033[1;37m[%s]\033[0m\n", localLabel, serverLabel)
 }
 
 func renderContentTabBar(tabs []contentTab, active contentTab) string {

@@ -270,20 +270,10 @@ func (m model) handleServerModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		if m.server.cursor > 0 {
 			m.server.cursor--
-		} else if m.server.cursor == 0 && m.server.lastPush != nil {
-			m.server.cursor = -1
 		}
 	case "down", "j":
-		if m.server.cursor == -1 {
-			m.server.cursor = 0
-		} else if m.server.cursor < len(m.server.mods)-1 {
+		if m.server.cursor < len(m.server.mods)-1 {
 			m.server.cursor++
-		}
-	case "enter", " ":
-		if m.server.cursor == -1 && m.server.lastPush != nil {
-			m.server.pushDetail = true
-			m.server.pushDetailScroll = 0
-			return m, nil
 		}
 	case "s":
 		if m.server.role != agentapi.RoleAdmin {
@@ -396,55 +386,6 @@ func (m model) viewServer() string {
 		return b.String()
 	}
 
-	// Server status header
-	statusText := "\033[31mstopped\033[0m"
-	if m.server.status != nil && m.server.status.Running {
-		statusText = fmt.Sprintf("\033[32mrunning\033[0m (%s)", m.server.status.Uptime)
-	}
-	if m.server.statusErr != nil {
-		statusText = fmt.Sprintf("\033[31merror: %v\033[0m", m.server.statusErr)
-	}
-	if m.server.fetching {
-		statusText = "\033[2mfetching...\033[0m"
-	}
-
-	modCount := len(m.server.mods)
-	roleTag := ""
-	if m.server.role == agentapi.RolePlayer {
-		roleTag = " \033[33m(player)\033[0m"
-	}
-	fmt.Fprintf(&b, "\n  Server: \033[1m%s\033[0m%s    Status: %s    Mods: %d\n", m.server.serverName, roleTag, statusText, modCount)
-	// Push status line
-	if m.server.lastPush != nil {
-		lp := m.server.lastPush
-		ago := time.Since(m.server.lastPushTime).Truncate(time.Second)
-		var parts []string
-		if lp.Downloaded > 0 {
-			parts = append(parts, fmt.Sprintf("%d downloaded", lp.Downloaded))
-		}
-		if lp.Cached > 0 {
-			parts = append(parts, fmt.Sprintf("%d cached", lp.Cached))
-		}
-		if lp.Removed > 0 {
-			parts = append(parts, fmt.Sprintf("%d removed", lp.Removed))
-		}
-		if lp.Skipped > 0 {
-			parts = append(parts, fmt.Sprintf("%d unchanged", lp.Skipped))
-		}
-		if len(lp.Failures) > 0 {
-			parts = append(parts, fmt.Sprintf("\033[31m%d failed\033[0m", len(lp.Failures)))
-		}
-		summary := strings.Join(parts, ", ")
-
-		if m.server.cursor == -1 {
-			fmt.Fprintf(&b, "  \033[36m>\033[0m Last push: %s ago — %s    \033[33menter details\033[0m\n", ago, summary)
-		} else {
-			fmt.Fprintf(&b, "    Last push: \033[2m%s ago — %s\033[0m\n", ago, summary)
-		}
-
-	} else if m.server.modsResp != nil && m.server.modsResp.ManifestTime != "" {
-		fmt.Fprintf(&b, "    Last push: \033[2m%s\033[0m\n", m.server.modsResp.ManifestTime)
-	}
 	b.WriteString("\n")
 
 	// Mod list — use server-side data (manifest + log enrichment)

@@ -481,20 +481,13 @@ func (m model) viewLocal() string {
 		return b.String()
 	}
 
-	// Header
-	gameStatus := "\033[2mstopped\033[0m"
-	if m.local.gameRunning {
-		gameStatus = "\033[32mrunning\033[0m"
-	}
-	modCount := len(m.local.mods)
 	updateCount := len(m.local.updates)
 	if m.local.checkingUpdates {
-		fmt.Fprintf(&b, "\n  Profile: \033[36m%s\033[0m    Game: %s    Mods: %d    \033[2mchecking for updates...\033[0m\n\n", m.cfg.ActiveProfile, gameStatus, modCount)
+		b.WriteString("\n  \033[2mchecking for updates...\033[0m\n")
 	} else if updateCount > 0 {
-		fmt.Fprintf(&b, "\n  Profile: \033[36m%s\033[0m    Game: %s    Mods: %d    \033[33m%d update(s) available\033[0m\n\n", m.cfg.ActiveProfile, gameStatus, modCount, updateCount)
-	} else {
-		fmt.Fprintf(&b, "\n  Profile: \033[36m%s\033[0m    Game: %s    Mods: %d\n\n", m.cfg.ActiveProfile, gameStatus, modCount)
+		fmt.Fprintf(&b, "\n  \033[33m%d update(s) available\033[0m\n", updateCount)
 	}
+	b.WriteString("\n")
 
 	// Mod list
 	items := make([]modListItem, len(m.local.mods))
