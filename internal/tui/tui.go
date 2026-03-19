@@ -504,9 +504,6 @@ func (m model) renderModeBar() string {
 		serverLabel = fmt.Sprintf("Server — %s", m.server.serverName)
 	}
 	syncLabel := "Sync"
-	if m.server.serverName != "" {
-		syncLabel = fmt.Sprintf("Sync — %s → %s", m.cfg.ActiveProfile, m.server.serverName)
-	}
 
 	labels := []struct {
 		text   string
