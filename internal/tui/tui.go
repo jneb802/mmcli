@@ -11,6 +11,9 @@ import (
 	"mmcli/internal/config"
 )
 
+// Version is set from cmd package before Run.
+var Version = "dev"
+
 type mode int
 
 const (
@@ -22,38 +25,44 @@ type contentTab int
 
 const (
 	contentMods contentTab = iota
+	contentLogs
+	contentStatus
 )
 
-var localTabs = []contentTab{contentMods}
-var serverTabs = []contentTab{contentMods}
+var localTabs = []contentTab{contentMods, contentLogs, contentStatus}
+var serverTabs = []contentTab{contentMods, contentLogs}
 
 func contentTabName(t contentTab) string {
 	switch t {
 	case contentMods:
 		return "Mods"
+	case contentLogs:
+		return "Logs"
+	case contentStatus:
+		return "Status"
 	default:
 		return "?"
 	}
 }
 
 type model struct {
-	activeMode     mode
-	activeLocalTab contentTab
+	activeMode      mode
+	activeLocalTab  contentTab
 	activeServerTab contentTab
-	paths          config.Paths
-	cfg            config.Config
-	reg            *config.Registry
-	local          localModel
-	server         serverModel
-	width          int
+	paths           config.Paths
+	cfg             config.Config
+	reg             *config.Registry
+	local           localModel
+	server          serverModel
+	width           int
 }
 
 func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model {
 	m := model{
 		activeMode: modeLocal,
-		paths:     paths,
-		cfg:       cfg,
-		reg:       reg,
+		paths:      paths,
+		cfg:        cfg,
+		reg:        reg,
 		local: localModel{
 			updates: make(map[string]string),
 		},
@@ -251,41 +260,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case serverTickMsg:
 		// Silent background refresh — no "fetching..." indicator
-		if m.activeMode == modeServer && m.server.client != nil && !m.server.fetching && !m.server.actionBusy && !m.server.logs.active {
+		if m.activeMode == modeServer && m.server.client != nil && !m.server.fetching && !m.server.actionBusy {
 			return m, tea.Batch(fetchServerStatus(m.server.client), serverTick())
 		}
 		return m, nil
 
 	// --- Key dispatch ---
 	case tea.KeyMsg:
-		// Local tab: check modals first (they intercept all keys including tab)
 		if m.activeMode == modeLocal {
+			// Global blockers
 			if m.local.installBusy {
 				if msg.String() == "ctrl+c" {
 					return m, tea.Quit
 				}
 				return m, nil
-			}
-			if m.local.logs.active {
-				if !handleLogViewerKeys(&m.local.logs, msg) {
-					return m, tea.Quit
-				}
-				if !m.local.logs.active {
-					m.stopLocalLogStream()
-				}
-				return m, nil
-			}
-			if m.local.installing {
-				return m.handleInstallInput(msg)
-			}
-			if m.local.pickProfile {
-				return m.handleProfilePicker(msg)
-			}
-			if m.local.confirmRemove {
-				return m.handleConfirmRemove(msg)
-			}
-			if m.local.confirmStart {
-				return m.handleConfirmStart(msg)
 			}
 			if m.local.preflightFetching {
 				if msg.String() == "ctrl+c" {
@@ -293,10 +281,25 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
+			// Mods-tab modals
+			if m.activeLocalTab == contentMods {
+				if m.local.installing {
+					return m.handleInstallInput(msg)
+				}
+				if m.local.pickProfile {
+					return m.handleProfilePicker(msg)
+				}
+				if m.local.confirmRemove {
+					return m.handleConfirmRemove(msg)
+				}
+				if m.local.confirmStart {
+					return m.handleConfirmStart(msg)
+				}
+			}
 			return m.handleLocalNormal(msg)
 		}
 
-		// Server tab
+		// Server mode
 		return m.handleServerNormal(msg)
 	}
 
@@ -308,15 +311,23 @@ func (m model) View() string {
 	b.WriteString(renderModeBar(m.activeMode))
 
 	if m.activeMode == modeLocal {
-		if len(localTabs) > 1 {
-			b.WriteString(renderContentTabBar(localTabs, m.activeLocalTab))
+		b.WriteString(renderContentTabBar(localTabs, m.activeLocalTab))
+		switch m.activeLocalTab {
+		case contentMods:
+			b.WriteString(m.viewLocal())
+		case contentLogs:
+			b.WriteString(m.viewLocalLogs())
+		case contentStatus:
+			b.WriteString(m.viewLocalStatus())
 		}
-		b.WriteString(m.viewLocal())
 	} else {
-		if len(serverTabs) > 1 {
-			b.WriteString(renderContentTabBar(serverTabs, m.activeServerTab))
+		b.WriteString(renderContentTabBar(serverTabs, m.activeServerTab))
+		switch m.activeServerTab {
+		case contentMods:
+			b.WriteString(m.viewServer())
+		case contentLogs:
+			b.WriteString(m.viewServerLogs())
 		}
-		b.WriteString(m.viewServer())
 	}
 
 	return b.String()
@@ -345,6 +356,56 @@ func renderContentTabBar(tabs []contentTab, active contentTab) string {
 	}
 	b.WriteString("\n")
 	return b.String()
+}
+
+// --- Tab lifecycle helpers ---
+
+func (m *model) switchLocalTab(to contentTab) tea.Cmd {
+	old := m.activeLocalTab
+	m.activeLocalTab = to
+	if old == to {
+		return nil
+	}
+	if old == contentLogs {
+		m.stopLocalLogStream()
+	}
+	if to == contentLogs {
+		return m.loadLocalLogs()
+	}
+	return nil
+}
+
+func (m *model) switchServerTab(to contentTab) tea.Cmd {
+	old := m.activeServerTab
+	m.activeServerTab = to
+	if old == to {
+		return nil
+	}
+	if old == contentLogs {
+		m.stopServerLogStream()
+	}
+	if to == contentLogs && m.server.client != nil {
+		return m.loadServerLogs()
+	}
+	return nil
+}
+
+func (m *model) cycleLocalTab(dir int) tea.Cmd {
+	for i, t := range localTabs {
+		if t == m.activeLocalTab {
+			return m.switchLocalTab(localTabs[(i+dir+len(localTabs))%len(localTabs)])
+		}
+	}
+	return nil
+}
+
+func (m *model) cycleServerTab(dir int) tea.Cmd {
+	for i, t := range serverTabs {
+		if t == m.activeServerTab {
+			return m.switchServerTab(serverTabs[(i+dir+len(serverTabs))%len(serverTabs)])
+		}
+	}
+	return nil
 }
 
 // Run starts the interactive TUI.
