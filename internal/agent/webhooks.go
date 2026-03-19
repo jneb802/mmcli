@@ -9,33 +9,12 @@ import (
 	"time"
 )
 
-const (
-	colorGreen = 5763719  // 0x57F287
-	colorRed   = 15548997 // 0xED4245
-	colorBlue  = 5793266  // 0x5865F2
-)
-
-type discordEmbed struct {
-	Title       string         `json:"title"`
-	Description string         `json:"description,omitempty"`
-	Color       int            `json:"color,omitempty"`
-	Fields      []discordField `json:"fields,omitempty"`
-	Timestamp   string         `json:"timestamp,omitempty"`
+type discordMessage struct {
+	Content string `json:"content"`
 }
 
-type discordField struct {
-	Name   string `json:"name"`
-	Value  string `json:"value"`
-	Inline bool   `json:"inline,omitempty"`
-}
-
-type discordPayload struct {
-	Embeds []discordEmbed `json:"embeds"`
-}
-
-func sendDiscordWebhook(webhookURL string, embed discordEmbed) {
-	payload := discordPayload{Embeds: []discordEmbed{embed}}
-	body, err := json.Marshal(payload)
+func sendDiscordWebhook(webhookURL string, message string) {
+	body, err := json.Marshal(discordMessage{Content: message})
 	if err != nil {
 		log.Printf("Discord webhook: marshal error: %v", err)
 		return
@@ -54,59 +33,35 @@ func sendDiscordWebhook(webhookURL string, embed discordEmbed) {
 	}
 }
 
-func buildServerStartedEmbed(world string, day int) discordEmbed {
-	embed := discordEmbed{
-		Title:     "Server Started",
-		Color:     colorGreen,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	}
+func buildServerStartedMessage(world string, day int) string {
+	msg := "**Server Started**"
 	if world != "" {
-		embed.Fields = append(embed.Fields, discordField{
-			Name: "World", Value: world, Inline: true,
-		})
+		msg += fmt.Sprintf(" — %s", world)
 	}
 	if day > 0 {
-		embed.Fields = append(embed.Fields, discordField{
-			Name: "Day", Value: fmt.Sprintf("%d", day), Inline: true,
-		})
+		msg += fmt.Sprintf(" (Day %d)", day)
 	}
-	return embed
+	return msg
 }
 
-func buildServerStoppedEmbed(uptime string) discordEmbed {
-	embed := discordEmbed{
-		Title:     "Server Stopped",
-		Color:     colorRed,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	}
+func buildServerStoppedMessage(uptime string) string {
+	msg := "**Server Stopped**"
 	if uptime != "" {
-		embed.Fields = append(embed.Fields, discordField{
-			Name: "Uptime", Value: uptime, Inline: true,
-		})
+		msg += fmt.Sprintf(" — uptime %s", uptime)
 	}
-	return embed
+	return msg
 }
 
-func buildWorldSavedEmbed(world string, day int, gameTime string) discordEmbed {
-	embed := discordEmbed{
-		Title:     "World Saved",
-		Color:     colorBlue,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-	}
+func buildWorldSavedMessage(world string, day int, gameTime string) string {
+	msg := "**World Saved**"
 	if world != "" {
-		embed.Fields = append(embed.Fields, discordField{
-			Name: "World", Value: world, Inline: true,
-		})
+		msg += fmt.Sprintf(" — %s", world)
 	}
 	if day > 0 {
-		embed.Fields = append(embed.Fields, discordField{
-			Name: "Day", Value: fmt.Sprintf("%d", day), Inline: true,
-		})
+		msg += fmt.Sprintf(", Day %d", day)
 	}
 	if gameTime != "" {
-		embed.Fields = append(embed.Fields, discordField{
-			Name: "Time", Value: gameTime, Inline: true,
-		})
+		msg += fmt.Sprintf(" (%s)", gameTime)
 	}
-	return embed
+	return msg
 }

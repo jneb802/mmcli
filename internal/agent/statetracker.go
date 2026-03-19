@@ -66,7 +66,7 @@ func (st *StateTracker) poll(initializing bool) {
 	// Detect process stop
 	if st.prevRunning && !processRunning && !initializing {
 		if wcfg.EventEnabled("server_stopped") {
-			go sendDiscordWebhook(wcfg.URL, buildServerStoppedEmbed(st.lastUptime))
+			go sendDiscordWebhook(wcfg.URL, buildServerStoppedMessage(st.lastUptime))
 		}
 		st.prevReachable = false
 		st.prevWorldLoaded = false
@@ -99,14 +99,14 @@ func (st *StateTracker) poll(initializing bool) {
 
 	if nowReady && !wasReady && !initializing {
 		if wcfg.EventEnabled("server_started") {
-			go sendDiscordWebhook(wcfg.URL, buildServerStartedEmbed(status.World, status.Day))
+			go sendDiscordWebhook(wcfg.URL, buildServerStartedMessage(status.World, status.Day))
 		}
 	}
 
 	// World saved: save_count increased
 	if status.SaveCount > st.prevSaveCount && st.prevSaveCount > 0 && !initializing {
 		if wcfg.EventEnabled("world_saved") {
-			go sendDiscordWebhook(wcfg.URL, buildWorldSavedEmbed(status.World, status.Day, status.GameTime))
+			go sendDiscordWebhook(wcfg.URL, buildWorldSavedMessage(status.World, status.Day, status.GameTime))
 		}
 	}
 
