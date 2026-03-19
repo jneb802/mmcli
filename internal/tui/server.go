@@ -29,7 +29,7 @@ type serverActionMsg struct {
 }
 
 type serverPushMsg struct {
-	resp *agentapi.ActionResponse
+	resp *agentapi.SyncResponse
 	err  error
 }
 
@@ -435,17 +435,8 @@ func serverAction(c *client.AgentClient, action string) tea.Cmd {
 
 func pushMods(c *client.AgentClient, paths config.Paths, cfg config.Config, reg config.Registry) tea.Cmd {
 	return func() tea.Msg {
-		pr, pw := io.Pipe()
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- profile.BuildProfileArchive(pw, paths, cfg.ActiveProfile, reg)
-			pw.Close()
-		}()
-
-		resp, err := c.PushMods(pr, false)
-		if archiveErr := <-errCh; archiveErr != nil {
-			return serverPushMsg{err: archiveErr}
-		}
+		manifest := profile.BuildManifest(cfg.ActiveProfile, reg)
+		resp, err := c.SyncMods(manifest)
 		return serverPushMsg{resp: resp, err: err}
 	}
 }

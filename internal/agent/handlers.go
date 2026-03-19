@@ -251,6 +251,114 @@ func (h *Handlers) HandleModsPush(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
+	log.Println("Sync request received, parsing JSON...")
+
+	var req agentapi.SyncRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	bepDir := h.cfg.BepInExDir()
+	if _, err := os.Stat(bepDir); os.IsNotExist(err) {
+		writeError(w, http.StatusBadRequest, "BepInEx not installed on server")
+		return
+	}
+
+	// Load existing manifest to diff
+	oldMods := make(map[string]string) // dirName -> version
+	manifestPath := filepath.Join(bepDir, agentapi.ManifestFileName)
+	if data, err := os.ReadFile(manifestPath); err == nil {
+		var oldManifest agentapi.PushManifest
+		if json.Unmarshal(data, &oldManifest) == nil {
+			for _, m := range oldManifest.Mods {
+				oldMods[m.DirName] = m.Version
+			}
+		}
+	}
+
+	cacheDir := agentCacheDir()
+	var resp agentapi.SyncResponse
+	resp.OK = true
+
+	// Build set of new mod dirNames for removal detection
+	newModSet := make(map[string]bool)
+	for _, mod := range req.Manifest.Mods {
+		newModSet[mod.DirName] = true
+	}
+
+	// Remove mods no longer in manifest
+	for dirName := range oldMods {
+		if !newModSet[dirName] {
+			log.Printf("Sync: removing %s (no longer in manifest)", dirName)
+			removeModDirs(bepDir, dirName)
+			resp.Removed++
+		}
+	}
+
+	// Download and extract new/updated mods
+	for _, mod := range req.Manifest.Mods {
+		// Check if unchanged
+		if oldVersion, exists := oldMods[mod.DirName]; exists && oldVersion == mod.Version {
+			resp.Skipped++
+			continue
+		}
+
+		// Remove old version dirs before extracting new
+		removeModDirs(bepDir, mod.DirName)
+
+		// Download (cache-aware)
+		zipPath, wasCached, err := downloadModZip(cacheDir, mod.Owner, mod.Name, mod.Version)
+		if err != nil {
+			log.Printf("Sync: failed to download %s: %v", mod.DirName, err)
+			resp.Failures = append(resp.Failures, agentapi.SyncFailure{
+				Mod:    mod.DirName,
+				Reason: err.Error(),
+			})
+			continue
+		}
+
+		// Extract
+		if err := extractModZip(zipPath, bepDir, mod.Owner, mod.Name); err != nil {
+			log.Printf("Sync: failed to extract %s: %v", mod.DirName, err)
+			// Delete potentially corrupt cache entry and report failure
+			os.Remove(zipPath)
+			resp.Failures = append(resp.Failures, agentapi.SyncFailure{
+				Mod:    mod.DirName,
+				Reason: "extract failed: " + err.Error(),
+			})
+			continue
+		}
+
+		if wasCached {
+			log.Printf("Sync: extracted %s (cached)", mod.DirName)
+			resp.Cached++
+		} else {
+			log.Printf("Sync: downloaded and extracted %s", mod.DirName)
+			resp.Downloaded++
+		}
+	}
+
+	// Rebuild anticheat folders
+	if err := setupAnticheat(bepDir, req.Manifest.Mods); err != nil {
+		log.Printf("Sync: anticheat setup error: %v", err)
+	}
+
+	// Write new manifest
+	data, err := json.MarshalIndent(req.Manifest, "", "  ")
+	if err == nil {
+		os.WriteFile(manifestPath, data, 0644)
+	}
+
+	total := resp.Downloaded + resp.Cached + resp.Skipped
+	resp.Message = fmt.Sprintf("synced %d mods (%d downloaded, %d cached, %d unchanged, %d removed, %d failed)",
+		total, resp.Downloaded, resp.Cached, resp.Skipped, resp.Removed, len(resp.Failures))
+	log.Printf("Sync: %s", resp.Message)
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (h *Handlers) HandleLogs(w http.ResponseWriter, r *http.Request) {
 	linesStr := r.URL.Query().Get("lines")
 	lines := 100

@@ -12,6 +12,7 @@ const (
 	PathStop    = "/api/v1/stop"
 	PathRestart = "/api/v1/restart"
 	PathMods     = "/api/v1/mods"
+	PathModsSync = "/api/v1/mods/sync"
 	PathLogs     = "/api/v1/logs"
 	PathSettings = "/api/v1/settings"
 	PathUpdate   = "/api/v1/update"
@@ -162,6 +163,27 @@ type ConfigPushResponse struct {
 	Applied int    `json:"applied"` // .cfg patches applied
 	Written int    `json:"written"` // whole files written
 	Message string `json:"message"`
+}
+
+// Sync types for manifest-based push (server downloads from Thunderstore).
+
+type SyncRequest struct {
+	Manifest PushManifest `json:"manifest"`
+}
+
+type SyncResponse struct {
+	OK         bool          `json:"ok"`
+	Downloaded int           `json:"downloaded"`          // freshly downloaded from Thunderstore
+	Cached     int           `json:"cached"`              // already in server cache, re-extracted
+	Skipped    int           `json:"skipped"`             // already at correct version, untouched
+	Removed    int           `json:"removed"`             // old mods cleaned up
+	Failures   []SyncFailure `json:"failures,omitempty"`
+	Message    string        `json:"message"`
+}
+
+type SyncFailure struct {
+	Mod    string `json:"mod"`    // "Owner-Name"
+	Reason string `json:"reason"` // e.g. "download failed: HTTP 404"
 }
 
 type UpdateResponse struct {

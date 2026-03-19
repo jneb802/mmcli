@@ -309,9 +309,10 @@ var serverRestartCmd = &cobra.Command{
 var serverPushCmd = &cobra.Command{
 	Use:   "push",
 	Short: "Push local profile mods to the active server",
-	Long: `Push mods from a local profile to the active server. Only mods targeted
+	Long: `Sync mods from a local profile to the active server. Only mods targeted
 at "both" or "server" are included. Client-only mods are skipped.
-Push is always additive — existing server files are not deleted.
+The server downloads mods directly from Thunderstore. Mods removed from
+the local profile are also removed from the server.
 Use --with-config to also push config files after mods.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := requireAdmin(); err != nil {
@@ -344,25 +345,18 @@ Use --with-config to also push config files after mods.`,
 			return fmt.Errorf("profile '%s' not found", profileName)
 		}
 
-		fmt.Printf("Pushing profile '%s' to server '%s'...\n", profileName, name)
+		fmt.Printf("Syncing profile '%s' to server '%s'...\n", profileName, name)
 
-		// Build tar.gz of profile directories (filtered by target)
-		pr, pw := io.Pipe()
-		errCh := make(chan error, 1)
-		go func() {
-			errCh <- profile.BuildProfileArchive(pw, paths, profileName, reg)
-			pw.Close()
-		}()
-
-		resp, err := c.PushMods(pr, false)
-		if archiveErr := <-errCh; archiveErr != nil {
-			return fmt.Errorf("failed to build archive: %w", archiveErr)
-		}
+		manifest := profile.BuildManifest(profileName, reg)
+		resp, err := c.SyncMods(manifest)
 		if err != nil {
 			return err
 		}
 
 		fmt.Printf("\033[32m%s\033[0m\n", resp.Message)
+		for _, f := range resp.Failures {
+			fmt.Printf("\033[33m  Warning: %s — %s\033[0m\n", f.Mod, f.Reason)
+		}
 
 		// Push configs if requested
 		withConfig, _ := cmd.Flags().GetBool("with-config")

@@ -239,12 +239,11 @@ func addAnticheatEntries(tw *tar.Writer, pluginsDir string, reg config.Registry,
 	return nil
 }
 
-// writeManifest serializes mod metadata from the registry and writes it as a
-// JSON tar entry. The agent reads this to provide version info via the API.
-func writeManifest(tw *tar.Writer, profileName string, reg config.Registry, clientMods map[string]bool) error {
+// BuildManifest creates a PushManifest from the registry, excluding client-only mods.
+func BuildManifest(profileName string, reg config.Registry) agentapi.PushManifest {
 	var mods []agentapi.ManifestMod
 	for _, mod := range reg.ListMods(profileName) {
-		if clientMods[mod.FullName()] {
+		if mod.ResolvedTarget() == "client" {
 			continue
 		}
 		mods = append(mods, agentapi.ManifestMod{
@@ -256,12 +255,16 @@ func writeManifest(tw *tar.Writer, profileName string, reg config.Registry, clie
 			Anticheat: mod.Anticheat,
 		})
 	}
-
-	manifest := agentapi.PushManifest{
+	return agentapi.PushManifest{
 		PushedAt: time.Now().UTC().Format(time.RFC3339),
 		Profile:  profileName,
 		Mods:     mods,
 	}
+}
+
+// writeManifest serializes the manifest and writes it as a JSON tar entry.
+func writeManifest(tw *tar.Writer, profileName string, reg config.Registry, clientMods map[string]bool) error {
+	manifest := BuildManifest(profileName, reg)
 
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {

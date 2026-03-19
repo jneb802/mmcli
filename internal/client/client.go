@@ -66,6 +66,16 @@ func (c *AgentClient) ListMods() (*agentapi.ModListResponse, error) {
 	return &resp, nil
 }
 
+func (c *AgentClient) SyncMods(manifest agentapi.PushManifest) (*agentapi.SyncResponse, error) {
+	req := agentapi.SyncRequest{Manifest: manifest}
+	var resp agentapi.SyncResponse
+	// Use a longer timeout — server needs time to download mods from Thunderstore
+	if err := c.doJSONWithTimeout("POST", agentapi.PathModsSync, req, &resp, 5*time.Minute); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *AgentClient) PushMods(archive io.Reader, clean bool) (*agentapi.ActionResponse, error) {
 	// Stream the multipart body via io.Pipe to avoid buffering large archives in memory
 	pr, pw := io.Pipe()
@@ -185,6 +195,14 @@ func (c *AgentClient) Update() (*agentapi.UpdateResponse, error) {
 }
 
 func (c *AgentClient) doJSON(method, path string, body any, result any) error {
+	return c.doJSONWithClient(c.HTTP, method, path, body, result)
+}
+
+func (c *AgentClient) doJSONWithTimeout(method, path string, body any, result any, timeout time.Duration) error {
+	return c.doJSONWithClient(&http.Client{Timeout: timeout}, method, path, body, result)
+}
+
+func (c *AgentClient) doJSONWithClient(httpClient *http.Client, method, path string, body any, result any) error {
 	var reqBody io.Reader
 	if body != nil {
 		data, err := json.Marshal(body)
@@ -203,7 +221,7 @@ func (c *AgentClient) doJSON(method, path string, body any, result any) error {
 		req.Header.Set("Content-Type", "application/json")
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := httpClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("could not connect to server (is the agent running?): %w", err)
 	}
