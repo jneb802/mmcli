@@ -74,6 +74,22 @@ func (c *AgentClient) ListPlayers() (*agentapi.PlayersResponse, error) {
 	return &resp, nil
 }
 
+func (c *AgentClient) GetWebhookConfig() (*agentapi.WebhookConfigResponse, error) {
+	var resp agentapi.WebhookConfigResponse
+	if err := c.doJSON("GET", agentapi.PathWebhook, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AgentClient) UpdateWebhookConfig(req agentapi.WebhookConfigUpdate) (*agentapi.ActionResponse, error) {
+	var resp agentapi.ActionResponse
+	if err := c.doJSON("POST", agentapi.PathWebhook, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // SyncMods sends a manifest and optional upload mod zips to the server.
 // The uploads map is keyed by DirName → zip data for mods with Source="upload".
 func (c *AgentClient) SyncMods(manifest agentapi.PushManifest, uploads map[string]io.Reader) (*agentapi.SyncResponse, error) {

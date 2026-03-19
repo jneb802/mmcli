@@ -57,7 +57,64 @@ func (h *Handlers) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Webhook summary
+	if h.cfg.DiscordWebhook != nil && h.cfg.DiscordWebhook.URL != "" {
+		resp.WebhookEnabled = true
+		// Mask the URL for security — show last 8 chars
+		url := h.cfg.DiscordWebhook.URL
+		if len(url) > 12 {
+			resp.WebhookURL = "…" + url[len(url)-8:]
+		} else {
+			resp.WebhookURL = "***"
+		}
+	}
+
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handlers) HandleWebhookGet(w http.ResponseWriter, r *http.Request) {
+	resp := agentapi.WebhookConfigResponse{}
+	if h.cfg.DiscordWebhook != nil {
+		resp.URL = h.cfg.DiscordWebhook.URL
+		resp.ServerStarted = h.cfg.DiscordWebhook.ServerStarted
+		resp.ServerStopped = h.cfg.DiscordWebhook.ServerStopped
+		resp.WorldSaved = h.cfg.DiscordWebhook.WorldSaved
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handlers) HandleWebhookUpdate(w http.ResponseWriter, r *http.Request) {
+	var req agentapi.WebhookConfigUpdate
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	if h.cfg.DiscordWebhook == nil {
+		h.cfg.DiscordWebhook = &DiscordWebhookConfig{}
+	}
+	if req.URL != nil {
+		h.cfg.DiscordWebhook.URL = *req.URL
+	}
+	if req.ServerStarted != nil {
+		h.cfg.DiscordWebhook.ServerStarted = *req.ServerStarted
+	}
+	if req.ServerStopped != nil {
+		h.cfg.DiscordWebhook.ServerStopped = *req.ServerStopped
+	}
+	if req.WorldSaved != nil {
+		h.cfg.DiscordWebhook.WorldSaved = *req.WorldSaved
+	}
+
+	// Persist to disk
+	cfgPath := DefaultConfigPath()
+	if err := SaveConfig(cfgPath, h.cfg); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save config: "+err.Error())
+		return
+	}
+
+	log.Printf("Webhook config updated")
+	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "webhook config updated"})
 }
 
 func (h *Handlers) HandlePlayers(w http.ResponseWriter, r *http.Request) {

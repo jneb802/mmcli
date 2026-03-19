@@ -21,6 +21,7 @@ const (
 	PathWorldUpload = "/api/v1/worlds/upload"
 
 	PathPlayers = "/api/v1/players"
+	PathWebhook = "/api/v1/webhook"
 
 	PathLaunchConfigs       = "/api/v1/launch-configs"
 	PathLaunchConfigsActive = "/api/v1/launch-configs/active"
@@ -45,6 +46,24 @@ type StatusResponse struct {
 	GameTime    string `json:"game_time,omitempty"`
 	IsDay       *bool  `json:"is_day,omitempty"`
 	World       string `json:"world,omitempty"`
+
+	// Webhook config summary
+	WebhookURL     string `json:"webhook_url,omitempty"`
+	WebhookEnabled bool   `json:"webhook_enabled,omitempty"`
+}
+
+type WebhookConfigResponse struct {
+	URL           string `json:"url"`
+	ServerStarted bool   `json:"server_started"`
+	ServerStopped bool   `json:"server_stopped"`
+	WorldSaved    bool   `json:"world_saved"`
+}
+
+type WebhookConfigUpdate struct {
+	URL           *string `json:"url,omitempty"`
+	ServerStarted *bool   `json:"server_started,omitempty"`
+	ServerStopped *bool   `json:"server_stopped,omitempty"`
+	WorldSaved    *bool   `json:"world_saved,omitempty"`
 }
 
 type PlayerInfo struct {

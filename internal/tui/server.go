@@ -652,6 +652,19 @@ func (m model) buildServerStatusItems() []settingsItem {
 		tooltip: "When the server process was last started, computed from uptime.",
 	})
 
+	// Discord webhook
+	var webhookVal string
+	if m.server.status != nil && m.server.status.WebhookEnabled {
+		webhookVal = fmt.Sprintf("\033[32menabled\033[0m (%s)", m.server.status.WebhookURL)
+	} else {
+		webhookVal = "\033[2mnot configured\033[0m"
+	}
+	items = append(items, settingsItem{
+		label:   "Discord webhook",
+		value:   webhookVal,
+		tooltip: "Discord webhook for server event notifications (start, stop, save). Configure via agent config.",
+	})
+
 	return items
 }
 
