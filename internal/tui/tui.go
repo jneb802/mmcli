@@ -102,6 +102,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case localLogLineMsg:
+		m.local.logs.lines = append(m.local.logs.lines, msg.lines...)
+		if m.local.logs.following {
+			m.local.logs.scroll = max(0, len(m.local.logs.lines)-m.local.logs.visible)
+		}
+		if m.local.logCh != nil {
+			return m, nextLocalLogLine(m.local.logCh)
+		}
+		return m, nil
+
+	case localLogDoneMsg:
+		m.local.logCh = nil
+		m.local.logStop = nil
+		m.local.logs.live = false
+		return m, nil
+
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		return m, nil
@@ -179,8 +195,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.server.statusErr = msg.err
 		} else {
-			m.server.logs = newLogViewerState("Server Logs ("+m.server.serverName+")", msg.lines)
+			m.server.logs = newLogViewerState("Server Logs ("+m.server.serverName+")", msg.lines, true)
+			if m.server.logCh != nil {
+				return m, nextServerLogLine(m.server.logCh)
+			}
 		}
+		return m, nil
+
+	case serverLogLineMsg:
+		m.server.logs.lines = append(m.server.logs.lines, msg.lines...)
+		if m.server.logs.following {
+			m.server.logs.scroll = max(0, len(m.server.logs.lines)-m.server.logs.visible)
+		}
+		if m.server.logCh != nil {
+			return m, nextServerLogLine(m.server.logCh)
+		}
+		return m, nil
+
+	case serverLogDoneMsg:
+		m.server.logCh = nil
+		m.server.logStop = nil
+		m.server.logs.live = false
 		return m, nil
 
 	case serverSettingsMsg:
@@ -214,6 +249,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.local.logs.active {
 				if !handleLogViewerKeys(&m.local.logs, msg) {
 					return m, tea.Quit
+				}
+				if !m.local.logs.active {
+					m.stopLocalLogStream()
 				}
 				return m, nil
 			}

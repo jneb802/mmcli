@@ -1,8 +1,8 @@
 package tui
 
 import (
+	"bufio"
 	"fmt"
-	"io"
 	"sort"
 	"strings"
 	"time"
@@ -46,6 +46,25 @@ type serverSettingsMsg struct {
 
 type serverTickMsg struct{}
 
+type serverLogLineMsg struct{ lines []string }
+type serverLogDoneMsg struct{}
+
+func nextServerLogLine(ch <-chan []string) tea.Cmd {
+	return waitForLogLines(ch,
+		func(lines []string) tea.Msg { return serverLogLineMsg{lines: lines} },
+		func() tea.Msg { return serverLogDoneMsg{} },
+	)
+}
+
+func (m *model) stopServerLogStream() {
+	if m.server.logStop != nil {
+		close(m.server.logStop)
+		m.server.logStop = nil
+		m.server.logCh = nil
+		m.server.logs.active = false
+	}
+}
+
 type serverModel struct {
 	client     *client.AgentClient
 	serverName string
@@ -73,6 +92,8 @@ type serverModel struct {
 	confirmRestart bool
 
 	logs     logViewerState
+	logCh    <-chan []string
+	logStop  chan struct{}
 	modsResp *agentapi.ModListResponse
 
 	settings        *agentapi.SettingsResponse
@@ -102,6 +123,9 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.server.logs.active {
 		if !handleLogViewerKeys(&m.server.logs, msg) {
 			return m, tea.Quit
+		}
+		if !m.server.logs.active {
+			m.stopServerLogStream()
 		}
 		return m, nil
 	}
@@ -222,6 +246,7 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
 	case "tab":
+		m.stopServerLogStream()
 		m.activeTab = tabLocal
 		return m, tea.Batch(checkGameRunning(), localTick())
 	case "up", "k":
@@ -279,9 +304,13 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.server.pushScroll = 0
 		return m, nil
 	case "l":
+		m.stopServerLogStream()
 		m.server.actionBusy = true
 		m.server.actionMsg = "Fetching logs..."
-		return m, fetchLogs(m.server.client)
+		cmd, ch, stop := streamServerLogs(m.server.client)
+		m.server.logCh = ch
+		m.server.logStop = stop
+		return m, cmd
 	case "w":
 		m.server.actionBusy = true
 		m.server.actionMsg = "Fetching settings..."
@@ -691,20 +720,60 @@ func pushMods(c *client.AgentClient, paths config.Paths, cfg config.Config, reg 
 	}
 }
 
-func fetchLogs(c *client.AgentClient) tea.Cmd {
-	return func() tea.Msg {
-		body, err := c.Logs(200, false)
+func streamServerLogs(c *client.AgentClient) (tea.Cmd, <-chan []string, chan struct{}) {
+	ch := make(chan []string, 16)
+	stop := make(chan struct{})
+
+	// Start background goroutine
+	initCmd := func() tea.Msg {
+		body, err := c.Logs(200, true)
 		if err != nil {
+			close(ch)
 			return serverLogsMsg{err: err}
 		}
-		defer body.Close()
-		data, err := io.ReadAll(body)
-		if err != nil {
-			return serverLogsMsg{err: err}
+
+		// Read initial + stream in background
+		go func() {
+			defer body.Close()
+			defer close(ch)
+			scanner := bufio.NewScanner(body)
+			scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
+			var batch []string
+			for scanner.Scan() {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				batch = append(batch, scanner.Text())
+				// Send batch when channel is ready (non-blocking) or batch is large
+				if len(batch) >= 50 {
+					select {
+					case ch <- batch:
+						batch = nil
+					case <-stop:
+						return
+					}
+				}
+			}
+			// Flush remaining
+			if len(batch) > 0 {
+				select {
+				case ch <- batch:
+				case <-stop:
+				}
+			}
+		}()
+
+		// Wait for first batch
+		lines, ok := <-ch
+		if !ok {
+			return serverLogsMsg{lines: nil}
 		}
-		lines := strings.Split(string(data), "\n")
 		return serverLogsMsg{lines: lines}
 	}
+
+	return initCmd, ch, stop
 }
 
 func fetchSettings(c *client.AgentClient) tea.Cmd {

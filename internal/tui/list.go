@@ -80,22 +80,26 @@ func renderModList(b *strings.Builder, items []modListItem, cursor int, showAnti
 
 // logViewerState holds shared log viewer state used by both tabs.
 type logViewerState struct {
-	active   bool
-	lines    []string
-	scroll   int
-	title    string
-	visible  int
+	active    bool
+	lines     []string
+	scroll    int
+	title     string
+	visible   int
+	following bool // auto-scroll to bottom on new lines
+	live      bool // show LIVE indicator
 }
 
-func newLogViewerState(title string, lines []string) logViewerState {
+func newLogViewerState(title string, lines []string, live bool) logViewerState {
 	visible := 30
 	maxScroll := max(0, len(lines)-visible)
 	return logViewerState{
-		active:  true,
-		lines:   lines,
-		scroll:  maxScroll, // start at bottom
-		title:   title,
-		visible: visible,
+		active:    true,
+		lines:     lines,
+		scroll:    maxScroll, // start at bottom
+		title:     title,
+		visible:   visible,
+		following: live,
+		live:      live,
 	}
 }
 
@@ -106,10 +110,13 @@ func handleLogViewerKeys(lv *logViewerState, msg tea.KeyMsg) bool {
 		lv.active = false
 		lv.lines = nil
 		lv.scroll = 0
+		lv.following = false
+		lv.live = false
 		return true
 	case "up", "k":
 		if lv.scroll > 0 {
 			lv.scroll--
+			lv.following = false
 		}
 		return true
 	case "down", "j":
@@ -117,6 +124,15 @@ func handleLogViewerKeys(lv *logViewerState, msg tea.KeyMsg) bool {
 		if lv.scroll < maxScroll {
 			lv.scroll++
 		}
+		// Re-enable following when scrolled to bottom
+		if lv.scroll >= maxScroll {
+			lv.following = true
+		}
+		return true
+	case "f", "G":
+		// Jump to bottom and resume following
+		lv.scroll = max(0, len(lv.lines)-lv.visible)
+		lv.following = true
 		return true
 	case "ctrl+c":
 		return false // let caller handle quit
@@ -125,7 +141,11 @@ func handleLogViewerKeys(lv *logViewerState, msg tea.KeyMsg) bool {
 }
 
 func renderLogViewer(b *strings.Builder, lv logViewerState) {
-	fmt.Fprintf(b, "\n  \033[1m%s\033[0m\n\n", lv.title)
+	liveTag := ""
+	if lv.live {
+		liveTag = "  \033[32mLIVE\033[0m"
+	}
+	fmt.Fprintf(b, "\n  \033[1m%s\033[0m%s\n\n", lv.title, liveTag)
 	if len(lv.lines) == 0 {
 		b.WriteString("  (no logs)\n")
 	} else {
@@ -137,7 +157,22 @@ func renderLogViewer(b *strings.Builder, lv logViewerState) {
 			fmt.Fprintf(b, "  %s\n", line)
 		}
 	}
-	b.WriteString("\n  \033[2m↑/↓ scroll • esc back\033[0m\n\n")
+	hints := "↑/↓ scroll • esc back"
+	if lv.live && !lv.following {
+		hints = "↑/↓ scroll • f follow • esc back"
+	}
+	fmt.Fprintf(b, "\n  \033[2m%s\033[0m\n\n", hints)
+}
+
+// waitForLogLines returns a tea.Cmd that blocks on a channel for new log lines.
+func waitForLogLines(ch <-chan []string, wrap func([]string) tea.Msg, done func() tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		lines, ok := <-ch
+		if !ok {
+			return done()
+		}
+		return wrap(lines)
+	}
 }
 
 // renderHotkeyBar renders a hotkey hint bar that wraps to multiple lines

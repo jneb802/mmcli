@@ -24,6 +24,24 @@ type updateCheckDoneMsg struct{ updates map[string]string }
 type gameStatusMsg struct{ running bool }
 type gameStartMsg struct{ err error }
 type localTickMsg struct{}
+type localLogLineMsg struct{ lines []string }
+type localLogDoneMsg struct{}
+
+func nextLocalLogLine(ch <-chan []string) tea.Cmd {
+	return waitForLogLines(ch,
+		func(lines []string) tea.Msg { return localLogLineMsg{lines: lines} },
+		func() tea.Msg { return localLogDoneMsg{} },
+	)
+}
+
+func (m *model) stopLocalLogStream() {
+	if m.local.logStop != nil {
+		close(m.local.logStop)
+		m.local.logStop = nil
+		m.local.logCh = nil
+		m.local.logs.active = false
+	}
+}
 
 type localModel struct {
 	mods    []config.ModEntry
@@ -44,7 +62,9 @@ type localModel struct {
 	installInput string
 	installBusy bool
 
-	logs logViewerState
+	logs    logViewerState
+	logCh   <-chan []string
+	logStop chan struct{}
 
 	updates         map[string]string
 	checkingUpdates bool
@@ -219,6 +239,7 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
 	case "tab":
+		m.stopLocalLogStream()
 		m.activeTab = tabServer
 		if m.server.client != nil && m.server.status == nil {
 			m.server.fetching = true
@@ -314,17 +335,17 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, startGame(m.paths, m.cfg)
 		}
 	case "l":
+		m.stopLocalLogStream()
 		logFile := m.paths.BepInExLogFile()
-		data, err := os.ReadFile(logFile)
+		lines, size, err := readLogTail(logFile, 200)
 		if err != nil {
 			m.local.err = fmt.Errorf("no log file found")
 		} else {
-			lines := strings.Split(string(data), "\n")
-			// Take last 200 lines
-			if len(lines) > 200 {
-				lines = lines[len(lines)-200:]
-			}
-			m.local.logs = newLogViewerState("BepInEx Logs ("+m.cfg.ActiveProfile+")", lines)
+			ch, stop := streamLocalLogs(logFile, size)
+			m.local.logCh = ch
+			m.local.logStop = stop
+			m.local.logs = newLogViewerState("BepInEx Logs ("+m.cfg.ActiveProfile+")", lines, true)
+			return m, nextLocalLogLine(ch)
 		}
 	}
 	return m, nil
@@ -481,6 +502,66 @@ func installMod(paths config.Paths, cfg config.Config, reg *config.Registry, que
 		}
 		return installDoneMsg{err: installer.Install(paths, cfg, reg, query, "both")}
 	}
+}
+
+func readLogTail(path string, n int) ([]string, int64, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, 0, err
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return lines, int64(len(data)), nil
+}
+
+func streamLocalLogs(path string, lastSize int64) (<-chan []string, chan struct{}) {
+	ch := make(chan []string, 16)
+	stop := make(chan struct{})
+
+	go func() {
+		defer close(ch)
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				info, err := os.Stat(path)
+				if err != nil || info.Size() <= lastSize {
+					continue
+				}
+				f, err := os.Open(path)
+				if err != nil {
+					continue
+				}
+				f.Seek(lastSize, 0)
+				newData := make([]byte, info.Size()-lastSize)
+				n, _ := f.Read(newData)
+				f.Close()
+				lastSize = info.Size()
+				if n > 0 {
+					lines := strings.Split(string(newData[:n]), "\n")
+					// Remove empty trailing line from split
+					if len(lines) > 0 && lines[len(lines)-1] == "" {
+						lines = lines[:len(lines)-1]
+					}
+					if len(lines) > 0 {
+						select {
+						case ch <- lines:
+						case <-stop:
+							return
+						}
+					}
+				}
+			}
+		}
+	}()
+
+	return ch, stop
 }
 
 func startGame(paths config.Paths, cfg config.Config) tea.Cmd {
