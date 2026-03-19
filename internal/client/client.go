@@ -160,6 +160,14 @@ func (c *AgentClient) PushConfigs(req agentapi.ConfigPushRequest) (*agentapi.Con
 	return &resp, nil
 }
 
+func (c *AgentClient) GetSettings() (*agentapi.SettingsResponse, error) {
+	var resp agentapi.SettingsResponse
+	if err := c.doJSON("GET", agentapi.PathSettings, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *AgentClient) doJSON(method, path string, body any, result any) error {
 	var reqBody io.Reader
 	if body != nil {

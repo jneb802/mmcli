@@ -389,6 +389,15 @@ func (h *Handlers) HandleConfigPush(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handlers) HandleSettingsGet(w http.ResponseWriter, r *http.Request) {
+	settings, err := ParseStartScript(h.cfg.ResolvedStartScript())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to parse start script: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, settings)
+}
+
 // Helper functions
 
 func (h *Handlers) listModDirs() []string {

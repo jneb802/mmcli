@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 
@@ -337,6 +338,25 @@ var serverLogsCmd = &cobra.Command{
 	},
 }
 
+var serverSettingsCmd = &cobra.Command{
+	Use:   "settings",
+	Short: "Show the server's world settings",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		name, c, err := resolveActiveServer()
+		if err != nil {
+			return err
+		}
+
+		settings, err := c.GetSettings()
+		if err != nil {
+			return err
+		}
+
+		printSettings(name, settings)
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(serverCmd)
 
@@ -350,6 +370,7 @@ func init() {
 	serverCmd.AddCommand(serverRestartCmd)
 	serverCmd.AddCommand(serverPushCmd)
 	serverCmd.AddCommand(serverLogsCmd)
+	serverCmd.AddCommand(serverSettingsCmd)
 
 	serverAddCmd.Flags().String("host", "", "server hostname or IP")
 	serverAddCmd.Flags().Int("port", agentapi.DefaultPort, "agent port")
@@ -400,6 +421,107 @@ func loadServerConfig() (config.Paths, config.Config, error) {
 	}
 
 	return paths, cfg, nil
+}
+
+func printSettings(name string, s *agentapi.SettingsResponse) {
+	fmt.Printf("\n  \033[1mServer Settings: %s\033[0m\n\n", name)
+
+	// Core
+	fmt.Printf("  \033[36mCore\033[0m\n")
+	fmt.Printf("    Name:       %s\n", s.Name)
+	fmt.Printf("    Port:       %d\n", s.Port)
+	fmt.Printf("    World:      %s\n", s.World)
+	fmt.Printf("    Password:   ***\n")
+	if s.Public == 1 {
+		fmt.Printf("    Public:     \033[32myes\033[0m\n")
+	} else {
+		fmt.Printf("    Public:     \033[2mno\033[0m\n")
+	}
+	fmt.Printf("    Save Dir:   %s\n", s.SaveDir)
+	if s.LogFile != "" {
+		fmt.Printf("    Log File:   %s\n", s.LogFile)
+	}
+	if s.InstanceID != "" {
+		fmt.Printf("    Instance:   %s\n", s.InstanceID)
+	}
+	fmt.Println()
+
+	// Backup
+	fmt.Printf("  \033[36mBackup\033[0m\n")
+	fmt.Printf("    Save Interval:   %s\n", formatSettingSeconds(s.SaveInterval, 1800))
+	fmt.Printf("    Backups:         %s\n", formatSettingDefault(s.Backups, 4))
+	fmt.Printf("    Short Interval:  %s\n", formatSettingSeconds(s.BackupShort, 7200))
+	fmt.Printf("    Long Interval:   %s\n", formatSettingSeconds(s.BackupLong, 43200))
+	fmt.Println()
+
+	// World
+	fmt.Printf("  \033[36mWorld\033[0m\n")
+	if s.Crossplay {
+		fmt.Printf("    Crossplay:  \033[32myes\033[0m\n")
+	} else {
+		fmt.Printf("    Crossplay:  \033[2mno\033[0m\n")
+	}
+	if s.Preset != "" {
+		fmt.Printf("    Preset:     %s\n", s.Preset)
+	} else {
+		fmt.Printf("    Preset:     \033[2mnone\033[0m\n")
+	}
+	if len(s.Modifiers) > 0 {
+		fmt.Printf("    Modifiers:\n")
+		for k, v := range s.Modifiers {
+			fmt.Printf("      %-14s %s\n", k, v)
+		}
+	}
+	if len(s.SetKeys) > 0 {
+		fmt.Printf("    Keys:       %s\n", strings.Join(s.SetKeys, ", "))
+	}
+	fmt.Println()
+
+	// Permissions
+	if len(s.Admins) > 0 || len(s.Banned) > 0 || len(s.Permitted) > 0 {
+		fmt.Printf("  \033[36mPermissions\033[0m\n")
+		if len(s.Admins) > 0 {
+			fmt.Printf("    Admins:     %d entries\n", len(s.Admins))
+		}
+		if len(s.Banned) > 0 {
+			fmt.Printf("    Banned:     %d entries\n", len(s.Banned))
+		}
+		if len(s.Permitted) > 0 {
+			fmt.Printf("    Permitted:  %d entries\n", len(s.Permitted))
+		}
+		fmt.Println()
+	}
+}
+
+func formatSettingSeconds(val, defaultVal int) string {
+	if val == 0 {
+		return fmt.Sprintf("\033[2mnot set (default: %s)\033[0m", humanDuration(defaultVal))
+	}
+	s := humanDuration(val)
+	if val == defaultVal {
+		return fmt.Sprintf("%s \033[2m(default)\033[0m", s)
+	}
+	return s
+}
+
+func formatSettingDefault(val, defaultVal int) string {
+	if val == 0 {
+		return fmt.Sprintf("\033[2mnot set (default: %d)\033[0m", defaultVal)
+	}
+	if val == defaultVal {
+		return fmt.Sprintf("%d \033[2m(default)\033[0m", val)
+	}
+	return fmt.Sprintf("%d", val)
+}
+
+func humanDuration(seconds int) string {
+	if seconds >= 3600 && seconds%3600 == 0 {
+		return fmt.Sprintf("%dh", seconds/3600)
+	}
+	if seconds >= 60 && seconds%60 == 0 {
+		return fmt.Sprintf("%dm", seconds/60)
+	}
+	return fmt.Sprintf("%ds", seconds)
 }
 
 func printStatus(name string, s *agentapi.StatusResponse) {

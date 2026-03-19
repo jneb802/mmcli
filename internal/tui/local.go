@@ -386,7 +386,7 @@ func (m model) viewLocal() string {
 			Anticheat: mod.Anticheat,
 		}
 	}
-	renderModList(&b, items, m.local.cursor)
+	renderModList(&b, items, m.local.cursor, false)
 
 	// Status bar
 	b.WriteString("\n")

@@ -17,16 +17,25 @@ type modListItem struct {
 }
 
 // renderModList renders a list of mods with cursor, check/x, name, version, and update indicators.
-func renderModList(b *strings.Builder, items []modListItem, cursor int) {
+// If showAnticheat is true, an anticheat column is shown after version.
+func renderModList(b *strings.Builder, items []modListItem, cursor int, showAnticheat bool) {
 	if len(items) == 0 {
 		b.WriteString("  No mods.\n")
 		return
 	}
 
 	maxName := 0
+	maxVer := 0
 	for _, item := range items {
 		if l := len(item.Name); l > maxName {
 			maxName = l
+		}
+		v := item.Version
+		if v == "" {
+			v = "-"
+		}
+		if l := len(v); l > maxVer {
+			maxVer = l
 		}
 	}
 
@@ -41,14 +50,6 @@ func renderModList(b *strings.Builder, items []modListItem, cursor int) {
 			check = "\033[31m✗\033[0m"
 		}
 
-		badge := ""
-		switch item.Anticheat {
-		case "whitelist":
-			badge = " \033[32m[W]\033[0m"
-		case "greylist":
-			badge = " \033[33m[G]\033[0m"
-		}
-
 		pad := strings.Repeat(" ", maxName-len(item.Name)+2)
 
 		version := item.Version
@@ -56,10 +57,20 @@ func renderModList(b *strings.Builder, items []modListItem, cursor int) {
 			version = "-"
 		}
 
-		if item.Update != "" {
-			fmt.Fprintf(b, "  %s[%s] %s%s%s\033[33m%s → %s\033[0m\n", cur, check, item.Name, badge, pad, version, item.Update)
+		if showAnticheat {
+			verPad := strings.Repeat(" ", maxVer-len(version)+2)
+			ac := "-"
+			switch item.Anticheat {
+			case "whitelist":
+				ac = "\033[32mW\033[0m"
+			case "greylist":
+				ac = "\033[33mG\033[0m"
+			}
+			fmt.Fprintf(b, "  %s[%s] %s%s%s%s%s\n", cur, check, item.Name, pad, version, verPad, ac)
+		} else if item.Update != "" {
+			fmt.Fprintf(b, "  %s[%s] %s%s\033[33m%s → %s\033[0m\n", cur, check, item.Name, pad, version, item.Update)
 		} else {
-			fmt.Fprintf(b, "  %s[%s] %s%s%s%s\n", cur, check, item.Name, badge, pad, version)
+			fmt.Fprintf(b, "  %s[%s] %s%s%s\n", cur, check, item.Name, pad, version)
 		}
 	}
 }

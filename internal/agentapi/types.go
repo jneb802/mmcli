@@ -8,8 +8,9 @@ const (
 	PathStart   = "/api/v1/start"
 	PathStop    = "/api/v1/stop"
 	PathRestart = "/api/v1/restart"
-	PathMods    = "/api/v1/mods"
-	PathLogs    = "/api/v1/logs"
+	PathMods     = "/api/v1/mods"
+	PathLogs     = "/api/v1/logs"
+	PathSettings = "/api/v1/settings"
 )
 
 type StatusResponse struct {
@@ -69,6 +70,36 @@ type ConfigPatch struct {
 type ConfigFile struct {
 	Filename string `json:"filename"`
 	Content  string `json:"content"`
+}
+
+// SettingsResponse contains all Valheim server settings parsed from the start script.
+type SettingsResponse struct {
+	// Core settings
+	Name       string `json:"name"`
+	Port       int    `json:"port"`
+	World      string `json:"world"`
+	Password   string `json:"password"`
+	SaveDir    string `json:"savedir"`
+	Public     int    `json:"public"`
+	LogFile    string `json:"logfile,omitempty"`
+	InstanceID string `json:"instanceid,omitempty"`
+
+	// Backup settings
+	SaveInterval int `json:"saveinterval"`
+	Backups      int `json:"backups"`
+	BackupShort  int `json:"backupshort"`
+	BackupLong   int `json:"backuplong"`
+
+	// World modifiers
+	Crossplay bool              `json:"crossplay"`
+	Preset    string            `json:"preset,omitempty"`
+	Modifiers map[string]string `json:"modifiers,omitempty"`
+	SetKeys   []string          `json:"setkeys,omitempty"`
+
+	// Permission lists
+	Admins    []string `json:"admins,omitempty"`
+	Banned    []string `json:"banned,omitempty"`
+	Permitted []string `json:"permitted,omitempty"`
 }
 
 type ConfigPushResponse struct {

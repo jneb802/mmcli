@@ -129,6 +129,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case serverSettingsMsg:
+		m.server.actionBusy = false
+		if msg.err != nil {
+			m.server.statusErr = msg.err
+		} else {
+			m.server.settings = msg.settings
+			m.server.settingsVisible = true
+			m.server.settingsScroll = 0
+		}
+		return m, nil
+
 	case serverTickMsg:
 		// Silent background refresh — no "fetching..." indicator
 		if m.activeTab == tabServer && m.server.client != nil && !m.server.fetching && !m.server.actionBusy && !m.server.logs.active {
