@@ -64,7 +64,7 @@ func (st *StateTracker) poll(initializing bool) {
 	processRunning := st.pm.IsRunning()
 
 	// Detect process stop
-	if st.prevRunning && !processRunning && !initializing {
+	if st.prevRunning && !processRunning {
 		if wcfg.EventEnabled("server_stopped") {
 			go sendDiscordWebhook(wcfg.URL, buildServerStoppedMessage(st.lastUptime))
 		}
@@ -97,14 +97,20 @@ func (st *StateTracker) poll(initializing bool) {
 	nowReady := status.ServerRunning && status.WorldLoaded
 	wasReady := st.prevReachable && st.prevWorldLoaded
 
-	if nowReady && !wasReady && !initializing {
-		if wcfg.EventEnabled("server_started") {
-			go sendDiscordWebhook(wcfg.URL, buildServerStartedMessage(status.World, status.Day))
+	if nowReady && !wasReady {
+		// On first poll (initializing), only fire if the server just started recently
+		// (uptime < 2 min). This prevents false notifications when the agent restarts
+		// while the server has been running for a long time.
+		recentStart := uptime < 2*time.Minute
+		if !initializing || recentStart {
+			if wcfg.EventEnabled("server_started") {
+				go sendDiscordWebhook(wcfg.URL, buildServerStartedMessage(status.World, status.Day))
+			}
 		}
 	}
 
-	// World saved: save_count increased
-	if status.SaveCount > st.prevSaveCount && st.prevSaveCount > 0 && !initializing {
+	// World saved: save_count increased (skip on first poll to set baseline)
+	if status.SaveCount > st.prevSaveCount && st.prevSaveCount > 0 {
 		if wcfg.EventEnabled("world_saved") {
 			go sendDiscordWebhook(wcfg.URL, buildWorldSavedMessage(status.World, status.Day, status.GameTime))
 		}
