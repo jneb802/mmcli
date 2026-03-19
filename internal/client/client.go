@@ -66,6 +66,14 @@ func (c *AgentClient) ListMods() (*agentapi.ModListResponse, error) {
 	return &resp, nil
 }
 
+func (c *AgentClient) ListPlayers() (*agentapi.PlayersResponse, error) {
+	var resp agentapi.PlayersResponse
+	if err := c.doJSON("GET", agentapi.PathPlayers, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // SyncMods sends a manifest and optional upload mod zips to the server.
 // The uploads map is keyed by DirName → zip data for mods with Source="upload".
 func (c *AgentClient) SyncMods(manifest agentapi.PushManifest, uploads map[string]io.Reader) (*agentapi.SyncResponse, error) {

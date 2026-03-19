@@ -88,6 +88,9 @@ type localModel struct {
 	confirmStart      bool
 	preflightWarnings []string
 	preflightFetching bool
+
+	editingPath bool
+	pathInput   string
 }
 
 func (m *model) refreshMods() {

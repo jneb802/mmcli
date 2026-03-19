@@ -20,6 +20,7 @@ type serverStatusMsg struct {
 	status   *agentapi.StatusResponse
 	mods     []agentapi.ModInfo
 	modsResp *agentapi.ModListResponse
+	players  []agentapi.PlayerInfo
 	err      error
 }
 
@@ -74,8 +75,9 @@ type serverModel struct {
 	statusErr error
 	fetching  bool
 
-	mods   []agentapi.ModInfo
-	cursor int
+	mods    []agentapi.ModInfo
+	players []agentapi.PlayerInfo
+	cursor  int
 
 	actionBusy bool
 	actionMsg  string
@@ -528,12 +530,89 @@ func (m model) viewServerStatus() string {
 		fmt.Fprintf(&b, "  MMCLI Server Mod:  \033[2mnot installed\033[0m\n")
 	}
 
+	// Player count
+	if m.server.status != nil && m.server.status.Running && m.server.status.PlayerCount > 0 {
+		fmt.Fprintf(&b, "  Players:           \033[32m%d online\033[0m\n", m.server.status.PlayerCount)
+	} else if m.server.status != nil && m.server.status.Running {
+		fmt.Fprintf(&b, "  Players:           0 online\n")
+	} else {
+		fmt.Fprintf(&b, "  Players:           \033[2m–\033[0m\n")
+	}
+
+	// Game day & time
+	if m.server.status != nil && m.server.status.Running && m.server.status.Day > 0 {
+		dayNight := "Night"
+		dayNightColor := "\033[34m" // blue
+		if m.server.status.IsDay != nil && *m.server.status.IsDay {
+			dayNight = "Day"
+			dayNightColor = "\033[33m" // yellow
+		}
+		gameTime := m.server.status.GameTime
+		if gameTime == "" {
+			gameTime = "–"
+		}
+		fmt.Fprintf(&b, "  Game day:          Day %d  %s%s\033[0m  (%s)\n",
+			m.server.status.Day, dayNightColor, dayNight, gameTime)
+	} else if m.server.status != nil && m.server.status.Running {
+		fmt.Fprintf(&b, "  Game day:          \033[2mloading...\033[0m\n")
+	} else {
+		fmt.Fprintf(&b, "  Game day:          \033[2m–\033[0m\n")
+	}
+
+	// World
+	if m.server.status != nil && m.server.status.World != "" {
+		fmt.Fprintf(&b, "  World:             %s\n", m.server.status.World)
+	}
+
 	// Last restart (computed from uptime)
 	if m.server.status != nil && m.server.status.Running && m.server.status.UptimeSecs > 0 {
 		restartTime := time.Now().Add(-time.Duration(m.server.status.UptimeSecs) * time.Second)
 		fmt.Fprintf(&b, "  Last restart:      %s\n", restartTime.Format("2006-01-02 15:04:05"))
 	} else {
 		fmt.Fprintf(&b, "  Last restart:      \033[2m–\033[0m\n")
+	}
+
+	b.WriteString("\n")
+	hotkeys := []string{"` mode", "tab next", "q quit"}
+	renderHotkeyBar(&b, hotkeys, m.width)
+
+	return b.String()
+}
+
+func (m model) viewServerPlayers() string {
+	var b strings.Builder
+
+	if m.server.client == nil {
+		b.WriteString("\n  \033[2mNo server configured.\033[0m\n\n")
+		hotkeys := []string{"` mode", "tab next", "q quit"}
+		renderHotkeyBar(&b, hotkeys, m.width)
+		return b.String()
+	}
+
+	b.WriteString("\n")
+
+	if m.server.status == nil || !m.server.status.Running {
+		b.WriteString("  \033[2mServer is not running.\033[0m\n")
+	} else if len(m.server.players) == 0 {
+		b.WriteString("  \033[2mNo players connected.\033[0m\n")
+	} else {
+		// Header
+		fmt.Fprintf(&b, "  \033[1m%-24s %s\033[0m\n", "Name", "Steam ID")
+		fmt.Fprintf(&b, "  \033[2m%-24s %s\033[0m\n", "────────────────────────", "──────────────────")
+
+		for _, p := range m.server.players {
+			name := p.Name
+			if name == "" {
+				name = "\033[2munknown\033[0m"
+			}
+			steamID := p.SteamID
+			if steamID == "" {
+				steamID = "–"
+			}
+			fmt.Fprintf(&b, "  %-24s %s\n", name, steamID)
+		}
+
+		fmt.Fprintf(&b, "\n  \033[2m%d player(s) online\033[0m\n", len(m.server.players))
 	}
 
 	b.WriteString("\n")
@@ -822,7 +901,11 @@ func fetchServerStatus(c *client.AgentClient) tea.Cmd {
 		if err != nil {
 			return serverStatusMsg{status: status, err: err}
 		}
-		return serverStatusMsg{status: status, mods: modsResp.Mods, modsResp: modsResp}
+		var players []agentapi.PlayerInfo
+		if playersResp, err := c.ListPlayers(); err == nil && playersResp != nil {
+			players = playersResp.Players
+		}
+		return serverStatusMsg{status: status, mods: modsResp.Mods, modsResp: modsResp, players: players}
 	}
 }
 

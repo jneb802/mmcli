@@ -29,10 +29,11 @@ const (
 	contentStatus
 	contentWorld
 	contentSettings
+	contentPlayers
 )
 
 var localTabs = []contentTab{contentMods, contentLogs, contentStatus, contentSettings}
-var serverTabs = []contentTab{contentMods, contentLogs, contentWorld, contentStatus}
+var serverTabs = []contentTab{contentMods, contentLogs, contentPlayers, contentWorld, contentStatus}
 
 func contentTabName(t contentTab) string {
 	switch t {
@@ -46,6 +47,8 @@ func contentTabName(t contentTab) string {
 		return "World"
 	case contentSettings:
 		return "Settings"
+	case contentPlayers:
+		return "Players"
 	default:
 		return "?"
 	}
@@ -195,6 +198,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.modsResp != nil {
 			m.server.modsResp = msg.modsResp
 		}
+		m.server.players = msg.players
 		// If we were waiting for server data to run preflight check
 		if m.local.preflightFetching {
 			m.local.preflightFetching = false
@@ -429,6 +433,8 @@ func (m model) View() string {
 			b.WriteString(m.viewServerWorld())
 		case contentStatus:
 			b.WriteString(m.viewServerStatus())
+		case contentPlayers:
+			b.WriteString(m.viewServerPlayers())
 		}
 	}
 

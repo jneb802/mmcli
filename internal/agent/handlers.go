@@ -46,9 +46,35 @@ func (h *Handlers) HandleStatus(w http.ResponseWriter, r *http.Request) {
 		uptime := h.pm.Uptime()
 		resp.UptimeSecs = int64(uptime.Seconds())
 		resp.Uptime = formatDuration(uptime)
+
+		// Enrich with game state from MMCLIServerMod
+		if modStatus, _ := QueryModStatus(h.cfg.ResolvedModAPIPort()); modStatus != nil {
+			resp.PlayerCount = modStatus.PlayerCount
+			resp.Day = modStatus.Day
+			resp.GameTime = modStatus.GameTime
+			resp.IsDay = &modStatus.IsDay
+			resp.World = modStatus.World
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handlers) HandlePlayers(w http.ResponseWriter, r *http.Request) {
+	players, _ := QueryModPlayers(h.cfg.ResolvedModAPIPort())
+	if players == nil {
+		writeJSON(w, http.StatusOK, agentapi.PlayersResponse{Players: []agentapi.PlayerInfo{}})
+		return
+	}
+
+	result := make([]agentapi.PlayerInfo, len(players))
+	for i, p := range players {
+		result[i] = agentapi.PlayerInfo{
+			Name:    p.Name,
+			SteamID: p.Host,
+		}
+	}
+	writeJSON(w, http.StatusOK, agentapi.PlayersResponse{Players: result})
 }
 
 func (h *Handlers) HandleStart(w http.ResponseWriter, r *http.Request) {

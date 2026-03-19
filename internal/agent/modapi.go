@@ -45,6 +45,70 @@ func QueryModAPI(port int) ([]ModAPIPlugin, error) {
 	return apiResp.Plugins, nil
 }
 
+// ModAPIStatus is the JSON shape returned by GET /status on the mod API.
+type ModAPIStatus struct {
+	ServerRunning bool   `json:"server_running"`
+	World         string `json:"world"`
+	IsDedicated   bool   `json:"is_dedicated"`
+	PlayerCount   int    `json:"player_count"`
+	Day           int    `json:"day"`
+	GameTime      string `json:"game_time"`
+	IsDay         bool   `json:"is_day"`
+}
+
+// ModAPIPlayer is a single player from the mod API.
+type ModAPIPlayer struct {
+	Name        string `json:"name"`
+	Host        string `json:"host"`
+	UID         int64  `json:"uid"`
+	CharacterID string `json:"character_id"`
+}
+
+// ModAPIPlayersResponse is the JSON shape returned by GET /players on the mod API.
+type ModAPIPlayersResponse struct {
+	Players []ModAPIPlayer `json:"players"`
+}
+
+// QueryModStatus queries the mod API for server game state.
+func QueryModStatus(port int) (*ModAPIStatus, error) {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/status", port))
+	if err != nil {
+		return nil, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil
+	}
+
+	var status ModAPIStatus
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, nil
+	}
+	return &status, nil
+}
+
+// QueryModPlayers queries the mod API for connected players.
+func QueryModPlayers(port int) ([]ModAPIPlayer, error) {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/players", port))
+	if err != nil {
+		return nil, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil
+	}
+
+	var playersResp ModAPIPlayersResponse
+	if err := json.NewDecoder(resp.Body).Decode(&playersResp); err != nil {
+		return nil, nil
+	}
+	return playersResp.Players, nil
+}
+
 // modCandidate pairs a modMap directory name with normalized names to match against.
 type modCandidate struct {
 	dirName string

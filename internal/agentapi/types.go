@@ -20,6 +20,8 @@ const (
 	PathWorlds      = "/api/v1/worlds"
 	PathWorldUpload = "/api/v1/worlds/upload"
 
+	PathPlayers = "/api/v1/players"
+
 	PathLaunchConfigs       = "/api/v1/launch-configs"
 	PathLaunchConfigsActive = "/api/v1/launch-configs/active"
 
@@ -36,6 +38,22 @@ type StatusResponse struct {
 	BepInEx    bool     `json:"bepinex"`
 	Version    string   `json:"version"`
 	Role       string   `json:"role,omitempty"`
+
+	// Game state from MMCLIServerMod (nil/empty if mod not available)
+	PlayerCount int    `json:"player_count,omitempty"`
+	Day         int    `json:"day,omitempty"`
+	GameTime    string `json:"game_time,omitempty"`
+	IsDay       *bool  `json:"is_day,omitempty"`
+	World       string `json:"world,omitempty"`
+}
+
+type PlayerInfo struct {
+	Name    string `json:"name"`
+	SteamID string `json:"steam_id"`
+}
+
+type PlayersResponse struct {
+	Players []PlayerInfo `json:"players"`
 }
 
 type ErrorResponse struct {
