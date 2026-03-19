@@ -63,6 +63,7 @@ type serverModel struct {
 	confirmPush    bool
 	pushItems      []modListItem
 	pushScroll     int
+	confirmStart   bool
 	confirmStop    bool
 	confirmRestart bool
 
@@ -118,6 +119,22 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		default:
 			m.server.confirmPush = false
+		}
+		return m, nil
+	}
+
+	// Start confirmation (shown when server is already running)
+	if m.server.confirmStart {
+		switch msg.String() {
+		case "y":
+			m.server.confirmStart = false
+			m.server.actionBusy = true
+			m.server.actionMsg = "Starting server..."
+			return m, serverAction(m.server.client, "start")
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			m.server.confirmStart = false
 		}
 		return m, nil
 	}
@@ -192,6 +209,10 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.server.role != agentapi.RoleAdmin {
 			return m, nil
 		}
+		if m.server.status != nil && m.server.status.Running {
+			m.server.confirmStart = true
+			return m, nil
+		}
 		m.server.actionBusy = true
 		m.server.actionMsg = "Starting server..."
 		return m, serverAction(m.server.client, "start")
@@ -258,6 +279,12 @@ func (m model) viewServer() string {
 	// Push confirmation
 	if m.server.confirmPush {
 		renderPushConfirm(&b, m.server.serverName, m.cfg.ActiveProfile, m.server.pushItems, m.server.pushScroll, m.server.status)
+		return b.String()
+	}
+
+	// Start confirmation (server already running)
+	if m.server.confirmStart {
+		fmt.Fprintf(&b, "\n  \033[33mServer is already running. Restart %s? (y/n)\033[0m\n\n", m.server.serverName)
 		return b.String()
 	}
 
