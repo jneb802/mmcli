@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"mmcli/internal/agentapi"
+	"mmcli/internal/cfgfile"
 )
 
 type Handlers struct {
@@ -273,6 +274,114 @@ func (h *Handlers) HandleLogs(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+func (h *Handlers) HandleConfigList(w http.ResponseWriter, r *http.Request) {
+	configDir := h.cfg.ConfigDir()
+	files, err := cfgfile.ListConfigFiles(configDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusOK, agentapi.ConfigListResponse{Files: []string{}})
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if files == nil {
+		files = []string{}
+	}
+	writeJSON(w, http.StatusOK, agentapi.ConfigListResponse{Files: files})
+}
+
+func (h *Handlers) HandleConfigGet(w http.ResponseWriter, r *http.Request) {
+	filename := strings.TrimPrefix(r.URL.Path, agentapi.PathConfigs+"/")
+	if filename == "" {
+		writeError(w, http.StatusBadRequest, "filename required")
+		return
+	}
+
+	// Security: reject path traversal
+	if strings.Contains(filename, "..") || filepath.IsAbs(filename) {
+		writeError(w, http.StatusBadRequest, "invalid filename")
+		return
+	}
+
+	path := filepath.Join(h.cfg.ConfigDir(), filename)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "config file not found: "+filename)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, agentapi.ConfigFileResponse{
+		Filename: filename,
+		Content:  string(data),
+	})
+}
+
+func (h *Handlers) HandleConfigPush(w http.ResponseWriter, r *http.Request) {
+	var req agentapi.ConfigPushRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+
+	configDir := h.cfg.ConfigDir()
+	totalApplied := 0
+	totalWritten := 0
+
+	// Apply .cfg entry-level patches grouped by filename
+	patchesByFile := make(map[string][]cfgfile.Patch)
+	for _, p := range req.Patches {
+		if strings.Contains(p.Filename, "..") || filepath.IsAbs(p.Filename) {
+			continue
+		}
+		patchesByFile[p.Filename] = append(patchesByFile[p.Filename], cfgfile.Patch{
+			Section: p.Section,
+			Key:     p.Key,
+			Value:   p.Value,
+		})
+	}
+
+	for filename, patches := range patchesByFile {
+		path := filepath.Join(configDir, filename)
+		applied, err := cfgfile.PatchFile(path, patches)
+		if err != nil {
+			log.Printf("Config push: failed to patch %s: %v", filename, err)
+			continue
+		}
+		totalApplied += applied
+	}
+
+	// Write whole files (YAML/JSON)
+	for _, f := range req.Files {
+		if strings.Contains(f.Filename, "..") || filepath.IsAbs(f.Filename) {
+			continue
+		}
+		path := filepath.Join(configDir, f.Filename)
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			log.Printf("Config push: failed to create dir for %s: %v", f.Filename, err)
+			continue
+		}
+		if err := os.WriteFile(path, []byte(f.Content), 0644); err != nil {
+			log.Printf("Config push: failed to write %s: %v", f.Filename, err)
+			continue
+		}
+		totalWritten++
+	}
+
+	msg := fmt.Sprintf("applied %d cfg patches, wrote %d files", totalApplied, totalWritten)
+	log.Printf("Config push: %s", msg)
+	writeJSON(w, http.StatusOK, agentapi.ConfigPushResponse{
+		OK:      true,
+		Applied: totalApplied,
+		Written: totalWritten,
+		Message: msg,
+	})
 }
 
 // Helper functions

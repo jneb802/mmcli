@@ -1,14 +1,10 @@
 package cmd
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"fmt"
 	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"strings"
 	"syscall"
 	"text/tabwriter"
 
@@ -17,6 +13,7 @@ import (
 	"mmcli/internal/agentapi"
 	"mmcli/internal/client"
 	"mmcli/internal/config"
+	"mmcli/internal/profile"
 )
 
 var serverCmd = &cobra.Command{
@@ -243,8 +240,8 @@ var serverPushCmd = &cobra.Command{
 	Short: "Push local profile mods to the active server",
 	Long: `Push mods from a local profile to the active server. Only mods targeted
 at "both" or "server" are included. Client-only mods are skipped.
-Config files are not pushed (mods generate defaults on first run).
-Push is always additive — existing server files are not deleted.`,
+Push is always additive — existing server files are not deleted.
+Use --with-config to also push config files after mods.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		profileName, _ := cmd.Flags().GetString("profile")
 
@@ -279,7 +276,7 @@ Push is always additive — existing server files are not deleted.`,
 		pr, pw := io.Pipe()
 		errCh := make(chan error, 1)
 		go func() {
-			errCh <- buildProfileArchive(pw, paths, profileName, reg)
+			errCh <- profile.BuildProfileArchive(pw, paths, profileName, reg)
 			pw.Close()
 		}()
 
@@ -292,6 +289,17 @@ Push is always additive — existing server files are not deleted.`,
 		}
 
 		fmt.Printf("\033[32m%s\033[0m\n", resp.Message)
+
+		// Push configs if requested
+		withConfig, _ := cmd.Flags().GetBool("with-config")
+		if withConfig {
+			fmt.Println("\nPushing config files...")
+			configDir := paths.ProfileConfigDir(profileName)
+			if err := pushAll(c, configDir); err != nil {
+				return fmt.Errorf("config push failed: %w", err)
+			}
+		}
+
 		return nil
 	},
 }
@@ -348,6 +356,7 @@ func init() {
 	serverAddCmd.Flags().String("secret", "", "agent API secret")
 
 	serverPushCmd.Flags().String("profile", "", "profile to push (default: active profile)")
+	serverPushCmd.Flags().Bool("with-config", false, "also push config files after pushing mods")
 
 	serverLogsCmd.Flags().Int("lines", 100, "number of log lines to show")
 	serverLogsCmd.Flags().BoolP("follow", "f", false, "stream new log lines")
@@ -416,110 +425,3 @@ func printStatus(name string, s *agentapi.StatusResponse) {
 	fmt.Println()
 }
 
-// buildProfileArchive creates a tar.gz of the profile's mod directories.
-// Paths in the archive are relative to BepInEx/ (e.g., plugins/ModName/mod.dll).
-// Excludes client-only mods. Skips config/ entirely (mods generate defaults on first run).
-// For server-targeted mods (locally disabled), renames .dll.old → .dll in the archive
-// so they arrive active on the server.
-func buildProfileArchive(w io.Writer, paths config.Paths, profileName string, reg config.Registry) error {
-	gw := gzip.NewWriter(w)
-	defer gw.Close()
-	tw := tar.NewWriter(gw)
-	defer tw.Close()
-
-	// Build exclude set: client-only mod directory names
-	clientMods := make(map[string]bool)
-	// Build server mod set: for .dll.old → .dll renaming
-	serverMods := make(map[string]bool)
-	for _, mod := range reg.ListMods(profileName) {
-		dirName := mod.FullName()
-		switch mod.ResolvedTarget() {
-		case "client":
-			clientMods[dirName] = true
-		case "server":
-			serverMods[dirName] = true
-		}
-	}
-
-	// Only push plugins, patchers, monomod — skip config
-	dirs := map[string]string{
-		"plugins":  paths.ProfilePluginsDir(profileName),
-		"patchers": paths.ProfilePatchersDir(profileName),
-		"monomod":  paths.ProfileMonomodDir(profileName),
-	}
-
-	for prefix, dir := range dirs {
-		if _, err := os.Stat(dir); os.IsNotExist(err) {
-			continue
-		}
-
-		err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
-			if err != nil {
-				return nil // skip errors
-			}
-
-			rel, err := filepath.Rel(dir, path)
-			if err != nil {
-				return nil
-			}
-
-			// Check if this is inside a client-only mod directory — skip it
-			topDir := strings.SplitN(rel, string(filepath.Separator), 2)[0]
-			if clientMods[topDir] {
-				if info.IsDir() {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-
-			// Build archive path: prefix/relative (e.g., plugins/ModName/mod.dll)
-			archivePath := filepath.Join(prefix, rel)
-
-			if archivePath == prefix {
-				return tw.WriteHeader(&tar.Header{
-					Name:     archivePath + "/",
-					Typeflag: tar.TypeDir,
-					Mode:     0755,
-				})
-			}
-
-			if info.IsDir() {
-				return tw.WriteHeader(&tar.Header{
-					Name:     archivePath + "/",
-					Typeflag: tar.TypeDir,
-					Mode:     0755,
-				})
-			}
-
-			// For server-targeted mods: rename .dll.old → .dll in the archive
-			// so the mod arrives active on the server
-			if serverMods[topDir] && strings.HasSuffix(archivePath, ".dll.old") {
-				archivePath = strings.TrimSuffix(archivePath, ".old")
-			}
-
-			header := &tar.Header{
-				Name:     archivePath,
-				Size:     info.Size(),
-				Mode:     int64(info.Mode()),
-				Typeflag: tar.TypeReg,
-			}
-			if err := tw.WriteHeader(header); err != nil {
-				return err
-			}
-
-			f, err := os.Open(path)
-			if err != nil {
-				return err
-			}
-			defer f.Close()
-			_, err = io.Copy(tw, f)
-			return err
-		})
-
-		if err != nil {
-			return fmt.Errorf("failed to archive %s: %w", prefix, err)
-		}
-	}
-
-	return nil
-}

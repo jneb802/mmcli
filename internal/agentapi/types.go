@@ -39,3 +39,41 @@ type ModInfo struct {
 	Name     string `json:"name"`
 	Disabled bool   `json:"disabled"`
 }
+
+// Config management paths
+const (
+	PathConfigs = "/api/v1/configs"
+)
+
+type ConfigListResponse struct {
+	Files []string `json:"files"`
+}
+
+type ConfigFileResponse struct {
+	Filename string `json:"filename"`
+	Content  string `json:"content"`
+}
+
+type ConfigPushRequest struct {
+	Patches []ConfigPatch `json:"patches,omitempty"` // entry-level patches for .cfg files
+	Files   []ConfigFile  `json:"files,omitempty"`   // whole-file push for YAML/JSON
+}
+
+type ConfigPatch struct {
+	Filename string `json:"filename"`
+	Section  string `json:"section"`
+	Key      string `json:"key"`
+	Value    string `json:"value"`
+}
+
+type ConfigFile struct {
+	Filename string `json:"filename"`
+	Content  string `json:"content"`
+}
+
+type ConfigPushResponse struct {
+	OK      bool   `json:"ok"`
+	Applied int    `json:"applied"` // .cfg patches applied
+	Written int    `json:"written"` // whole files written
+	Message string `json:"message"`
+}

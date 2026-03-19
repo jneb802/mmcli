@@ -136,6 +136,30 @@ func (c *AgentClient) Logs(lines int, follow bool) (io.ReadCloser, error) {
 	return resp.Body, nil
 }
 
+func (c *AgentClient) ListConfigs() (*agentapi.ConfigListResponse, error) {
+	var resp agentapi.ConfigListResponse
+	if err := c.doJSON("GET", agentapi.PathConfigs, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AgentClient) GetConfig(filename string) (*agentapi.ConfigFileResponse, error) {
+	var resp agentapi.ConfigFileResponse
+	if err := c.doJSON("GET", agentapi.PathConfigs+"/"+filename, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AgentClient) PushConfigs(req agentapi.ConfigPushRequest) (*agentapi.ConfigPushResponse, error) {
+	var resp agentapi.ConfigPushResponse
+	if err := c.doJSON("POST", agentapi.PathConfigs, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *AgentClient) doJSON(method, path string, body any, result any) error {
 	var reqBody io.Reader
 	if body != nil {
