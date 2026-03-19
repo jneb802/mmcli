@@ -239,48 +239,21 @@ the path instead of opening.`,
 }
 
 var configCleanCmd = &cobra.Command{
-	Use:   "clean",
-	Short: "Remove config files for mods no longer installed",
-	Long: `Scan the active profile's config directory and remove config files
-that do not belong to any currently installed mod. A config file is kept
-if its path is in the registry's tracked file list OR if its filename
-contains an installed mod's name (case-insensitive). BepInEx.cfg is
-always preserved. Use --dry-run to preview which files would be removed.`,
+	Use:   "clean [mod]",
+	Short: "Remove config files for a specific mod or all uninstalled mods",
+	Long: `Remove config files from the active profile's config directory.
+
+With a mod argument: removes config files matching that mod name
+(case-insensitive substring match). The mod does not need to be installed.
+
+Without arguments: scans for orphaned config files that do not belong to
+any currently installed mod. BepInEx.cfg is always preserved.
+Use --dry-run to preview which files would be removed.`,
+	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths, cfg, err := loadConfig()
 		if err != nil {
 			return err
-		}
-
-		reg, err := config.LoadRegistry(paths)
-		if err != nil {
-			return err
-		}
-
-		mods := reg.ListMods(cfg.ActiveProfile)
-
-		// Include local (unregistered) mods detected from the plugins directory.
-		registered := make(map[string]config.ModEntry)
-		for _, mod := range mods {
-			registered[mod.FullName()] = mod
-		}
-		locals := config.DetectLocalMods(paths.ProfilePluginsDir(cfg.ActiveProfile), registered)
-		mods = append(mods, locals...)
-
-		// Layer 1: exact match via registry tracked file paths.
-		tracked := make(map[string]bool)
-		for _, mod := range mods {
-			for _, f := range mod.Files {
-				tracked[f] = true
-			}
-		}
-
-		// Layer 2: collect lowercase mod names for substring matching.
-		// This catches configs created at runtime or installed before
-		// file tracking was added.
-		var modNames []string
-		for _, mod := range mods {
-			modNames = append(modNames, strings.ToLower(mod.Name))
 		}
 
 		configDir := paths.ProfileConfigDir(cfg.ActiveProfile)
@@ -289,44 +262,31 @@ always preserved. Use --dry-run to preview which files would be removed.`,
 			return fmt.Errorf("failed to list config files: %w", err)
 		}
 
-		var orphans []string
-		for _, f := range files {
-			if f == "BepInEx.cfg" {
-				continue
+		var targets []string
+
+		if len(args) == 1 {
+			// Targeted mode: find configs matching the given mod name.
+			query := strings.ToLower(args[0])
+			// Strip owner prefix if given (e.g. "RustyMods-DiscordBot" -> "discordbot")
+			if parts := strings.SplitN(query, "-", 2); len(parts) == 2 {
+				query = parts[1]
 			}
-			// Layer 1: exact path match
-			absPath := filepath.Join(configDir, f)
-			if tracked[absPath] {
-				continue
-			}
-			// Layer 2: substring match against any installed mod name.
-			// Check both the full relative path and the top-level directory
-			// (e.g. for "VFortress/Levels.yaml", also check "vfortress").
-			fLower := strings.ToLower(f)
-			matched := false
-			for _, name := range modNames {
-				if strings.Contains(fLower, name) {
-					matched = true
-					break
+			for _, f := range files {
+				fLower := strings.ToLower(f)
+				if strings.Contains(fLower, query) {
+					targets = append(targets, f)
 				}
 			}
-			if !matched {
-				if dir := strings.SplitN(f, "/", 2); len(dir) == 2 {
-					dirLower := strings.ToLower(dir[0])
-					for _, name := range modNames {
-						if strings.Contains(name, dirLower) || strings.Contains(dirLower, name) {
-							matched = true
-							break
-						}
-					}
-				}
+			if len(targets) == 0 {
+				fmt.Printf("No config files matching %q.\n", args[0])
+				return nil
 			}
-			if !matched {
-				orphans = append(orphans, f)
-			}
+		} else {
+			// Scan mode: find all orphaned configs.
+			targets = findOrphanedConfigs(paths, cfg, files)
 		}
 
-		if len(orphans) == 0 {
+		if len(targets) == 0 {
 			fmt.Println("No orphaned config files.")
 			return nil
 		}
@@ -336,18 +296,22 @@ always preserved. Use --dry-run to preview which files would be removed.`,
 		if jsonOutput {
 			type cleanJSON struct {
 				Profile string   `json:"profile"`
-				Orphans []string `json:"orphans"`
+				Files   []string `json:"files"`
 				DryRun  bool     `json:"dry_run"`
 			}
 			return json.NewEncoder(os.Stdout).Encode(cleanJSON{
 				Profile: cfg.ActiveProfile,
-				Orphans: orphans,
+				Files:   targets,
 				DryRun:  dryRun,
 			})
 		}
 
-		fmt.Printf("Orphaned config files (%d):\n", len(orphans))
-		for _, f := range orphans {
+		if len(args) == 1 {
+			fmt.Printf("Config files matching %q (%d):\n", args[0], len(targets))
+		} else {
+			fmt.Printf("Orphaned config files (%d):\n", len(targets))
+		}
+		for _, f := range targets {
 			fmt.Printf("  %s\n", f)
 		}
 
@@ -357,14 +321,14 @@ always preserved. Use --dry-run to preview which files would be removed.`,
 
 		yes, _ := cmd.Flags().GetBool("yes")
 		if !yes {
-			fmt.Printf("\nRemove %d files? [y/N] ", len(orphans))
+			fmt.Printf("\nRemove %d files? [y/N] ", len(targets))
 			if !confirmPrompt() {
 				return nil
 			}
 		}
 
 		removed := 0
-		for _, f := range orphans {
+		for _, f := range targets {
 			if err := os.Remove(filepath.Join(configDir, f)); err != nil {
 				fmt.Printf("  \033[31mfailed to remove %s: %v\033[0m\n", f, err)
 			} else {
@@ -374,6 +338,73 @@ always preserved. Use --dry-run to preview which files would be removed.`,
 		fmt.Printf("Removed %d config files.\n", removed)
 		return nil
 	},
+}
+
+// findOrphanedConfigs returns config files that don't belong to any installed mod.
+func findOrphanedConfigs(paths config.Paths, cfg config.Config, files []string) []string {
+	reg, err := config.LoadRegistry(paths)
+	if err != nil {
+		return nil
+	}
+
+	mods := reg.ListMods(cfg.ActiveProfile)
+
+	// Include local (unregistered) mods detected from the plugins directory.
+	registered := make(map[string]config.ModEntry)
+	for _, mod := range mods {
+		registered[mod.FullName()] = mod
+	}
+	locals := config.DetectLocalMods(paths.ProfilePluginsDir(cfg.ActiveProfile), registered)
+	mods = append(mods, locals...)
+
+	// Layer 1: exact match via registry tracked file paths.
+	tracked := make(map[string]bool)
+	for _, mod := range mods {
+		for _, f := range mod.Files {
+			tracked[f] = true
+		}
+	}
+
+	// Layer 2: collect lowercase mod names for substring matching.
+	var modNames []string
+	for _, mod := range mods {
+		modNames = append(modNames, strings.ToLower(mod.Name))
+	}
+
+	configDir := paths.ProfileConfigDir(cfg.ActiveProfile)
+	var orphans []string
+	for _, f := range files {
+		if f == "BepInEx.cfg" {
+			continue
+		}
+		absPath := filepath.Join(configDir, f)
+		if tracked[absPath] {
+			continue
+		}
+		fLower := strings.ToLower(f)
+		matched := false
+		for _, name := range modNames {
+			if strings.Contains(fLower, name) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			if dir := strings.SplitN(f, "/", 2); len(dir) == 2 {
+				dirLower := strings.ToLower(dir[0])
+				for _, name := range modNames {
+					if strings.Contains(name, dirLower) || strings.Contains(dirLower, name) {
+						matched = true
+						break
+					}
+				}
+			}
+		}
+		if !matched {
+			orphans = append(orphans, f)
+		}
+	}
+	return orphans
 }
 
 func init() {
