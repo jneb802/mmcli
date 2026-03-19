@@ -219,8 +219,7 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
 		case "`":
-			m.activeMode = modeLocal
-			return m, nil
+			return m, m.enterSyncMode()
 		}
 		return m, nil
 	}
@@ -231,12 +230,7 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "`":
 		m.stopServerLogStream()
-		m.activeMode = modeLocal
-		cmds := []tea.Cmd{checkGameRunning(), localTick()}
-		if m.activeLocalTab == contentLogs {
-			cmds = append(cmds, m.loadLocalLogs())
-		}
-		return m, tea.Batch(cmds...)
+		return m, m.enterSyncMode()
 	case "tab":
 		cmd := m.cycleServerTab(1)
 		return m, cmd

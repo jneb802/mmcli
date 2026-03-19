@@ -108,6 +108,86 @@ func renderModList(b *strings.Builder, items []modListItem, cursor int, showAnti
 	}
 }
 
+// renderSyncModList renders a mod list with dual local/server version columns and diff status.
+func renderSyncModList(b *strings.Builder, items []modListItem, cursor int) {
+	if len(items) == 0 {
+		b.WriteString("  No mods.\n")
+		return
+	}
+
+	maxName := 0
+	maxLocal := len("Local")
+	maxServer := len("Server")
+	for _, item := range items {
+		if l := len(item.Name); l > maxName {
+			maxName = l
+		}
+		v := item.Version
+		if v == "" {
+			v = "—"
+		}
+		if l := len(v); l > maxLocal {
+			maxLocal = l
+		}
+		sv := item.ServerVersion
+		if sv == "" && item.Status != "added" {
+			sv = item.Version // unchanged items have same version on both sides
+		}
+		if sv == "" {
+			sv = "—"
+		}
+		if l := len(sv); l > maxServer {
+			maxServer = l
+		}
+	}
+
+	// Header
+	namePad := strings.Repeat(" ", maxName-len("Name")+2)
+	localPad := strings.Repeat(" ", maxLocal-len("Local")+2)
+	serverPad := strings.Repeat(" ", maxServer-len("Server")+2)
+	fmt.Fprintf(b, "  \033[2m    Name%sLocal%sServer%sStatus\033[0m\n", namePad, localPad, serverPad)
+
+	for i, item := range items {
+		cur := "  "
+		if i == cursor {
+			cur = "\033[36m>\033[0m "
+		}
+
+		pad := strings.Repeat(" ", maxName-len(item.Name)+2)
+
+		localVer := item.Version
+		if localVer == "" {
+			localVer = "—"
+		}
+		lPad := strings.Repeat(" ", maxLocal-len(localVer)+2)
+
+		// Determine server version
+		serverVer := item.ServerVersion
+		if item.Status == "" {
+			// Unchanged — server has same version
+			serverVer = item.Version
+		}
+		if item.Status == "added" {
+			serverVer = "—"
+		}
+		if serverVer == "" {
+			serverVer = "—"
+		}
+		sPad := strings.Repeat(" ", maxServer-len(serverVer)+2)
+
+		switch item.Status {
+		case "added":
+			fmt.Fprintf(b, "  %s\033[32m%s%s%s%s%s%s+ added\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad)
+		case "removed":
+			fmt.Fprintf(b, "  %s\033[31m%s%s%s%s%s%s- removed\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad)
+		case "changed":
+			fmt.Fprintf(b, "  %s\033[33m%s%s%s%s%s%s~ changed\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad)
+		default:
+			fmt.Fprintf(b, "  %s\033[2m%s%s%s%s%s%s✓\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad)
+		}
+	}
+}
+
 // logViewerState holds shared log viewer state used by both tabs.
 type logViewerState struct {
 	active    bool

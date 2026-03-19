@@ -89,8 +89,9 @@ type localModel struct {
 	preflightWarnings []string
 	preflightFetching bool
 
-	editingPath bool
-	pathInput   string
+	settingsCursor int
+	editingPath    bool
+	pathInput      string
 }
 
 func (m *model) refreshMods() {
@@ -633,35 +634,121 @@ func (m model) viewLocalStatus() string {
 	return b.String()
 }
 
-func (m model) viewLocalSettings() string {
-	var b strings.Builder
-	b.WriteString("\n")
+type settingsItem struct {
+	label   string
+	value   string
+	tooltip string
+	editable bool
+}
 
-	// Anticheat system (editable)
+func (m model) buildSettingsItems() []settingsItem {
 	pref := m.cfg.AnticheatSystem
 	if pref == "" {
 		pref = "auto"
 	}
+	acValue := pref
 	if pref == "auto" {
-		fmt.Fprintf(&b, "  Anticheat:      \033[36m%s\033[0m \033[2m(resolved: %s)\033[0m\n", pref, m.anticheatSystem)
-	} else {
-		fmt.Fprintf(&b, "  Anticheat:      \033[36m%s\033[0m\n", pref)
+		acValue = fmt.Sprintf("%s \033[2m(resolved: %s)\033[0m", pref, m.anticheatSystem)
 	}
 
-	b.WriteString("\n")
+	items := []settingsItem{
+		{
+			label:    "Anticheat",
+			value:    acValue,
+			tooltip:  "Which anticheat mod to configure on push. Auto detects from installed mods.",
+			editable: true,
+		},
+		{
+			label:    "Valheim Path",
+			value:    m.cfg.ValheimPath,
+			tooltip:  "Local Valheim installation directory. Used for BepInEx and mod file paths.",
+			editable: true,
+		},
+		{
+			label:   "Profile",
+			value:   m.cfg.ActiveProfile,
+			tooltip: "Active mod profile. Switch with 'p' on the Mods tab.",
+		},
+	}
 
-	// Read-only info
-	fmt.Fprintf(&b, "  Profile:        %s\n", m.cfg.ActiveProfile)
 	if m.cfg.ActiveServer != "" {
-		fmt.Fprintf(&b, "  Server:         %s\n", m.cfg.ActiveServer)
+		items = append(items, settingsItem{
+			label:   "Linked Server",
+			value:   m.cfg.ActiveServer,
+			tooltip: "Remote server managed by mmcli. Set with 'mmcli server add'.",
+		})
+		if srv, ok := m.cfg.Servers[m.cfg.ActiveServer]; ok {
+			items = append(items, settingsItem{
+				label:   "Server Host",
+				value:   fmt.Sprintf("%s:%d", srv.Host, srv.Port),
+				tooltip: "Address of the linked server's mmcli agent.",
+			})
+			role := srv.Role
+			if role == "" {
+				role = "admin"
+			}
+			items = append(items, settingsItem{
+				label:   "Role",
+				value:   role,
+				tooltip: "Your permission level on the linked server. Admins can push, start, and stop.",
+			})
+		}
 	} else {
-		fmt.Fprintf(&b, "  Server:         \033[2m–\033[0m\n")
+		items = append(items, settingsItem{
+			label:   "Linked Server",
+			value:   "\033[2m–\033[0m",
+			tooltip: "No server linked. Run 'mmcli server add' to connect one.",
+		})
 	}
-	fmt.Fprintf(&b, "  Valheim Path:   %s\n", m.cfg.ValheimPath)
-	fmt.Fprintf(&b, "  mmcli:          \033[36m%s\033[0m\n", Version)
+
+	items = append(items, settingsItem{
+		label:   "mmcli",
+		value:   Version,
+		tooltip: "Current mmcli version.",
+	})
+
+	return items
+}
+
+func (m model) viewLocalSettings() string {
+	var b strings.Builder
+
+	// Editing Valheim path
+	if m.local.editingPath {
+		b.WriteString("\n  Valheim Path:\n\n")
+		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.local.pathInput)
+		b.WriteString("\n  \033[2menter save • esc cancel\033[0m\n\n")
+		return b.String()
+	}
+
+	items := m.buildSettingsItems()
+	b.WriteString("\n")
+
+	for i, item := range items {
+		cursor := "    "
+		if i == m.local.settingsCursor {
+			cursor = "  \033[36m>\033[0m "
+		}
+		label := fmt.Sprintf("%-16s", item.Label()+":")
+		val := item.value
+		if item.editable && i == m.local.settingsCursor {
+			val = fmt.Sprintf("< %s >", val)
+		}
+		fmt.Fprintf(&b, "%s%s %s\n", cursor, label, val)
+	}
+
+	// Tooltip
+	b.WriteString("\n")
+	if m.local.settingsCursor < len(items) {
+		fmt.Fprintf(&b, "  \033[2m%s\033[0m\n", items[m.local.settingsCursor].tooltip)
+	}
 
 	b.WriteString("\n")
-	hotkeys := []string{"a cycle anticheat", "tab next"}
+	hotkeys := []string{"↑/↓ navigate"}
+	if m.local.settingsCursor < len(items) && items[m.local.settingsCursor].editable {
+		hotkeys = append(hotkeys, "enter/space change")
+	}
+	hotkeys = append(hotkeys, "tab next")
 	if m.cfg.ActiveServer != "" {
 		hotkeys = append(hotkeys, "` mode")
 	}
@@ -671,19 +758,72 @@ func (m model) viewLocalSettings() string {
 	return b.String()
 }
 
+func (s settingsItem) Label() string {
+	return s.label
+}
+
 func (m model) handleLocalSettingsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "a":
-		switch m.cfg.AnticheatSystem {
-		case "", "auto":
-			m.cfg.AnticheatSystem = "azu"
-		case "azu":
-			m.cfg.AnticheatSystem = "enforcer"
-		case "enforcer":
-			m.cfg.AnticheatSystem = "auto"
+	// Editing Valheim path
+	if m.local.editingPath {
+		switch msg.String() {
+		case "esc":
+			m.local.editingPath = false
+		case "enter":
+			if m.local.pathInput != "" {
+				m.cfg.ValheimPath = m.local.pathInput
+				m.paths.ValheimDir = m.local.pathInput
+				config.Save(m.paths, m.cfg)
+			}
+			m.local.editingPath = false
+		case "backspace":
+			if len(m.local.pathInput) > 0 {
+				m.local.pathInput = m.local.pathInput[:len(m.local.pathInput)-1]
+			}
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+				m.local.pathInput += string(msg.Runes)
+			}
 		}
-		config.Save(m.paths, m.cfg)
-		m.anticheatSystem = resolveAnticheatSystem(m.cfg, m.local.mods)
+		return m, nil
+	}
+
+	items := m.buildSettingsItems()
+
+	switch msg.String() {
+	case "up", "k":
+		if m.local.settingsCursor > 0 {
+			m.local.settingsCursor--
+		}
+	case "down", "j":
+		if m.local.settingsCursor < len(items)-1 {
+			m.local.settingsCursor++
+		}
+	case "enter", " ":
+		if m.local.settingsCursor >= len(items) {
+			return m, nil
+		}
+		item := items[m.local.settingsCursor]
+		if !item.editable {
+			return m, nil
+		}
+		switch item.label {
+		case "Anticheat":
+			switch m.cfg.AnticheatSystem {
+			case "", "auto":
+				m.cfg.AnticheatSystem = "azu"
+			case "azu":
+				m.cfg.AnticheatSystem = "enforcer"
+			case "enforcer":
+				m.cfg.AnticheatSystem = "auto"
+			}
+			config.Save(m.paths, m.cfg)
+			m.anticheatSystem = resolveAnticheatSystem(m.cfg, m.local.mods)
+		case "Valheim Path":
+			m.local.editingPath = true
+			m.local.pathInput = m.cfg.ValheimPath
+		}
 	}
 	return m, nil
 }

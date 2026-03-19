@@ -19,6 +19,7 @@ type mode int
 const (
 	modeLocal  mode = iota
 	modeServer
+	modeSync
 )
 
 type contentTab int
@@ -30,10 +31,13 @@ const (
 	contentWorld
 	contentSettings
 	contentPlayers
+	contentSyncMods
+	contentSyncConfigs
 )
 
 var localTabs = []contentTab{contentMods, contentLogs, contentStatus, contentSettings}
 var serverTabs = []contentTab{contentMods, contentLogs, contentPlayers, contentWorld, contentStatus}
+var syncTabs = []contentTab{contentSyncMods, contentSyncConfigs}
 
 func contentTabName(t contentTab) string {
 	switch t {
@@ -49,6 +53,10 @@ func contentTabName(t contentTab) string {
 		return "Settings"
 	case contentPlayers:
 		return "Players"
+	case contentSyncMods:
+		return "Mods"
+	case contentSyncConfigs:
+		return "Configs"
 	default:
 		return "?"
 	}
@@ -58,21 +66,24 @@ type model struct {
 	activeMode      mode
 	activeLocalTab  contentTab
 	activeServerTab contentTab
+	activeSyncTab   contentTab
 	paths           config.Paths
 	cfg             config.Config
 	reg             *config.Registry
 	local           localModel
 	server          serverModel
+	sync            syncModel
 	width           int
 	anticheatSystem string // resolved: "azu" or "enforcer"
 }
 
 func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model {
 	m := model{
-		activeMode: modeLocal,
-		paths:      paths,
-		cfg:        cfg,
-		reg:        reg,
+		activeMode:    modeLocal,
+		activeSyncTab: contentSyncMods,
+		paths:         paths,
+		cfg:           cfg,
+		reg:           reg,
 		local: localModel{
 			updates: make(map[string]string),
 		},
@@ -199,6 +210,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.server.modsResp = msg.modsResp
 		}
 		m.server.players = msg.players
+		// Refresh sync mod items when server data arrives
+		if m.activeMode == modeSync && msg.mods != nil {
+			m.sync.modItems = buildPushItems(m.cfg, m.reg, m.server.mods)
+		}
 		// If we were waiting for server data to run preflight check
 		if m.local.preflightFetching {
 			m.local.preflightFetching = false
@@ -232,6 +247,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case serverPushMsg:
 		m.server.actionBusy = false
+		m.sync.confirmModPush = false
 		if msg.err != nil {
 			m.server.statusErr = msg.err
 		} else {
@@ -359,8 +375,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case serverTickMsg:
 		// Silent background refresh — no "fetching..." indicator
-		if m.activeMode == modeServer && m.server.client != nil && !m.server.fetching && !m.server.actionBusy {
+		if (m.activeMode == modeServer || m.activeMode == modeSync) && m.server.client != nil && !m.server.fetching && !m.server.actionBusy {
 			return m, tea.Batch(fetchServerStatus(m.server.client), serverTick())
+		}
+		return m, nil
+
+	// --- Sync async messages ---
+	case syncConfigListMsg:
+		m.sync.configFetching = false
+		if msg.err != nil {
+			m.sync.configErr = msg.err
+		} else {
+			m.sync.configItems = msg.items
+		}
+		return m, nil
+
+	case syncConfigPushMsg:
+		m.sync.configPushBusy = false
+		if msg.err != nil {
+			m.sync.configErr = msg.err
+		} else {
+			m.sync.configErr = nil
+			if msg.resp != nil {
+				m.sync.lastConfigPush = msg.resp
+			}
+		}
+		// Re-fetch config diffs after push
+		if m.server.client != nil {
+			m.sync.configFetching = true
+			return m, fetchConfigDiffs(m.server.client, m.paths, m.cfg)
 		}
 		return m, nil
 
@@ -398,8 +441,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleLocalNormal(msg)
 		}
 
-		// Server mode
-		return m.handleServerNormal(msg)
+		if m.activeMode == modeServer {
+			return m.handleServerNormal(msg)
+		}
+
+		// Sync mode
+		return m.handleSyncNormal(msg)
 	}
 
 	return m, nil
@@ -410,7 +457,8 @@ func (m model) View() string {
 	b.WriteString(m.renderModeBar())
 	b.WriteString(renderSeparator(m.width))
 
-	if m.activeMode == modeLocal {
+	switch m.activeMode {
+	case modeLocal:
 		b.WriteString(renderContentTabBar(localTabs, m.activeLocalTab))
 		switch m.activeLocalTab {
 		case contentMods:
@@ -422,7 +470,7 @@ func (m model) View() string {
 		case contentSettings:
 			b.WriteString(m.viewLocalSettings())
 		}
-	} else {
+	case modeServer:
 		b.WriteString(renderContentTabBar(serverTabs, m.activeServerTab))
 		switch m.activeServerTab {
 		case contentMods:
@@ -436,6 +484,14 @@ func (m model) View() string {
 		case contentPlayers:
 			b.WriteString(m.viewServerPlayers())
 		}
+	case modeSync:
+		b.WriteString(renderContentTabBar(syncTabs, m.activeSyncTab))
+		switch m.activeSyncTab {
+		case contentSyncMods:
+			b.WriteString(m.viewSyncMods())
+		case contentSyncConfigs:
+			b.WriteString(m.viewSyncConfigs())
+		}
 	}
 
 	return b.String()
@@ -447,10 +503,34 @@ func (m model) renderModeBar() string {
 	if m.server.serverName != "" {
 		serverLabel = fmt.Sprintf("Server — %s", m.server.serverName)
 	}
-	if m.activeMode == modeLocal {
-		return fmt.Sprintf("  \033[1;37m[%s]\033[0m  \033[2m%s\033[0m\n", localLabel, serverLabel)
+	syncLabel := "Sync"
+	if m.server.serverName != "" {
+		syncLabel = fmt.Sprintf("Sync — %s → %s", m.cfg.ActiveProfile, m.server.serverName)
 	}
-	return fmt.Sprintf("  \033[2m%s\033[0m  \033[1;37m[%s]\033[0m\n", localLabel, serverLabel)
+
+	labels := []struct {
+		text   string
+		active bool
+	}{
+		{localLabel, m.activeMode == modeLocal},
+		{serverLabel, m.activeMode == modeServer},
+		{syncLabel, m.activeMode == modeSync},
+	}
+
+	var b strings.Builder
+	b.WriteString("  ")
+	for i, l := range labels {
+		if i > 0 {
+			b.WriteString("  ")
+		}
+		if l.active {
+			fmt.Fprintf(&b, "\033[1;37m[%s]\033[0m", l.text)
+		} else {
+			fmt.Fprintf(&b, "\033[2m%s\033[0m", l.text)
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 func renderContentTabBar(tabs []contentTab, active contentTab) string {
@@ -513,6 +593,19 @@ func (m *model) switchServerTab(to contentTab) tea.Cmd {
 	return nil
 }
 
+func (m *model) switchSyncTab(to contentTab) tea.Cmd {
+	old := m.activeSyncTab
+	m.activeSyncTab = to
+	if old == to {
+		return nil
+	}
+	if to == contentSyncConfigs && m.server.client != nil && m.sync.configItems == nil {
+		m.sync.configFetching = true
+		return fetchConfigDiffs(m.server.client, m.paths, m.cfg)
+	}
+	return nil
+}
+
 func (m *model) cycleLocalTab(dir int) tea.Cmd {
 	for i, t := range localTabs {
 		if t == m.activeLocalTab {
@@ -529,6 +622,32 @@ func (m *model) cycleServerTab(dir int) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func (m *model) cycleSyncTab(dir int) tea.Cmd {
+	for i, t := range syncTabs {
+		if t == m.activeSyncTab {
+			return m.switchSyncTab(syncTabs[(i+dir+len(syncTabs))%len(syncTabs)])
+		}
+	}
+	return nil
+}
+
+// enterSyncMode sets up sync mode state and returns any needed commands.
+func (m *model) enterSyncMode() tea.Cmd {
+	m.activeMode = modeSync
+	cmds := []tea.Cmd{}
+	if m.server.client != nil {
+		// Fetch server data if not already loaded
+		if m.server.status == nil {
+			m.server.fetching = true
+			cmds = append(cmds, fetchServerStatus(m.server.client))
+		}
+		cmds = append(cmds, serverTick())
+	}
+	// Populate mod items from current data
+	m.sync.modItems = buildPushItems(m.cfg, m.reg, m.server.mods)
+	return tea.Batch(cmds...)
 }
 
 // Run starts the interactive TUI.
