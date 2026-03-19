@@ -235,8 +235,8 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
-		case "tab":
-			m.activeTab = tabLocal
+		case "`":
+			m.activeMode = modeLocal
 			return m, nil
 		}
 		return m, nil
@@ -245,10 +245,30 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
-	case "tab":
+	case "`":
 		m.stopServerLogStream()
-		m.activeTab = tabLocal
+		m.activeMode = modeLocal
 		return m, tea.Batch(checkGameRunning(), localTick())
+	case "tab":
+		tabs := serverTabs
+		if len(tabs) > 1 {
+			for i, t := range tabs {
+				if t == m.activeServerTab {
+					m.activeServerTab = tabs[(i+1)%len(tabs)]
+					break
+				}
+			}
+		}
+	case "shift+tab":
+		tabs := serverTabs
+		if len(tabs) > 1 {
+			for i, t := range tabs {
+				if t == m.activeServerTab {
+					m.activeServerTab = tabs[(i-1+len(tabs))%len(tabs)]
+					break
+				}
+			}
+		}
 	case "up", "k":
 		if m.server.cursor > 0 {
 			m.server.cursor--
@@ -326,7 +346,7 @@ func (m model) viewServer() string {
 	if m.server.client == nil {
 		b.WriteString("\n  No server configured.\n")
 		b.WriteString("  Run \033[36mmmcli server add\033[0m to register one.\n\n")
-		b.WriteString("  \033[2mtab local • q quit\033[0m\n\n")
+		b.WriteString("  \033[2m` mode • q quit\033[0m\n\n")
 		return b.String()
 	}
 
@@ -455,9 +475,9 @@ func (m model) viewServer() string {
 	}
 	var hotkeys []string
 	if m.server.role == agentapi.RoleAdmin {
-		hotkeys = []string{"s start", "d stop", "r restart", "p push", "l logs", "w settings", "tab local", "q quit"}
+		hotkeys = []string{"s start", "d stop", "r restart", "p push", "l logs", "w settings", "` mode", "q quit"}
 	} else {
-		hotkeys = []string{"l logs", "w settings", "tab local", "q quit"}
+		hotkeys = []string{"l logs", "w settings", "` mode", "q quit"}
 	}
 	renderHotkeyBar(&b, hotkeys, m.width)
 
@@ -726,7 +746,7 @@ func streamServerLogs(c *client.AgentClient) (tea.Cmd, <-chan []string, chan str
 
 	// Start background goroutine
 	initCmd := func() tea.Msg {
-		body, err := c.Logs(200, true)
+		body, err := c.Logs(0, true)
 		if err != nil {
 			close(ch)
 			return serverLogsMsg{err: err}
@@ -765,12 +785,22 @@ func streamServerLogs(c *client.AgentClient) (tea.Cmd, <-chan []string, chan str
 			}
 		}()
 
-		// Wait for first batch
+		// Drain all immediately-available batches for initial display
 		lines, ok := <-ch
 		if !ok {
 			return serverLogsMsg{lines: nil}
 		}
-		return serverLogsMsg{lines: lines}
+		for {
+			select {
+			case more, ok := <-ch:
+				if !ok {
+					return serverLogsMsg{lines: lines}
+				}
+				lines = append(lines, more...)
+			default:
+				return serverLogsMsg{lines: lines}
+			}
+		}
 	}
 
 	return initCmd, ch, stop

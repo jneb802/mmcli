@@ -11,26 +11,46 @@ import (
 	"mmcli/internal/config"
 )
 
-type tab int
+type mode int
 
 const (
-	tabLocal  tab = iota
-	tabServer
+	modeLocal  mode = iota
+	modeServer
 )
 
+type contentTab int
+
+const (
+	contentMods contentTab = iota
+)
+
+var localTabs = []contentTab{contentMods}
+var serverTabs = []contentTab{contentMods}
+
+func contentTabName(t contentTab) string {
+	switch t {
+	case contentMods:
+		return "Mods"
+	default:
+		return "?"
+	}
+}
+
 type model struct {
-	activeTab tab
-	paths     config.Paths
-	cfg       config.Config
-	reg       *config.Registry
-	local     localModel
-	server    serverModel
-	width     int
+	activeMode     mode
+	activeLocalTab contentTab
+	activeServerTab contentTab
+	paths          config.Paths
+	cfg            config.Config
+	reg            *config.Registry
+	local          localModel
+	server         serverModel
+	width          int
 }
 
 func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model {
 	m := model{
-		activeTab: tabLocal,
+		activeMode: modeLocal,
 		paths:     paths,
 		cfg:       cfg,
 		reg:       reg,
@@ -97,7 +117,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case localTickMsg:
-		if m.activeTab == tabLocal {
+		if m.activeMode == modeLocal {
 			return m, tea.Batch(checkGameRunning(), localTick())
 		}
 		return m, nil
@@ -231,7 +251,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case serverTickMsg:
 		// Silent background refresh — no "fetching..." indicator
-		if m.activeTab == tabServer && m.server.client != nil && !m.server.fetching && !m.server.actionBusy && !m.server.logs.active {
+		if m.activeMode == modeServer && m.server.client != nil && !m.server.fetching && !m.server.actionBusy && !m.server.logs.active {
 			return m, tea.Batch(fetchServerStatus(m.server.client), serverTick())
 		}
 		return m, nil
@@ -239,7 +259,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// --- Key dispatch ---
 	case tea.KeyMsg:
 		// Local tab: check modals first (they intercept all keys including tab)
-		if m.activeTab == tabLocal {
+		if m.activeMode == modeLocal {
 			if m.local.installBusy {
 				if msg.String() == "ctrl+c" {
 					return m, tea.Quit
@@ -285,22 +305,46 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	var b strings.Builder
-	b.WriteString(renderTabBar(m.activeTab))
+	b.WriteString(renderModeBar(m.activeMode))
 
-	if m.activeTab == tabLocal {
+	if m.activeMode == modeLocal {
+		if len(localTabs) > 1 {
+			b.WriteString(renderContentTabBar(localTabs, m.activeLocalTab))
+		}
 		b.WriteString(m.viewLocal())
 	} else {
+		if len(serverTabs) > 1 {
+			b.WriteString(renderContentTabBar(serverTabs, m.activeServerTab))
+		}
 		b.WriteString(m.viewServer())
 	}
 
 	return b.String()
 }
 
-func renderTabBar(active tab) string {
-	if active == tabLocal {
+func renderModeBar(active mode) string {
+	if active == modeLocal {
 		return fmt.Sprintf("  \033[1;36m[Local]\033[0m  \033[2mServer\033[0m\n")
 	}
 	return fmt.Sprintf("  \033[2mLocal\033[0m  \033[1;36m[Server]\033[0m\n")
+}
+
+func renderContentTabBar(tabs []contentTab, active contentTab) string {
+	var b strings.Builder
+	b.WriteString("  ")
+	for i, t := range tabs {
+		if i > 0 {
+			b.WriteString("  ")
+		}
+		name := contentTabName(t)
+		if t == active {
+			fmt.Fprintf(&b, "\033[1;36m[%s]\033[0m", name)
+		} else {
+			fmt.Fprintf(&b, "\033[2m%s\033[0m", name)
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // Run starts the interactive TUI.

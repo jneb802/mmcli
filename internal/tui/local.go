@@ -238,9 +238,9 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
-	case "tab":
+	case "`":
 		m.stopLocalLogStream()
-		m.activeTab = tabServer
+		m.activeMode = modeServer
 		if m.server.client != nil && m.server.status == nil {
 			m.server.fetching = true
 			return m, tea.Batch(fetchServerStatus(m.server.client), serverTick())
@@ -249,6 +249,26 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, serverTick()
 		}
 		return m, nil
+	case "tab":
+		tabs := localTabs
+		if len(tabs) > 1 {
+			for i, t := range tabs {
+				if t == m.activeLocalTab {
+					m.activeLocalTab = tabs[(i+1)%len(tabs)]
+					break
+				}
+			}
+		}
+	case "shift+tab":
+		tabs := localTabs
+		if len(tabs) > 1 {
+			for i, t := range tabs {
+				if t == m.activeLocalTab {
+					m.activeLocalTab = tabs[(i-1+len(tabs))%len(tabs)]
+					break
+				}
+			}
+		}
 	case "up", "k":
 		if m.local.cursor > 0 {
 			m.local.cursor--
@@ -337,7 +357,7 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "l":
 		m.stopLocalLogStream()
 		logFile := m.paths.BepInExLogFile()
-		lines, size, err := readLogTail(logFile, 200)
+		lines, size, err := readLogFile(logFile)
 		if err != nil {
 			m.local.err = fmt.Errorf("no log file found")
 		} else {
@@ -459,7 +479,7 @@ func (m model) viewLocal() string {
 	}
 	hotkeys := []string{"↑/↓ navigate", "space toggle", "x remove", "u update", "i install", "c config", "s start", "l logs", "p profile"}
 	if m.cfg.ActiveServer != "" {
-		hotkeys = append(hotkeys, "tab server")
+		hotkeys = append(hotkeys, "` mode")
 	}
 	hotkeys = append(hotkeys, "q quit")
 	renderHotkeyBar(&b, hotkeys, m.width)
@@ -504,15 +524,12 @@ func installMod(paths config.Paths, cfg config.Config, reg *config.Registry, que
 	}
 }
 
-func readLogTail(path string, n int) ([]string, int64, error) {
+func readLogFile(path string) ([]string, int64, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, 0, err
 	}
 	lines := strings.Split(string(data), "\n")
-	if len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
 	return lines, int64(len(data)), nil
 }
 

@@ -400,10 +400,10 @@ func (h *Handlers) HandleLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get last N lines
+	// Get last N lines (0 = all)
 	allLines := strings.Split(string(data), "\n")
 	start := 0
-	if len(allLines) > lines {
+	if lines > 0 && len(allLines) > lines {
 		start = len(allLines) - lines
 	}
 	tail := strings.Join(allLines[start:], "\n")
