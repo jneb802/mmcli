@@ -290,16 +290,6 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab":
 		cmd := m.cycleServerTab(-1)
 		return m, cmd
-	case "l":
-		if m.activeServerTab != contentLogs {
-			cmd := m.switchServerTab(contentLogs)
-			return m, cmd
-		}
-	case "w":
-		if m.activeServerTab != contentWorld {
-			cmd := m.switchServerTab(contentWorld)
-			return m, cmd
-		}
 	}
 
 	// Tab-specific keys
@@ -353,48 +343,11 @@ func (m model) handleServerModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.server.confirmRestart = true
 		return m, nil
-	case "p":
-		if m.server.role != agentapi.RoleAdmin {
-			return m, nil
-		}
-		items := buildPushItems(m.cfg, m.reg, m.server.mods)
-		if len(items) == 0 {
-			m.server.statusErr = fmt.Errorf("no mods to push")
-			return m, nil
-		}
-		m.server.confirmPush = true
-		m.server.pushItems = items
-		m.server.pushScroll = 0
-		return m, nil
 	case "x":
 		if m.server.role != agentapi.RoleAdmin || len(m.server.mods) == 0 {
 			return m, nil
 		}
 		m.server.confirmRemove = true
-		return m, nil
-	case "a":
-		if m.server.role != agentapi.RoleAdmin || len(m.server.mods) == 0 {
-			return m, nil
-		}
-		mod := m.server.mods[m.server.cursor]
-		regMod, ok := m.reg.GetMod(m.cfg.ActiveProfile, mod.Name)
-		if !ok {
-			return m, nil
-		}
-		newValue := nextAnticheatValue(regMod.Anticheat, m.anticheatSystem)
-		regMod.Anticheat = newValue
-		m.reg.SetMod(m.cfg.ActiveProfile, regMod)
-		// Propagate to dependencies (mirrors cmd/anticheat.go)
-		for _, depName := range regMod.Dependencies {
-			dep, depOk := m.reg.GetMod(m.cfg.ActiveProfile, depName)
-			if !depOk {
-				continue
-			}
-			dep.Anticheat = newValue
-			m.reg.SetMod(m.cfg.ActiveProfile, dep)
-		}
-		config.SaveRegistry(m.paths, *m.reg)
-		m.server.mods[m.server.cursor].Anticheat = newValue
 		return m, nil
 	}
 	return m, nil
@@ -507,9 +460,9 @@ func (m model) viewServer() string {
 	}
 	var hotkeys []string
 	if m.server.role == agentapi.RoleAdmin {
-		hotkeys = []string{"a anticheat", "x remove", "s start", "d stop", "r restart", "p push", "w world", "l logs", "` mode", "tab next", "q quit"}
+		hotkeys = []string{"x remove", "s start", "d stop", "r restart", "` mode", "tab next", "q quit"}
 	} else {
-		hotkeys = []string{"w world", "l logs", "` mode", "tab next", "q quit"}
+		hotkeys = []string{"` mode", "tab next", "q quit"}
 	}
 	renderHotkeyBar(&b, hotkeys, m.width)
 

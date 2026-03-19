@@ -276,11 +276,6 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "shift+tab":
 		cmd := m.cycleLocalTab(-1)
 		return m, cmd
-	case "l":
-		if m.activeLocalTab != contentLogs {
-			cmd := m.switchLocalTab(contentLogs)
-			return m, cmd
-		}
 	}
 
 	// Tab-specific keys
@@ -358,12 +353,6 @@ func (m model) handleLocalModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.local.confirmRemove = true
 			m.local.err = nil
 		}
-	case "c":
-		if len(m.local.mods) > 0 && m.local.cursor >= 0 {
-			mod := m.local.mods[m.local.cursor]
-			path := findConfigFile(m.paths, m.cfg.ActiveProfile, mod)
-			return m, openFile(path)
-		}
 	case "p":
 		profiles, err := profile.List(m.paths)
 		if err != nil {
@@ -436,6 +425,8 @@ func (m model) handleLocalLogsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "f", "G":
 			m.local.logs.scroll = max(0, len(m.local.logs.lines)-m.local.logs.visible)
 			m.local.logs.following = true
+		case "o":
+			return m, openFile(m.paths.BepInExLogFile())
 		}
 	}
 	return m, nil
@@ -557,7 +548,7 @@ func (m model) viewLocal() string {
 	if m.local.err != nil {
 		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.local.err)
 	}
-	hotkeys := []string{"↑/↓ navigate", "space toggle", "x remove", "u update", "i install", "c config", "o open folder", "s start", "l logs", "p profile"}
+	hotkeys := []string{"↑/↓ navigate", "space toggle", "x remove", "u update", "i install", "o open folder", "s start", "p profile"}
 	if m.cfg.ActiveServer != "" {
 		hotkeys = append(hotkeys, "` mode")
 	}
@@ -592,7 +583,7 @@ func (m model) viewLocalLogs() string {
 
 	if !m.local.logs.active {
 		b.WriteString("\n  \033[2mNo logs available. Start the game to generate logs.\033[0m\n\n")
-		hotkeys := []string{"tab next"}
+		hotkeys := []string{"o open log file", "tab next"}
 		if m.cfg.ActiveServer != "" {
 			hotkeys = append(hotkeys, "` mode")
 		}
@@ -602,6 +593,8 @@ func (m model) viewLocalLogs() string {
 	}
 
 	renderLogViewer(&b, m.local.logs)
+	hotkeys := []string{"↑/↓ scroll", "o open log file", "f follow", "tab next", "q quit"}
+	renderHotkeyBar(&b, hotkeys, m.width)
 	return b.String()
 }
 
