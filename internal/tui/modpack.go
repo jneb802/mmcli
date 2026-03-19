@@ -286,11 +286,13 @@ func (m model) handleModpackNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
-	case "`", "1":
+	case "`":
+		return m, m.enterSyncMode()
+	case "1":
 		return m, m.enterLocalMode()
 	case "2":
 		return m, m.enterServerMode()
-	case "3":
+	case "4":
 		return m, m.enterSyncMode()
 	case "d":
 		m.modpack.editingPath = true

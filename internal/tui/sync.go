@@ -129,12 +129,14 @@ func (m model) handleSyncNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
-		case "`", "4":
-			return m, m.enterModpackMode()
+		case "`":
+			return m, m.enterLocalMode()
 		case "1":
 			return m, m.enterLocalMode()
 		case "2":
 			return m, m.enterServerMode()
+		case "3":
+			return m, m.enterModpackMode()
 		}
 		return m, nil
 	}
@@ -143,12 +145,14 @@ func (m model) handleSyncNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
-	case "`", "4":
-		return m, m.enterModpackMode()
+	case "`":
+		return m, m.enterLocalMode()
 	case "1":
 		return m, m.enterLocalMode()
 	case "2":
 		return m, m.enterServerMode()
+	case "3":
+		return m, m.enterModpackMode()
 	case "tab":
 		cmd := m.cycleSyncTab(1)
 		return m, cmd
@@ -492,7 +496,7 @@ func (m model) viewSyncConfigs() string {
 		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n\n", m.sync.configErr)
 	}
 
-	renderConfigList(&b, m.sync.configItems, m.sync.configCursor)
+	renderConfigList(&b, m.sync.configItems, m.sync.configCursor, listVisible(m.height, 12))
 
 	b.WriteString("\n")
 
@@ -512,7 +516,7 @@ func (m model) viewSyncConfigs() string {
 	return b.String()
 }
 
-func renderConfigList(b *strings.Builder, items []configListItem, cursor int) {
+func renderConfigList(b *strings.Builder, items []configListItem, cursor, visible int) {
 	if len(items) == 0 {
 		b.WriteString("  No config files.\n")
 		return
@@ -525,7 +529,14 @@ func renderConfigList(b *strings.Builder, items []configListItem, cursor int) {
 		}
 	}
 
-	for i, item := range items {
+	start, end := listWindow(len(items), cursor, visible)
+
+	if start > 0 {
+		fmt.Fprintf(b, "  \033[2m  ↑ %d more\033[0m\n", start)
+	}
+
+	for i := start; i < end; i++ {
+		item := items[i]
 		cur := "  "
 		if i == cursor {
 			cur = "\033[36m>\033[0m "
@@ -552,6 +563,10 @@ func renderConfigList(b *strings.Builder, items []configListItem, cursor int) {
 		}
 
 		fmt.Fprintf(b, "  %s%s%s%s\n", cur, item.Filename, pad, status)
+	}
+
+	if end < len(items) {
+		fmt.Fprintf(b, "  \033[2m  ↓ %d more\033[0m\n", len(items)-end)
 	}
 }
 

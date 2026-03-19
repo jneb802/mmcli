@@ -574,8 +574,8 @@ func (m model) renderModeBar() string {
 	if m.server.serverName != "" {
 		serverLabel = fmt.Sprintf("Server — %s", m.server.serverName)
 	}
-	syncLabel := "Sync"
 	modpackLabel := "Modpack"
+	changesLabel := "Changes"
 
 	labels := []struct {
 		text   string
@@ -583,8 +583,8 @@ func (m model) renderModeBar() string {
 	}{
 		{localLabel, m.activeMode == modeLocal},
 		{serverLabel, m.activeMode == modeServer},
-		{syncLabel, m.activeMode == modeSync},
 		{modpackLabel, m.activeMode == modeModpack},
+		{changesLabel, m.activeMode == modeSync},
 	}
 
 	var b strings.Builder

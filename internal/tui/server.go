@@ -12,6 +12,7 @@ import (
 	"mmcli/internal/agentapi"
 	"mmcli/internal/client"
 	"mmcli/internal/config"
+	"mmcli/internal/installer"
 	"mmcli/internal/profile"
 )
 
@@ -89,7 +90,8 @@ type serverModel struct {
 	lastPushTime    time.Time
 	pushDetail      bool // push detail view open
 	pushDetailScroll int
-	confirmStart    bool
+	confirmRemove  bool
+	confirmStart   bool
 	confirmStop    bool
 	confirmRestart bool
 
@@ -159,6 +161,37 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Remove confirmation
+	if m.server.confirmRemove {
+		switch msg.String() {
+		case "y":
+			m.server.confirmRemove = false
+			if m.server.cursor < len(m.server.mods) {
+				mod := m.server.mods[m.server.cursor]
+				regMod, ok := findModForRemove(m.reg, m.cfg.ActiveProfile, mod.Name)
+				if ok {
+					if regMod.IsLocal {
+						pluginsDir := m.paths.ProfilePluginsDir(m.cfg.ActiveProfile)
+						installer.RemoveLocalMod(pluginsDir, regMod)
+					} else {
+						installer.Remove(m.paths, m.cfg, m.reg, regMod.FullName())
+					}
+					config.SaveRegistry(m.paths, *m.reg)
+					// Remove from the server mods view
+					m.server.mods = append(m.server.mods[:m.server.cursor], m.server.mods[m.server.cursor+1:]...)
+					if m.server.cursor >= len(m.server.mods) && m.server.cursor > 0 {
+						m.server.cursor--
+					}
+				}
+			}
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			m.server.confirmRemove = false
+		}
+		return m, nil
+	}
+
 	// Start confirmation
 	if m.server.confirmStart {
 		switch msg.String() {
@@ -221,11 +254,11 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "q", "esc", "ctrl+c":
 			return m, tea.Quit
 		case "`", "3":
-			return m, m.enterSyncMode()
+			return m, m.enterModpackMode()
 		case "1":
 			return m, m.enterLocalMode()
 		case "4":
-			return m, m.enterModpackMode()
+			return m, m.enterSyncMode()
 		}
 		return m, nil
 	}
@@ -235,7 +268,7 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "q", "esc", "ctrl+c":
 		return m, tea.Quit
 	case "`":
-		return m, m.enterSyncMode()
+		return m, m.enterModpackMode()
 	case "1", "3", "4":
 		// Guard: don't intercept digits when settings editor is active (typing port numbers, etc.)
 		if m.server.editor.active {
@@ -245,9 +278,9 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "1":
 			return m, m.enterLocalMode()
 		case "3":
-			return m, m.enterSyncMode()
-		case "4":
 			return m, m.enterModpackMode()
+		case "4":
+			return m, m.enterSyncMode()
 		}
 	case "tab":
 		cmd := m.cycleServerTab(1)
@@ -327,6 +360,12 @@ func (m model) handleServerModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.server.pushItems = items
 		m.server.pushScroll = 0
 		return m, nil
+	case "x":
+		if m.server.role != agentapi.RoleAdmin || len(m.server.mods) == 0 {
+			return m, nil
+		}
+		m.server.confirmRemove = true
+		return m, nil
 	case "a":
 		if m.server.role != agentapi.RoleAdmin || len(m.server.mods) == 0 {
 			return m, nil
@@ -402,6 +441,14 @@ func (m model) viewServer() string {
 		return b.String()
 	}
 
+	// Remove confirmation
+	if m.server.confirmRemove && m.server.cursor < len(m.server.mods) {
+		mod := m.server.mods[m.server.cursor]
+		fmt.Fprintf(&b, "\n  \033[33mRemove %s from profile? (y/n)\033[0m\n", mod.Name)
+		b.WriteString("  \033[2mMod will be removed on next push.\033[0m\n\n")
+		return b.String()
+	}
+
 	// Start confirmation (server already running)
 	if m.server.confirmStart {
 		fmt.Fprintf(&b, "\n  \033[33mServer is already running. Restart %s? (y/n)\033[0m\n\n", m.server.serverName)
@@ -454,7 +501,7 @@ func (m model) viewServer() string {
 	}
 	var hotkeys []string
 	if m.server.role == agentapi.RoleAdmin {
-		hotkeys = []string{"a anticheat", "s start", "d stop", "r restart", "p push", "w world", "l logs", "` mode", "tab next", "q quit"}
+		hotkeys = []string{"a anticheat", "x remove", "s start", "d stop", "r restart", "p push", "w world", "l logs", "` mode", "tab next", "q quit"}
 	} else {
 		hotkeys = []string{"w world", "l logs", "` mode", "tab next", "q quit"}
 	}
@@ -1127,6 +1174,20 @@ func fetchLaunchConfigsForEditor(c *client.AgentClient) tea.Cmd {
 		}
 		return editorLCInfoMsg{active: resp.Active}
 	}
+}
+
+// findModForRemove looks up a mod in the registry by server mod name.
+// Tries exact full name match, then just the mod name portion.
+func findModForRemove(reg *config.Registry, profile, name string) (config.ModEntry, bool) {
+	if mod, ok := reg.GetMod(profile, name); ok {
+		return mod, true
+	}
+	for _, mod := range reg.ListMods(profile) {
+		if strings.EqualFold(mod.Name, name) || strings.EqualFold(mod.FullName(), name) {
+			return mod, true
+		}
+	}
+	return config.ModEntry{}, false
 }
 
 func serverTick() tea.Cmd {

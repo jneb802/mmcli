@@ -264,9 +264,9 @@ func (m model) handleLocalNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "`", "2":
 		return m, m.enterServerMode()
 	case "3":
-		return m, m.enterSyncMode()
-	case "4":
 		return m, m.enterModpackMode()
+	case "4":
+		return m, m.enterSyncMode()
 	case "tab":
 		cmd := m.cycleLocalTab(1)
 		return m, cmd
