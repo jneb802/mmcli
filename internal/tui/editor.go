@@ -33,14 +33,15 @@ type editField struct {
 }
 
 type settingsEditor struct {
-	active  bool
-	fields  []editField
-	cursor  int
-	editing bool // typing into text/int field
-	scroll  int
-	dirty   bool
-	saving  bool
-	err     string
+	active      bool
+	fields      []editField
+	cursor      int
+	editing     bool // typing into text/int field
+	scroll      int
+	dirty       bool
+	confirmSave bool // restart confirmation before save
+	saving      bool
+	err         string
 
 	// World picker sub-modal
 	worldPicker    bool
@@ -192,6 +193,26 @@ func (m model) handleSettingsEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleLCManager(msg)
 	}
 
+	// Save confirmation modal
+	if ed.confirmSave {
+		switch msg.String() {
+		case "y":
+			ed.confirmSave = false
+			ed.saving = true
+			ed.err = ""
+			settings := buildSettingsFromFields(ed.fields)
+			if m.server.settings != nil {
+				settings.SaveDir = m.server.settings.SaveDir
+			}
+			return m, saveSettings(m.server.client, m.server.editor.lcActive, &settings)
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			ed.confirmSave = false
+		}
+		return m, nil
+	}
+
 	// Saving in progress
 	if ed.saving {
 		if msg.String() == "ctrl+c" {
@@ -263,14 +284,7 @@ func (m model) handleSettingsEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ed.dirty {
 			return m, nil
 		}
-		ed.saving = true
-		ed.err = ""
-		settings := buildSettingsFromFields(ed.fields)
-		// Preserve savedir from original
-		if m.server.settings != nil {
-			settings.SaveDir = m.server.settings.SaveDir
-		}
-		return m, saveSettings(m.server.client, m.server.editor.lcActive, &settings)
+		ed.confirmSave = true
 	case "c":
 		ed.lcManager = true
 		ed.lcFetching = true
@@ -497,6 +511,12 @@ func renderSettingsEdit(b *strings.Builder, ed *settingsEditor, width int) {
 	// Launch config manager overlay
 	if ed.lcManager {
 		renderLCManager(b, ed)
+		return
+	}
+
+	if ed.confirmSave {
+		b.WriteString("\n  \033[33mThese changes require a server restart.\033[0m\n")
+		b.WriteString("  \033[33mSave and restart server now? (y/n)\033[0m\n\n")
 		return
 	}
 

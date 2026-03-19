@@ -272,9 +272,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.server.editor.err = msg.err.Error()
 		} else {
-			// Success — close editor, re-fetch settings
+			// Success — close editor, restart server, re-fetch settings
 			m.server.editor.active = false
-			return m, fetchSettings(m.server.client)
+			m.server.actionBusy = true
+			m.server.actionMsg = "Restarting server..."
+			return m, tea.Batch(
+				serverAction(m.server.client, "restart"),
+				fetchSettings(m.server.client),
+			)
 		}
 		return m, nil
 

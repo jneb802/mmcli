@@ -96,9 +96,8 @@ type serverModel struct {
 	logStop  chan struct{}
 	modsResp *agentapi.ModListResponse
 
-	settings        *agentapi.SettingsResponse
-	settingsVisible bool
-	settingsScroll  int
+	settings       *agentapi.SettingsResponse
+	settingsScroll int
 
 	editor settingsEditor
 }
@@ -112,38 +111,6 @@ func (m *model) loadServerLogs() tea.Cmd {
 }
 
 func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Settings viewer/editor mode (works across all tabs)
-	if m.server.settingsVisible {
-		// Editor sub-modal (nested within settings viewer)
-		if m.server.editor.active {
-			return m.handleSettingsEditor(msg)
-		}
-
-		switch msg.String() {
-		case "q", "esc":
-			m.server.settingsVisible = false
-		case "up", "k":
-			if m.server.settingsScroll > 0 {
-				m.server.settingsScroll--
-			}
-		case "down", "j":
-			m.server.settingsScroll++
-		case "e":
-			if m.server.role == agentapi.RoleAdmin && m.server.settings != nil {
-				m.server.editor = settingsEditor{
-					active: true,
-					fields: buildEditorFields(m.server.settings),
-					cursor: 0,
-				}
-				// Try to fetch active launch config name
-				return m, fetchLaunchConfigsForEditor(m.server.client)
-			}
-		case "ctrl+c":
-			return m, tea.Quit
-		}
-		return m, nil
-	}
-
 	// Push detail view modal
 	if m.server.pushDetail {
 		switch msg.String() {
@@ -279,6 +246,11 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.switchServerTab(contentLogs)
 			return m, cmd
 		}
+	case "w":
+		if m.activeServerTab != contentWorld {
+			cmd := m.switchServerTab(contentWorld)
+			return m, cmd
+		}
 	}
 
 	// Tab-specific keys
@@ -287,6 +259,8 @@ func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleServerModsKeys(msg)
 	case contentLogs:
 		return m.handleServerLogsKeys(msg)
+	case contentWorld:
+		return m.handleServerWorldKeys(msg)
 	}
 	return m, nil
 }
@@ -347,10 +321,6 @@ func (m model) handleServerModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.server.pushItems = items
 		m.server.pushScroll = 0
 		return m, nil
-	case "w":
-		m.server.actionBusy = true
-		m.server.actionMsg = "Fetching settings..."
-		return m, fetchSettings(m.server.client)
 	}
 	return m, nil
 }
@@ -387,16 +357,6 @@ func (m model) viewServer() string {
 		b.WriteString("\n  No server configured.\n")
 		b.WriteString("  Run \033[36mmmcli server add\033[0m to register one.\n\n")
 		b.WriteString("  \033[2m` mode • q quit\033[0m\n\n")
-		return b.String()
-	}
-
-	// Settings viewer/editor
-	if m.server.settingsVisible && m.server.settings != nil {
-		if m.server.editor.active {
-			renderSettingsEdit(&b, &m.server.editor, m.width)
-			return b.String()
-		}
-		renderSettingsView(&b, m.server.settings, m.server.settingsScroll, m.server.role)
 		return b.String()
 	}
 
@@ -513,9 +473,9 @@ func (m model) viewServer() string {
 	}
 	var hotkeys []string
 	if m.server.role == agentapi.RoleAdmin {
-		hotkeys = []string{"s start", "d stop", "r restart", "p push", "w settings", "l logs", "` mode", "tab next", "q quit"}
+		hotkeys = []string{"s start", "d stop", "r restart", "p push", "w world", "l logs", "` mode", "tab next", "q quit"}
 	} else {
-		hotkeys = []string{"w settings", "l logs", "` mode", "tab next", "q quit"}
+		hotkeys = []string{"w world", "l logs", "` mode", "tab next", "q quit"}
 	}
 	renderHotkeyBar(&b, hotkeys, m.width)
 
@@ -538,6 +498,61 @@ func (m model) viewServerLogs() string {
 	}
 
 	renderLogViewer(&b, m.server.logs)
+	return b.String()
+}
+
+func (m model) handleServerWorldKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Editor sub-modal
+	if m.server.editor.active {
+		return m.handleSettingsEditor(msg)
+	}
+
+	switch msg.String() {
+	case "up", "k":
+		if m.server.settingsScroll > 0 {
+			m.server.settingsScroll--
+		}
+	case "down", "j":
+		m.server.settingsScroll++
+	case "e":
+		if m.server.role == agentapi.RoleAdmin && m.server.settings != nil {
+			m.server.editor = settingsEditor{
+				active: true,
+				fields: buildEditorFields(m.server.settings),
+				cursor: 0,
+			}
+			return m, fetchLaunchConfigsForEditor(m.server.client)
+		}
+	case "r":
+		// Refresh settings
+		if m.server.client != nil {
+			return m, fetchSettings(m.server.client)
+		}
+	}
+	return m, nil
+}
+
+func (m model) viewServerWorld() string {
+	var b strings.Builder
+
+	if m.server.client == nil {
+		b.WriteString("\n  \033[2mNo server configured.\033[0m\n\n")
+		hotkeys := []string{"` mode", "tab next", "q quit"}
+		renderHotkeyBar(&b, hotkeys, m.width)
+		return b.String()
+	}
+
+	if m.server.editor.active {
+		renderSettingsEdit(&b, &m.server.editor, m.width)
+		return b.String()
+	}
+
+	if m.server.settings == nil {
+		b.WriteString("\n  \033[2mLoading settings...\033[0m\n\n")
+		return b.String()
+	}
+
+	renderSettingsView(&b, m.server.settings, m.server.settingsScroll, m.server.role)
 	return b.String()
 }
 
