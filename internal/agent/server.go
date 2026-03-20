@@ -57,7 +57,7 @@ func Run(cfg AgentConfig, addr, version string) error {
 	handler := authMiddleware(cfg, mux)
 
 	// Start state tracker for Discord webhooks
-	st := NewStateTracker(cfg, pm)
+	st := NewStateTracker(cfg, pm, DefaultConfigPath())
 	st.Start()
 	defer st.Stop()
 

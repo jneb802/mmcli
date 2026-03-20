@@ -50,20 +50,31 @@ type StatusResponse struct {
 	// Webhook config summary
 	WebhookURL     string `json:"webhook_url,omitempty"`
 	WebhookEnabled bool   `json:"webhook_enabled,omitempty"`
+	StatusEmbed    bool   `json:"status_embed,omitempty"`
 }
 
 type WebhookConfigResponse struct {
-	URL           string `json:"url"`
-	ServerStarted bool   `json:"server_started"`
-	ServerStopped bool   `json:"server_stopped"`
-	WorldSaved    bool   `json:"world_saved"`
+	URL             string `json:"url"`
+	ServerStarted   bool   `json:"server_started"`
+	ServerStopped   bool   `json:"server_stopped"`
+	WorldSaved      bool   `json:"world_saved"`
+	PlayerJoined    bool   `json:"player_joined"`
+	PlayerLeft      bool   `json:"player_left"`
+	PlayerDied      bool   `json:"player_died"`
+	PlayerFirstJoin bool   `json:"player_first_join"`
+	StatusEmbed     bool   `json:"status_embed"`
 }
 
 type WebhookConfigUpdate struct {
-	URL           *string `json:"url,omitempty"`
-	ServerStarted *bool   `json:"server_started,omitempty"`
-	ServerStopped *bool   `json:"server_stopped,omitempty"`
-	WorldSaved    *bool   `json:"world_saved,omitempty"`
+	URL             *string `json:"url,omitempty"`
+	ServerStarted   *bool   `json:"server_started,omitempty"`
+	ServerStopped   *bool   `json:"server_stopped,omitempty"`
+	WorldSaved      *bool   `json:"world_saved,omitempty"`
+	PlayerJoined    *bool   `json:"player_joined,omitempty"`
+	PlayerLeft      *bool   `json:"player_left,omitempty"`
+	PlayerDied      *bool   `json:"player_died,omitempty"`
+	PlayerFirstJoin *bool   `json:"player_first_join,omitempty"`
+	StatusEmbed     *bool   `json:"status_embed,omitempty"`
 }
 
 type PlayerInfo struct {

@@ -664,8 +664,24 @@ func (m model) buildServerStatusItems() []settingsItem {
 	items = append(items, settingsItem{
 		label:    "Discord webhook",
 		value:    webhookVal,
-		tooltip:  "Discord webhook URL for server event notifications (start, stop, save).",
+		tooltip:  "Discord webhook URL for server event notifications.",
 		editable: true,
+	})
+
+	// Status embed
+	var embedVal string
+	if m.server.status != nil && m.server.status.WebhookEnabled && m.server.status.StatusEmbed {
+		embedVal = "\033[32menabled\033[0m"
+	} else if m.server.status != nil && m.server.status.WebhookEnabled {
+		embedVal = "\033[2mdisabled\033[0m"
+	} else {
+		embedVal = "\033[2m–\033[0m"
+	}
+	items = append(items, settingsItem{
+		label:    "Status embed",
+		value:    embedVal,
+		tooltip:  "Continuously-updated Discord embed showing server status, players, and game time.",
+		editable: m.server.status != nil && m.server.status.WebhookEnabled,
 	})
 
 	return items
@@ -717,6 +733,11 @@ func (m model) handleServerStatusKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.server.webhookInput = m.server.status.WebhookURL
 				} else {
 					m.server.webhookInput = ""
+				}
+			case "Status embed":
+				if m.server.client != nil && m.server.status != nil {
+					newVal := !m.server.status.StatusEmbed
+					return m, toggleStatusEmbed(m.server.client, newVal)
 				}
 			}
 		}
@@ -1219,6 +1240,18 @@ func setWebhookURL(c *client.AgentClient, url string) tea.Cmd {
 			return serverActionMsg{action: "webhook", err: err}
 		}
 		// Re-fetch status to update the display
+		return serverActionMsg{action: "webhook"}
+	}
+}
+
+func toggleStatusEmbed(c *client.AgentClient, enabled bool) tea.Cmd {
+	return func() tea.Msg {
+		_, err := c.UpdateWebhookConfig(agentapi.WebhookConfigUpdate{
+			StatusEmbed: &enabled,
+		})
+		if err != nil {
+			return serverActionMsg{action: "webhook", err: err}
+		}
 		return serverActionMsg{action: "webhook"}
 	}
 }

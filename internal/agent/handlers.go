@@ -59,6 +59,7 @@ func (h *Handlers) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	// Webhook summary
 	if h.cfg.DiscordWebhook != nil && h.cfg.DiscordWebhook.URL != "" {
 		resp.WebhookEnabled = true
+		resp.StatusEmbed = h.cfg.DiscordWebhook.StatusEmbed
 		// Mask the URL for security — show last 8 chars
 		url := h.cfg.DiscordWebhook.URL
 		if len(url) > 12 {
@@ -78,6 +79,11 @@ func (h *Handlers) HandleWebhookGet(w http.ResponseWriter, r *http.Request) {
 		resp.ServerStarted = h.cfg.DiscordWebhook.ServerStarted
 		resp.ServerStopped = h.cfg.DiscordWebhook.ServerStopped
 		resp.WorldSaved = h.cfg.DiscordWebhook.WorldSaved
+		resp.PlayerJoined = h.cfg.DiscordWebhook.PlayerJoined
+		resp.PlayerLeft = h.cfg.DiscordWebhook.PlayerLeft
+		resp.PlayerDied = h.cfg.DiscordWebhook.PlayerDied
+		resp.PlayerFirstJoin = h.cfg.DiscordWebhook.PlayerFirstJoin
+		resp.StatusEmbed = h.cfg.DiscordWebhook.StatusEmbed
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -103,6 +109,21 @@ func (h *Handlers) HandleWebhookUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.WorldSaved != nil {
 		h.cfg.DiscordWebhook.WorldSaved = *req.WorldSaved
+	}
+	if req.PlayerJoined != nil {
+		h.cfg.DiscordWebhook.PlayerJoined = *req.PlayerJoined
+	}
+	if req.PlayerLeft != nil {
+		h.cfg.DiscordWebhook.PlayerLeft = *req.PlayerLeft
+	}
+	if req.PlayerDied != nil {
+		h.cfg.DiscordWebhook.PlayerDied = *req.PlayerDied
+	}
+	if req.PlayerFirstJoin != nil {
+		h.cfg.DiscordWebhook.PlayerFirstJoin = *req.PlayerFirstJoin
+	}
+	if req.StatusEmbed != nil {
+		h.cfg.DiscordWebhook.StatusEmbed = *req.StatusEmbed
 	}
 
 	// Persist to disk

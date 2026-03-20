@@ -21,10 +21,18 @@ type AgentConfig struct {
 }
 
 type DiscordWebhookConfig struct {
-	URL           string `json:"url"`
-	ServerStarted bool   `json:"server_started"`
-	ServerStopped bool   `json:"server_stopped"`
-	WorldSaved    bool   `json:"world_saved"`
+	URL             string `json:"url"`
+	ServerStarted   bool   `json:"server_started"`
+	ServerStopped   bool   `json:"server_stopped"`
+	WorldSaved      bool   `json:"world_saved"`
+	PlayerJoined    bool   `json:"player_joined"`
+	PlayerLeft      bool   `json:"player_left"`
+	PlayerDied      bool   `json:"player_died"`
+	PlayerFirstJoin bool   `json:"player_first_join"`
+	StatusEmbed     bool   `json:"status_embed,omitempty"`
+
+	// Internal: persisted message ID for editing the status embed
+	StatusEmbedMessageID string `json:"status_embed_message_id,omitempty"`
 }
 
 // EventEnabled returns whether a given event type should fire.
@@ -34,7 +42,9 @@ func (c *DiscordWebhookConfig) EventEnabled(event string) bool {
 		return false
 	}
 	// If no events explicitly enabled, enable all
-	if !c.ServerStarted && !c.ServerStopped && !c.WorldSaved {
+	anyEnabled := c.ServerStarted || c.ServerStopped || c.WorldSaved ||
+		c.PlayerJoined || c.PlayerLeft || c.PlayerDied || c.PlayerFirstJoin
+	if !anyEnabled {
 		return true
 	}
 	switch event {
@@ -44,6 +54,14 @@ func (c *DiscordWebhookConfig) EventEnabled(event string) bool {
 		return c.ServerStopped
 	case "world_saved":
 		return c.WorldSaved
+	case "player_joined":
+		return c.PlayerJoined
+	case "player_left":
+		return c.PlayerLeft
+	case "player_died":
+		return c.PlayerDied
+	case "player_first_join":
+		return c.PlayerFirstJoin
 	}
 	return false
 }

@@ -92,6 +92,40 @@ func QueryModStatus(port int) (*ModAPIStatus, error) {
 	return &status, nil
 }
 
+// ModAPIEvent is a game event from the mod API event log.
+type ModAPIEvent struct {
+	Seq    int    `json:"seq"`
+	Type   string `json:"type"`
+	Player string `json:"player"`
+	UID    int64  `json:"uid,omitempty"`
+	Time   string `json:"time"`
+}
+
+// ModAPIEventsResponse is the JSON shape returned by GET /events on the mod API.
+type ModAPIEventsResponse struct {
+	Events []ModAPIEvent `json:"events"`
+}
+
+// QueryModEvents queries the mod API for game events after a given sequence number.
+func QueryModEvents(port int, afterSeq int) ([]ModAPIEvent, error) {
+	client := &http.Client{Timeout: 2 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/events?after=%d", port, afterSeq))
+	if err != nil {
+		return nil, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil
+	}
+
+	var eventsResp ModAPIEventsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&eventsResp); err != nil {
+		return nil, nil
+	}
+	return eventsResp.Events, nil
+}
+
 // QueryModPlayers queries the mod API for connected players.
 func QueryModPlayers(port int) ([]ModAPIPlayer, error) {
 	client := &http.Client{Timeout: 2 * time.Second}
