@@ -131,6 +131,38 @@ func (m model) buildAuditRows() []auditRow {
 	return rows
 }
 
+// getOrRegisterMod returns the mod entry from the registry, or if not found,
+// looks it up in locally-detected mods or server mods and registers it so
+// metadata like target and anticheat can be persisted.
+func (m model) getOrRegisterMod(name string) (config.ModEntry, bool) {
+	mod, ok := m.reg.GetMod(m.cfg.ActiveProfile, name)
+	if ok {
+		return mod, true
+	}
+	// Check locally-detected mods
+	pluginsDir := m.paths.ProfilePluginsDir(m.cfg.ActiveProfile)
+	for _, local := range config.DetectLocalMods(pluginsDir, m.reg.Profiles[m.cfg.ActiveProfile]) {
+		if local.FullName() == name {
+			m.reg.SetMod(m.cfg.ActiveProfile, local)
+			return local, true
+		}
+	}
+	// Check server-only mods
+	for _, sm := range m.server.mods {
+		if sm.Name == name {
+			var entry config.ModEntry
+			if i := strings.Index(name, "-"); i >= 0 {
+				entry = config.ModEntry{Owner: name[:i], Name: name[i+1:], Version: sm.Version, Target: "server"}
+			} else {
+				entry = config.ModEntry{Name: name, Version: sm.Version, Target: "server"}
+			}
+			m.reg.SetMod(m.cfg.ActiveProfile, entry)
+			return entry, true
+		}
+	}
+	return config.ModEntry{}, false
+}
+
 // filterAuditRows returns only rows matching the current filter.
 func filterAuditRows(rows []auditRow, f modFilter) []auditRow {
 	if f == filterAll {
@@ -602,7 +634,7 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		row := rows[m.mods.cursor]
-		mod, ok := m.reg.GetMod(m.cfg.ActiveProfile, row.Name)
+		mod, ok := m.getOrRegisterMod(row.Name)
 		if !ok {
 			return m, nil
 		}
@@ -631,7 +663,7 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		row := rows[m.mods.cursor]
-		mod, ok := m.reg.GetMod(m.cfg.ActiveProfile, row.Name)
+		mod, ok := m.getOrRegisterMod(row.Name)
 		if !ok {
 			return m, nil
 		}

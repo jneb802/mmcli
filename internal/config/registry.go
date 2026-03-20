@@ -29,7 +29,7 @@ func (m ModEntry) ResolvedTarget() string {
 }
 
 func (m ModEntry) FullName() string {
-	if m.IsLocal {
+	if m.IsLocal || m.Owner == "" {
 		return m.Name
 	}
 	return fmt.Sprintf("%s-%s", m.Owner, m.Name)

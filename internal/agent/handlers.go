@@ -213,22 +213,31 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 	// Layer 1: Filesystem scan
 	modMap := make(map[string]*agentapi.ModInfo)
 	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		disabled := false
-		dlls := findDLLs(filepath.Join(pluginsDir, e.Name()))
-		if len(dlls) > 0 {
-			allDisabled := true
-			for _, d := range dlls {
-				if !strings.HasSuffix(d, ".dll.old") {
-					allDisabled = false
-					break
+		if e.IsDir() {
+			disabled := false
+			dlls := findDLLs(filepath.Join(pluginsDir, e.Name()))
+			if len(dlls) > 0 {
+				allDisabled := true
+				for _, d := range dlls {
+					if !strings.HasSuffix(d, ".dll.old") {
+						allDisabled = false
+						break
+					}
 				}
+				disabled = allDisabled
 			}
-			disabled = allDisabled
+			modMap[e.Name()] = &agentapi.ModInfo{Name: e.Name(), Disabled: disabled}
+		} else {
+			name := e.Name()
+			lower := strings.ToLower(name)
+			if strings.HasSuffix(lower, ".dll") {
+				modName := strings.TrimSuffix(name, filepath.Ext(name))
+				modMap[modName] = &agentapi.ModInfo{Name: modName}
+			} else if strings.HasSuffix(lower, ".dll.old") {
+				modName := strings.TrimSuffix(strings.TrimSuffix(name, ".old"), filepath.Ext(strings.TrimSuffix(name, ".old")))
+				modMap[modName] = &agentapi.ModInfo{Name: modName, Disabled: true}
+			}
 		}
-		modMap[e.Name()] = &agentapi.ModInfo{Name: e.Name(), Disabled: disabled}
 	}
 
 	// Layer 2: Manifest enrichment
@@ -729,6 +738,8 @@ func (h *Handlers) listModDirs() []string {
 	for _, e := range entries {
 		if e.IsDir() {
 			names = append(names, e.Name())
+		} else if strings.HasSuffix(strings.ToLower(e.Name()), ".dll") {
+			names = append(names, strings.TrimSuffix(e.Name(), filepath.Ext(e.Name())))
 		}
 	}
 	return names
