@@ -89,10 +89,6 @@ type serverModel struct {
 	lastPushTime     time.Time
 	pushDetail       bool // push detail view open
 	pushDetailScroll int
-	confirmRemove    bool
-	confirmStart     bool
-	confirmStop      bool
-	confirmRestart   bool
 
 	logs     logViewerState
 	logCh    <-chan []string

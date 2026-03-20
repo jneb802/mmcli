@@ -39,7 +39,6 @@ type settingsEditor struct {
 	editing     bool // typing into text/int field
 	scroll      int
 	dirty       bool
-	confirmSave bool // restart confirmation before save
 	saving      bool
 	err         string
 
@@ -52,7 +51,6 @@ type settingsEditor struct {
 	worldFetching      bool
 	worldUploading     bool
 	worldDeleting      bool
-	worldConfirmDelete bool
 	worldErr           string
 
 	// Launch config manager sub-modal
@@ -62,7 +60,6 @@ type settingsEditor struct {
 	lcCursor        int
 	lcCreating      bool
 	lcCreateInput   string
-	lcConfirmDelete bool
 	lcFetching      bool
 	lcErr           string
 }
@@ -196,25 +193,7 @@ func (m model) handleSettingsEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleLCManager(msg)
 	}
 
-	// Save confirmation modal
-	if ed.confirmSave {
-		switch msg.String() {
-		case "y":
-			ed.confirmSave = false
-			ed.saving = true
-			ed.err = ""
-			settings := buildSettingsFromFields(ed.fields)
-			if m.server.settings != nil {
-				settings.SaveDir = m.server.settings.SaveDir
-			}
-			return m, saveSettings(m.server.client, m.server.editor.lcActive, &settings)
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			ed.confirmSave = false
-		}
-		return m, nil
-	}
+	// (confirmSave now uses global confirmModal)
 
 	// Saving in progress
 	if ed.saving {
@@ -287,7 +266,19 @@ func (m model) handleSettingsEditor(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if !ed.dirty {
 			return m, nil
 		}
-		ed.confirmSave = true
+		m.confirm = confirmModal{
+			Active: true,
+			Prompt: "Save and restart server?",
+			OnYes: func(m model) (tea.Model, tea.Cmd) {
+				m.server.editor.saving = true
+				m.server.editor.err = ""
+				settings := buildSettingsFromFields(m.server.editor.fields)
+				if m.server.settings != nil {
+					settings.SaveDir = m.server.settings.SaveDir
+				}
+				return m, saveSettings(m.server.client, m.server.editor.lcActive, &settings)
+			},
+		}
 	case "c":
 		ed.lcManager = true
 		ed.lcFetching = true
@@ -341,23 +332,7 @@ func (m model) handleWorldPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Delete confirmation
-	if ed.worldConfirmDelete {
-		switch msg.String() {
-		case "y":
-			ed.worldConfirmDelete = false
-			if ed.worldCursor < len(ed.worlds) {
-				ed.worldDeleting = true
-				ed.worldErr = ""
-				return m, deleteWorld(m.server.client, ed.worlds[ed.worldCursor].Name)
-			}
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			ed.worldConfirmDelete = false
-		}
-		return m, nil
-	}
+	// (worldConfirmDelete now uses global confirmModal)
 
 	// Typing mode (new world name or upload path)
 	if ed.worldMode == 1 || ed.worldMode == 2 {
@@ -423,7 +398,16 @@ func (m model) handleWorldPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "x":
 		if ed.worldMode == 0 && len(ed.worlds) > 0 {
-			ed.worldConfirmDelete = true
+			worldName := ed.worlds[ed.worldCursor].Name
+			m.confirm = confirmModal{
+				Active: true,
+				Prompt: fmt.Sprintf("Delete world \"%s\"? This cannot be undone.", worldName),
+				OnYes: func(m model) (tea.Model, tea.Cmd) {
+					m.server.editor.worldDeleting = true
+					m.server.editor.worldErr = ""
+					return m, deleteWorld(m.server.client, worldName)
+				},
+			}
 			ed.worldErr = ""
 		}
 	case "n":
@@ -448,22 +432,7 @@ func (m model) handleLCManager(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if ed.lcConfirmDelete {
-		switch msg.String() {
-		case "y":
-			ed.lcConfirmDelete = false
-			if ed.lcCursor < len(ed.lcConfigs) {
-				name := ed.lcConfigs[ed.lcCursor].Name
-				ed.lcFetching = true
-				return m, deleteLaunchConfig(m.server.client, name)
-			}
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			ed.lcConfirmDelete = false
-		}
-		return m, nil
-	}
+	// (lcConfirmDelete now uses global confirmModal)
 
 	if ed.lcCreating {
 		switch msg.String() {
@@ -516,7 +485,14 @@ func (m model) handleLCManager(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(ed.lcConfigs) > 0 {
 			name := ed.lcConfigs[ed.lcCursor].Name
 			if name != ed.lcActive {
-				ed.lcConfirmDelete = true
+				m.confirm = confirmModal{
+					Active: true,
+					Prompt: fmt.Sprintf("Delete launch config '%s'?", name),
+					OnYes: func(m model) (tea.Model, tea.Cmd) {
+						m.server.editor.lcFetching = true
+						return m, deleteLaunchConfig(m.server.client, name)
+					},
+				}
 			}
 		}
 	case "ctrl+c":
@@ -540,11 +516,7 @@ func renderSettingsEdit(b *strings.Builder, ed *settingsEditor, width int) {
 		return
 	}
 
-	if ed.confirmSave {
-		b.WriteString("\n  \033[33mThese changes require a server restart.\033[0m\n")
-		b.WriteString("  \033[33mSave and restart server now? (y/n)\033[0m\n\n")
-		return
-	}
+	// (confirmSave rendering handled by global confirmModal)
 
 	if ed.saving {
 		b.WriteString("\n  \033[33mSaving settings...\033[0m\n\n")
@@ -708,12 +680,7 @@ func renderWorldPicker(b *strings.Builder, ed *settingsEditor) {
 		b.WriteString("  \033[33mDeleting world...\033[0m\n\n")
 		return
 	}
-	if ed.worldConfirmDelete {
-		if ed.worldCursor < len(ed.worlds) {
-			fmt.Fprintf(b, "  \033[33mDelete world %q? This cannot be undone. (y/n)\033[0m\n\n", ed.worlds[ed.worldCursor].Name)
-		}
-		return
-	}
+	// (worldConfirmDelete rendering handled by global confirmModal)
 	if ed.worldErr != "" {
 		fmt.Fprintf(b, "  \033[31m%s\033[0m\n", ed.worldErr)
 	}
@@ -778,12 +745,7 @@ func renderLCManager(b *strings.Builder, ed *settingsEditor) {
 	if ed.lcErr != "" {
 		fmt.Fprintf(b, "  \033[31m%s\033[0m\n", ed.lcErr)
 	}
-	if ed.lcConfirmDelete {
-		if ed.lcCursor < len(ed.lcConfigs) {
-			fmt.Fprintf(b, "  \033[33mDelete '%s'? (y/n)\033[0m\n\n", ed.lcConfigs[ed.lcCursor].Name)
-		}
-		return
-	}
+	// (lcConfirmDelete rendering handled by global confirmModal)
 	if ed.lcCreating {
 		b.WriteString("  New config name:\n")
 		fmt.Fprintf(b, "  > %s\033[7m \033[0m\n", ed.lcCreateInput)

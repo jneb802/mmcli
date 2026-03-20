@@ -38,16 +38,6 @@ func (m model) viewChanges() string {
 		return b.String()
 	}
 
-	// Push confirmation modals
-	if m.sync.confirmModPush {
-		renderPushConfirm(&b, m.server.serverName, m.cfg.ActiveProfile, m.sync.modItems, m.sync.pushScroll, m.server.status)
-		return b.String()
-	}
-	if m.sync.confirmConfigPush {
-		b.WriteString("\n  \033[33mPush all config changes to server? (y/n)\033[0m\n\n")
-		return b.String()
-	}
-
 	// Action busy
 	if m.server.actionBusy {
 		renderSyncPushing(&b, m.sync.modItems)
@@ -172,43 +162,6 @@ func (m model) handleChangesKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.sync.pushResultScroll++
 		case "ctrl+c":
 			return m, tea.Quit
-		}
-		return m, nil
-	}
-
-	// Mod push confirmation
-	if m.sync.confirmModPush {
-		switch msg.String() {
-		case "y":
-			m.sync.confirmModPush = false
-			m.server.actionBusy = true
-			m.server.actionMsg = "Pushing mods..."
-			return m, pushMods(m.server.client, m.paths, m.cfg, *m.reg)
-		case "up", "k":
-			if m.sync.pushScroll > 0 {
-				m.sync.pushScroll--
-			}
-		case "down", "j":
-			m.sync.pushScroll++
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			m.sync.confirmModPush = false
-		}
-		return m, nil
-	}
-
-	// Config push confirmation
-	if m.sync.confirmConfigPush {
-		switch msg.String() {
-		case "y":
-			m.sync.confirmConfigPush = false
-			m.sync.configPushBusy = true
-			return m, pushAllConfigs(m.server.client, m.paths, m.cfg)
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			m.sync.confirmConfigPush = false
 		}
 		return m, nil
 	}

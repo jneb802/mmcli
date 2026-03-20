@@ -67,8 +67,6 @@ type localModel struct {
 
 	gameRunning bool
 
-	confirmRemove bool
-
 	pickProfile     bool
 	profiles        []string
 	profileCursor   int
@@ -85,10 +83,6 @@ type localModel struct {
 
 	updates          map[string]string
 	checkingUpdates  bool
-	confirmUpdateAll bool
-
-	confirmStart      bool
-	preflightWarnings []string
 	preflightFetching bool
 
 	settingsCursor int

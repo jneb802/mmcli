@@ -209,6 +209,8 @@ func patchEnforcerModeration(bepDir string, modName, anticheat string, modAPIPor
 		existing.OptionalMods[entry.guid] = modEntry
 	case "adminonly":
 		existing.AdminOnlyMods[entry.guid] = modEntry
+	case "serveronly":
+		existing.ServerOnlyMods[entry.guid] = modEntry
 	}
 	// Always keep in activeMods
 	existing.ActiveMods[entry.guid] = modEntry
@@ -225,6 +227,29 @@ func patchEnforcerModeration(bepDir string, modName, anticheat string, modAPIPor
 
 	log.Printf("Enforcer: patched %s (%s) → %s", modName, entry.guid, anticheat)
 	return nil
+}
+
+// readEnforcerClassifications reads Mods.yaml and returns a GUID → anticheat map.
+// This allows the handler to overlay classifications from manual Mods.yaml edits.
+func readEnforcerClassifications(bepDir string) map[string]string {
+	cfg, err := loadEnforcerConfig(bepDir)
+	if err != nil || cfg == nil {
+		return nil
+	}
+	result := make(map[string]string)
+	for guid := range cfg.RequiredMods {
+		result[guid] = "whitelist"
+	}
+	for guid := range cfg.OptionalMods {
+		result[guid] = "greylist"
+	}
+	for guid := range cfg.AdminOnlyMods {
+		result[guid] = "adminonly"
+	}
+	for guid := range cfg.ServerOnlyMods {
+		result[guid] = "serveronly"
+	}
+	return result
 }
 
 // setupValheimEnforcer generates the ValheimEnforcer Mods.yaml config from
@@ -273,6 +298,9 @@ func setupValheimEnforcer(bepDir string, mods []agentapi.ManifestMod, modAPIPort
 
 		// Category mapping (evaluated in order of precedence)
 		switch {
+		case mod.Anticheat == "serveronly":
+			cfg.ServerOnlyMods[entry.guid] = modEntry
+			cfg.ActiveMods[entry.guid] = modEntry
 		case mod.Target == "server":
 			cfg.ServerOnlyMods[entry.guid] = modEntry
 			cfg.ActiveMods[entry.guid] = modEntry

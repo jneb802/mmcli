@@ -71,6 +71,8 @@ func anticheatLabel(value, system string) string {
 		return "\033[33mG\033[0m"
 	case "adminonly":
 		return "\033[35mA\033[0m"
+	case "serveronly":
+		return "\033[34mS\033[0m"
 	default:
 		return "-"
 	}
@@ -82,7 +84,7 @@ func nextAnticheatValue(current, system string) string {
 	if system == "azu" {
 		values = []string{"whitelist", "greylist", ""}
 	} else {
-		values = []string{"whitelist", "greylist", "adminonly", ""}
+		values = []string{"whitelist", "greylist", "adminonly", "serveronly", ""}
 	}
 	for i, v := range values {
 		if v == current {

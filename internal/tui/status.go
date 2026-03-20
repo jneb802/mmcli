@@ -12,30 +12,13 @@ import (
 // --- Status tab state ---
 
 type statusState struct {
-	cursor         int
-	confirmStart   bool
-	confirmStop    bool
-	confirmRestart bool
+	cursor int
 }
 
 // --- View ---
 
 func (m model) viewStatus() string {
 	var b strings.Builder
-
-	// Confirm modals
-	if m.status.confirmStart {
-		b.WriteString("\n  \033[33mStart server? (y/n)\033[0m\n\n")
-		return b.String()
-	}
-	if m.status.confirmStop {
-		b.WriteString("\n  \033[33mStop server? (y/n)\033[0m\n\n")
-		return b.String()
-	}
-	if m.status.confirmRestart {
-		b.WriteString("\n  \033[33mRestart server? (y/n)\033[0m\n\n")
-		return b.String()
-	}
 
 	items := m.buildStatusItems()
 	b.WriteString("\n")
@@ -164,50 +147,6 @@ func (m model) buildStatusItems() []statusItem {
 // --- Key handler ---
 
 func (m model) handleStatusKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Confirm modals
-	if m.status.confirmStart {
-		switch msg.String() {
-		case "y":
-			m.status.confirmStart = false
-			m.server.actionBusy = true
-			m.server.actionMsg = "Starting server..."
-			return m, serverAction(m.server.client, "start")
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			m.status.confirmStart = false
-		}
-		return m, nil
-	}
-	if m.status.confirmStop {
-		switch msg.String() {
-		case "y":
-			m.status.confirmStop = false
-			m.server.actionBusy = true
-			m.server.actionMsg = "Stopping server..."
-			return m, serverAction(m.server.client, "stop")
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			m.status.confirmStop = false
-		}
-		return m, nil
-	}
-	if m.status.confirmRestart {
-		switch msg.String() {
-		case "y":
-			m.status.confirmRestart = false
-			m.server.actionBusy = true
-			m.server.actionMsg = "Restarting server..."
-			return m, serverAction(m.server.client, "restart")
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			m.status.confirmRestart = false
-		}
-		return m, nil
-	}
-
 	items := m.buildStatusItems()
 
 	switch msg.String() {
@@ -238,15 +177,36 @@ func (m model) handleStatusKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "s":
 		if m.isFullMode() && m.server.role == agentapi.RoleAdmin && m.server.client != nil {
-			m.status.confirmStart = true
+			m.confirm = confirmModal{
+				Active: true, Prompt: "Start server?",
+				OnYes: func(m model) (tea.Model, tea.Cmd) {
+					m.server.actionBusy = true
+					m.server.actionMsg = "Starting server..."
+					return m, serverAction(m.server.client, "start")
+				},
+			}
 		}
 	case "d":
 		if m.isFullMode() && m.server.role == agentapi.RoleAdmin && m.server.client != nil {
-			m.status.confirmStop = true
+			m.confirm = confirmModal{
+				Active: true, Prompt: "Stop server?",
+				OnYes: func(m model) (tea.Model, tea.Cmd) {
+					m.server.actionBusy = true
+					m.server.actionMsg = "Stopping server..."
+					return m, serverAction(m.server.client, "stop")
+				},
+			}
 		}
 	case "r":
 		if m.isFullMode() && m.server.role == agentapi.RoleAdmin && m.server.client != nil {
-			m.status.confirmRestart = true
+			m.confirm = confirmModal{
+				Active: true, Prompt: "Restart server?",
+				OnYes: func(m model) (tea.Model, tea.Cmd) {
+					m.server.actionBusy = true
+					m.server.actionMsg = "Restarting server..."
+					return m, serverAction(m.server.client, "restart")
+				},
+			}
 		}
 
 	}

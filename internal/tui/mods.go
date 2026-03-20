@@ -53,19 +53,13 @@ type modsState struct {
 	installInput string
 	installBusy  bool
 
-	confirmRemove bool
-
 	pickProfile     bool
 	profiles        []string
 	profileCursor   int
 	creatingProfile bool
 	newProfileInput string
 
-	confirmStart      bool
-	preflightWarnings []string
 	preflightFetching bool
-
-	confirmUpdateAll bool
 
 	// Scope picker (remove only)
 	scopePicker                          bool
@@ -211,16 +205,6 @@ func (m model) viewModsFull() string {
 		return b.String()
 	}
 
-	// Preflight confirmation
-	if m.mods.confirmStart {
-		b.WriteString("\n  \033[33mMod mismatch with server:\033[0m\n\n")
-		for _, w := range m.mods.preflightWarnings {
-			fmt.Fprintf(&b, "    %s\n", w)
-		}
-		b.WriteString("\n  \033[33mStart anyway? (y/n)\033[0m\n\n")
-		return b.String()
-	}
-
 	// Profile picker
 	if m.mods.pickProfile {
 		return m.viewProfilePicker()
@@ -258,40 +242,9 @@ func (m model) viewModsFull() string {
 		return b.String()
 	}
 
-	// Remove confirmation / scope picker
+	// Scope picker
 	if m.mods.scopePicker {
 		return m.viewScopePicker()
-	}
-	if m.mods.confirmRemove {
-		row := m.filteredAuditRow()
-		if row != nil {
-			target := "locally"
-			switch m.mods.filter {
-			case filterServer:
-				target = "from server"
-			case filterModpack:
-				target = "from modpack"
-			}
-			fmt.Fprintf(&b, "\n  \033[33mRemove %s %s? (y/n)\033[0m\n\n", row.Name, target)
-		}
-		return b.String()
-	}
-
-	// Update-all confirmation
-	if m.mods.confirmUpdateAll {
-		fmt.Fprintf(&b, "\n  \033[1mUpdate %d mod(s)?\033[0m\n\n", len(m.local.updates))
-		for name, latest := range m.local.updates {
-			cur := ""
-			for _, mod := range m.local.mods {
-				if mod.FullName() == name {
-					cur = mod.Version
-					break
-				}
-			}
-			fmt.Fprintf(&b, "    \033[33m%s\033[0m  %s → %s\n", name, cur, latest)
-		}
-		b.WriteString("\n  \033[33my update all • any key cancel\033[0m\n\n")
-		return b.String()
 	}
 
 	// Filter header
@@ -344,16 +297,6 @@ func (m model) viewModsLocal() string {
 		return b.String()
 	}
 
-	// Preflight confirmation
-	if m.mods.confirmStart {
-		b.WriteString("\n  \033[33mMod mismatch with server:\033[0m\n\n")
-		for _, w := range m.mods.preflightWarnings {
-			fmt.Fprintf(&b, "    %s\n", w)
-		}
-		b.WriteString("\n  \033[33mStart anyway? (y/n)\033[0m\n\n")
-		return b.String()
-	}
-
 	// Profile picker
 	if m.mods.pickProfile {
 		return m.viewProfilePicker()
@@ -374,32 +317,6 @@ func (m model) viewModsLocal() string {
 			query = "mod"
 		}
 		fmt.Fprintf(&b, "\n  \033[33mInstalling %s...\033[0m\n\n", query)
-		return b.String()
-	}
-
-	// Remove confirmation
-	if m.mods.confirmRemove {
-		if m.mods.cursor >= 0 && m.mods.cursor < len(m.local.mods) {
-			mod := m.local.mods[m.mods.cursor]
-			fmt.Fprintf(&b, "\n  \033[33mRemove %s? (y/n)\033[0m\n\n", mod.FullName())
-		}
-		return b.String()
-	}
-
-	// Update-all confirmation
-	if m.mods.confirmUpdateAll {
-		fmt.Fprintf(&b, "\n  \033[1mUpdate %d mod(s)?\033[0m\n\n", len(m.local.updates))
-		for name, latest := range m.local.updates {
-			cur := ""
-			for _, mod := range m.local.mods {
-				if mod.FullName() == name {
-					cur = mod.Version
-					break
-				}
-			}
-			fmt.Fprintf(&b, "    \033[33m%s\033[0m  %s → %s\n", name, cur, latest)
-		}
-		b.WriteString("\n  \033[33my update all • any key cancel\033[0m\n\n")
 		return b.String()
 	}
 
@@ -524,29 +441,6 @@ func (m model) handleModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.mods.scopePicker {
 		return m.handleModsScopePicker(msg)
 	}
-	// Remove confirmation
-	if m.mods.confirmRemove {
-		return m.handleModsConfirmRemove(msg)
-	}
-	// Start confirmation
-	if m.mods.confirmStart {
-		return m.handleModsConfirmStart(msg)
-	}
-	// Update-all confirmation
-	if m.mods.confirmUpdateAll {
-		switch msg.String() {
-		case "y":
-			m.mods.confirmUpdateAll = false
-			m.mods.installBusy = true
-			m.mods.err = nil
-			return m, updateAllMods(m.paths, m.cfg, m.reg, m.local.updates)
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			m.mods.confirmUpdateAll = false
-		}
-		return m, nil
-	}
 
 	// Clear transient status on any key press
 	m.mods.statusMsg = ""
@@ -614,7 +508,45 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.mods.err = fmt.Errorf("not on server")
 				return m, nil
 			}
-			m.mods.confirmRemove = true
+			modName := row.Name
+			m.confirm = confirmModal{
+				Active: true,
+				Prompt: fmt.Sprintf("Remove %s from server?", modName),
+				OnYes: func(m model) (tea.Model, tea.Cmd) {
+					m.reg.RemoveMod(m.cfg.ActiveProfile, modName)
+					config.SaveRegistry(m.paths, *m.reg)
+					m.refreshMods()
+					m.mods.auditRows = m.buildAuditRows()
+					if m.server.client != nil {
+						return m, removeModFromServer(m.paths, m.cfg, m.reg, m.server.client)
+					}
+					return m, nil
+				},
+			}
+			m.mods.err = nil
+			return m, nil
+		}
+		if m.mods.filter == filterModpack {
+			if row.ModpackVersion == "-" {
+				m.mods.err = fmt.Errorf("not in modpack")
+				return m, nil
+			}
+			modName := row.Name
+			m.confirm = confirmModal{
+				Active: true,
+				Prompt: fmt.Sprintf("Remove %s from modpack?", modName),
+				OnYes: func(m model) (tea.Model, tea.Cmd) {
+					if m.cfg.ModpackPath != "" {
+						if err := modpack.RemoveDep(m.cfg.ModpackPath, modName); err != nil {
+							m.mods.err = err
+						} else {
+							m.modpack.loadFromDisk(m.cfg.ModpackPath)
+							m.mods.auditRows = m.buildAuditRows()
+						}
+					}
+					return m, nil
+				},
+			}
 			m.mods.err = nil
 			return m, nil
 		}
@@ -640,7 +572,15 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mods.scopeModpack = false
 			m.mods.scopeCursor = 0
 		} else {
-			m.mods.confirmRemove = true
+			modName := row.Name
+			m.confirm = confirmModal{
+				Active: true,
+				Prompt: fmt.Sprintf("Remove %s locally?", modName),
+				OnYes: func(m model) (tea.Model, tea.Cmd) {
+					m.modsRemoveMod(modName)
+					return m, nil
+				},
+			}
 		}
 		m.mods.err = nil
 
@@ -764,7 +704,7 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	case "enter":
 		if m.mods.cursor == -1 && len(m.local.updates) > 0 {
-			m.mods.confirmUpdateAll = true
+			m.confirm = buildUpdateAllConfirm(m)
 			return m, nil
 		}
 	}
@@ -787,7 +727,7 @@ func (m model) handleModsKeysLocal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "enter":
 		if m.mods.cursor == -1 && len(m.local.updates) > 0 {
-			m.mods.confirmUpdateAll = true
+			m.confirm = buildUpdateAllConfirm(m)
 			return m, nil
 		}
 	case " ":
@@ -811,7 +751,15 @@ func (m model) handleModsKeysLocal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	case "x":
 		if len(m.local.mods) > 0 && m.mods.cursor >= 0 {
-			m.mods.confirmRemove = true
+			modName := m.local.mods[m.mods.cursor].FullName()
+			m.confirm = confirmModal{
+				Active: true,
+				Prompt: fmt.Sprintf("Remove %s locally?", modName),
+				OnYes: func(m model) (tea.Model, tea.Cmd) {
+					m.modsRemoveMod(modName)
+					return m, nil
+				},
+			}
 			m.mods.err = nil
 		}
 	case "u":
@@ -946,62 +894,6 @@ func (m model) handleModsProfilePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handleModsConfirmRemove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "y":
-		m.mods.confirmRemove = false
-		if m.isFullMode() && m.mods.filter == filterServer {
-			// Remove from server: remove locally then push
-			row := m.filteredAuditRow()
-			if row != nil {
-				m.reg.RemoveMod(m.cfg.ActiveProfile, row.Name)
-				config.SaveRegistry(m.paths, *m.reg)
-				m.refreshMods()
-				m.mods.auditRows = m.buildAuditRows()
-				if m.server.client != nil {
-					return m, removeModFromServer(m.paths, m.cfg, m.reg, m.server.client)
-				}
-			}
-		} else if m.isFullMode() && m.mods.filter == filterModpack {
-			// Remove from modpack
-			row := m.filteredAuditRow()
-			if row != nil && row.ModpackVersion != "-" && m.cfg.ModpackPath != "" {
-				if err := modpack.RemoveDep(m.cfg.ModpackPath, row.Name); err != nil {
-					m.mods.err = err
-				} else {
-					m.modpack.loadFromDisk(m.cfg.ModpackPath)
-					m.mods.auditRows = m.buildAuditRows()
-				}
-			}
-		} else if m.isFullMode() {
-			row := m.filteredAuditRow()
-			if row != nil && row.LocalVersion != "-" {
-				m.modsRemoveMod(row.Name)
-			}
-		} else if m.mods.cursor >= 0 && m.mods.cursor < len(m.local.mods) {
-			m.modsRemoveMod(m.local.mods[m.mods.cursor].FullName())
-		}
-	case "ctrl+c":
-		return m, tea.Quit
-	default:
-		m.mods.confirmRemove = false
-	}
-	return m, nil
-}
-
-func (m model) handleModsConfirmStart(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "y":
-		m.mods.confirmStart = false
-		return m, startGame(m.paths, m.cfg)
-	case "ctrl+c":
-		return m, tea.Quit
-	default:
-		m.mods.confirmStart = false
-	}
-	return m, nil
-}
-
 func (m model) handleModsScopePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	row := m.filteredAuditRow()
 	if row == nil {
@@ -1088,8 +980,7 @@ func (m model) modsStartGame() (tea.Model, tea.Cmd) {
 		}
 		warnings := preflightCheck(m.local.mods, m.server.mods)
 		if len(warnings) > 0 {
-			m.mods.preflightWarnings = warnings
-			m.mods.confirmStart = true
+			m.confirm = buildPreflightConfirm(warnings)
 			return m, nil
 		}
 	}
@@ -1118,6 +1009,48 @@ func (m *model) modsRemoveMod(modName string) {
 		if m.isFullMode() {
 			m.mods.auditRows = m.buildAuditRows()
 		}
+	}
+}
+
+// --- Confirm modal builders ---
+
+func buildPreflightConfirm(warnings []string) confirmModal {
+	var body strings.Builder
+	for _, w := range warnings {
+		fmt.Fprintf(&body, "    %s\n", w)
+	}
+	return confirmModal{
+		Active: true,
+		Prompt: "Mod mismatch with server — start anyway?",
+		Body:   body.String(),
+		OnYes: func(m model) (tea.Model, tea.Cmd) {
+			return m, startGame(m.paths, m.cfg)
+		},
+	}
+}
+
+func buildUpdateAllConfirm(m model) confirmModal {
+	var body strings.Builder
+	for name, latest := range m.local.updates {
+		cur := ""
+		for _, mod := range m.local.mods {
+			if mod.FullName() == name {
+				cur = mod.Version
+				break
+			}
+		}
+		fmt.Fprintf(&body, "    \033[33m%s\033[0m  %s → %s\n", name, cur, latest)
+	}
+	count := len(m.local.updates)
+	return confirmModal{
+		Active: true,
+		Prompt: fmt.Sprintf("Update %d mod(s)?", count),
+		Body:   body.String(),
+		OnYes: func(m model) (tea.Model, tea.Cmd) {
+			m.mods.installBusy = true
+			m.mods.err = nil
+			return m, updateAllMods(m.paths, m.cfg, m.reg, m.local.updates)
+		},
 	}
 }
 
@@ -1244,6 +1177,8 @@ func auditModerationText(anticheat, system string) string {
 		return "greylist"
 	case "adminonly":
 		return "admin only"
+	case "serveronly":
+		return "server only"
 	default:
 		return "-"
 	}
@@ -1257,6 +1192,8 @@ func auditModerationColor(anticheat, text string) string {
 		return "\033[33m" + text + "\033[0m"
 	case "adminonly":
 		return "\033[35m" + text + "\033[0m"
+	case "serveronly":
+		return "\033[34m" + text + "\033[0m"
 	default:
 		return "\033[2m" + text + "\033[0m"
 	}

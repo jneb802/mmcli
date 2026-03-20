@@ -43,7 +43,6 @@ type modpackModel struct {
 	pathInput    string
 
 	// Mod actions state
-	confirmRemove    bool
 	depUpdates       map[string]string // Owner-Name -> latest version
 	checkingUpdates  bool
 	updatingDep      bool

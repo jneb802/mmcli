@@ -69,6 +69,7 @@ type model struct {
 	server          serverModel
 	sync            syncModel
 	modpack         modpackModel
+	confirm         confirmModal
 	width           int
 	height          int
 	anticheatSystem string // resolved: "azu" or "enforcer"
@@ -283,8 +284,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			warnings := preflightCheck(m.local.mods, m.server.mods)
 			if len(warnings) > 0 {
-				m.mods.preflightWarnings = warnings
-				m.mods.confirmStart = true
+				m.confirm = buildPreflightConfirm(warnings)
 				return m, nil
 			}
 			return m, startGame(m.paths, m.cfg)
@@ -307,7 +307,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case serverPushMsg:
 		m.server.actionBusy = false
-		m.sync.confirmModPush = false
 		if msg.err != nil {
 			m.server.statusErr = msg.err
 		} else {
@@ -541,28 +540,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
+		// Global confirmation modal takes priority over all tab dispatch
+		if m.confirm.Active {
+			return m.handleConfirm(msg)
+		}
+
 		// Mods tab — delegate fully to mods handler (it handles its own modals)
 		if m.activeTab == tabMods {
-			if m.mods.installing || m.mods.pickProfile || m.mods.scopePicker ||
-				m.mods.confirmRemove || m.mods.confirmStart || m.mods.confirmUpdateAll {
+			if m.mods.installing || m.mods.pickProfile || m.mods.scopePicker {
 				return m.handleModsKeys(msg)
 			}
 		}
 
 		// Changes tab modals (must be checked before global keys)
 		if m.activeTab == tabChanges {
-			if m.sync.pushResult || m.sync.confirmModPush ||
-				m.sync.confirmConfigPush || m.sync.configPushBusy || m.server.actionBusy {
+			if m.sync.pushResult || m.sync.configPushBusy || m.server.actionBusy {
 				return m.handleChangesKeys(msg)
 			}
 		}
 
-		// Status tab modals (must be checked before global keys)
-		if m.activeTab == tabStatus {
-			if m.status.confirmStart || m.status.confirmStop || m.status.confirmRestart {
-				return m.handleStatusKeys(msg)
-			}
-		}
+		// (Status tab confirms now use global confirmModal)
 
 		// Settings tab modals (must be checked before global keys)
 		if m.activeTab == tabSettings {
@@ -609,6 +606,11 @@ func (m model) View() string {
 	var b strings.Builder
 	b.WriteString(m.renderTabBar())
 	b.WriteString(renderSeparator(m.width))
+
+	if m.confirm.Active {
+		b.WriteString(m.confirm.View())
+		return b.String()
+	}
 
 	switch m.activeTab {
 	case tabMods:

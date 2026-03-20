@@ -35,14 +35,11 @@ type syncModel struct {
 	auditCursor int
 	auditRows   []auditRow
 
-	// Push state (mods — shared by Mods and Moderation tabs)
-	confirmModPush   bool
-	pushScroll       int
+	// Push state (mods)
 	pushResult       bool // showing push result screen
 	pushResultScroll int
 
 	// Push state (configs)
-	confirmConfigPush bool
 	configPushBusy    bool
 	lastConfigPush    *agentapi.ConfigPushResponse
 }
@@ -290,8 +287,18 @@ func (m model) handleSyncModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.sync.modItems = items
-		m.sync.confirmModPush = true
-		m.sync.pushScroll = 0
+		var body strings.Builder
+		renderPushConfirm(&body, m.server.serverName, m.cfg.ActiveProfile, items, 0, m.server.status)
+		m.confirm = confirmModal{
+			Active: true,
+			Prompt: fmt.Sprintf("Push mods to %s?", m.server.serverName),
+			Body:   body.String(),
+			OnYes: func(m model) (tea.Model, tea.Cmd) {
+				m.server.actionBusy = true
+				m.server.actionMsg = "Pushing mods..."
+				return m, pushMods(m.server.client, m.paths, m.cfg, *m.reg)
+			},
+		}
 		return m, nil
 	}
 	return m, nil
@@ -314,7 +321,14 @@ func (m model) handleSyncConfigsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if len(m.sync.configItems) == 0 {
 			return m, nil
 		}
-		m.sync.confirmConfigPush = true
+		m.confirm = confirmModal{
+			Active: true,
+			Prompt: "Push all config changes to server?",
+			OnYes: func(m model) (tea.Model, tea.Cmd) {
+				m.sync.configPushBusy = true
+				return m, pushAllConfigs(m.server.client, m.paths, m.cfg)
+			},
+		}
 		return m, nil
 	case "r":
 		// Refresh config diffs
