@@ -444,7 +444,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case serverTickMsg:
 		// Silent background refresh — no "fetching..." indicator
 		if m.isFullMode() && !m.server.fetching && !m.server.actionBusy {
-			return m, tea.Batch(fetchServerStatus(m.server.client), serverTick())
+			cmds := []tea.Cmd{fetchServerStatus(m.server.client), serverTick()}
+			// Refresh settings and webhook config if on Settings tab
+			if m.activeTab == tabSettings && m.server.client != nil && !m.server.editor.active {
+				cmds = append(cmds, fetchSettings(m.server.client), fetchWebhookConfig(m.server.client))
+			}
+			return m, tea.Batch(cmds...)
 		}
 		return m, nil
 
@@ -656,16 +661,10 @@ func (m *model) switchTab(to flatTab) tea.Cmd {
 	case tabStatus:
 		return nil
 	case tabSettings:
-		var cmds []tea.Cmd
 		if m.isFullMode() && m.server.client != nil {
-			if m.server.settings == nil {
-				cmds = append(cmds, fetchSettings(m.server.client))
-			}
-			if m.server.webhookCfg == nil {
-				cmds = append(cmds, fetchWebhookConfig(m.server.client))
-			}
+			return tea.Batch(fetchSettings(m.server.client), fetchWebhookConfig(m.server.client))
 		}
-		return tea.Batch(cmds...)
+		return nil
 	case tabChanges:
 		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
 		return nil
