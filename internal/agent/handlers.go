@@ -283,9 +283,11 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 	} else if h.lastAPIPlugins != nil {
 		apiPlugins = h.lastAPIPlugins // use cached result
 	}
+	var apiMatched map[string]ModMatch
 	if apiPlugins != nil {
 		apiQueried = true
 		matched, unmatched := MatchAPIToMods(apiPlugins, modMap, manifestNames)
+		apiMatched = matched
 
 		// Update matched mods with loaded status (and version if exact match)
 		for dirName, m := range matched {
@@ -323,6 +325,17 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 					info.Version = lp.Version
 					t := true
 					info.Loaded = &t
+				}
+			}
+		}
+	}
+
+	// Layer 4: Enforcer Mods.yaml overlay (makes manual edits authoritative)
+	if enforcerAC := readEnforcerClassifications(h.cfg.BepInExDir()); enforcerAC != nil && apiMatched != nil {
+		for dirName, m := range apiMatched {
+			if ac, ok := enforcerAC[m.Plugin.GUID]; ok {
+				if info, ok := modMap[dirName]; ok {
+					info.Anticheat = ac
 				}
 			}
 		}

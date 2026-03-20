@@ -100,7 +100,7 @@ type ActionResponse struct {
 // ModerationUpdateRequest sets the anticheat classification for a single mod.
 type ModerationUpdateRequest struct {
 	ModName   string `json:"mod_name"`   // Thunderstore name (e.g. "RandyKnapp-EpicLoot")
-	Anticheat string `json:"anticheat"`  // "whitelist", "greylist", "adminonly", ""
+	Anticheat string `json:"anticheat"`  // "whitelist", "greylist", "adminonly", "serveronly", ""
 }
 
 type ModListResponse struct {

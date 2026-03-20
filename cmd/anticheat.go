@@ -9,7 +9,7 @@ import (
 )
 
 var anticheatCmd = &cobra.Command{
-	Use:   "anticheat <mod> <whitelist|greylist|adminonly|none>",
+	Use:   "anticheat <mod> <whitelist|greylist|adminonly|serveronly|none>",
 	Short: "Set anticheat classification for a mod",
 	Long: `Classify a mod for server-side anticheat enforcement.
 
@@ -20,6 +20,7 @@ are installed and configures each one automatically on push.
   whitelist  - players MUST have this mod (required)
   greylist   - players MAY have this mod (optional)
   adminonly  - only admins need this mod (ValheimEnforcer only)
+  serveronly - server-side only mod (ValheimEnforcer only)
   none       - remove anticheat classification
 
 AzuAntiCheat: classified mod DLLs are copied into the appropriate
@@ -37,8 +38,8 @@ Dependencies are automatically classified to match.`,
 		modName := args[0]
 		classification := args[1]
 
-		if classification != "whitelist" && classification != "greylist" && classification != "adminonly" && classification != "none" {
-			return fmt.Errorf("classification must be 'whitelist', 'greylist', 'adminonly', or 'none'")
+		if classification != "whitelist" && classification != "greylist" && classification != "adminonly" && classification != "serveronly" && classification != "none" {
+			return fmt.Errorf("classification must be 'whitelist', 'greylist', 'adminonly', 'serveronly', or 'none'")
 		}
 
 		paths, cfg, err := loadConfig()

@@ -50,7 +50,7 @@ type modListItem struct {
 	Version        string
 	Disabled       bool
 	Update         string // latest version, empty if no update
-	Anticheat      string // "whitelist", "greylist", or ""
+	Anticheat      string // "whitelist", "greylist", "adminonly", "serveronly", or ""
 	Status         string // push diff: "added", "removed", "changed", "" (unchanged)
 	ServerVersion  string // push diff: previous version on server (for "changed" items)
 	ModpackVersion string // modpack version (for sync view)
