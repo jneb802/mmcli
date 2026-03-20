@@ -296,7 +296,21 @@ func (m model) viewModsFull() string {
 	// Filter header
 	filterLabel := modFilterName(m.mods.filter)
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "  \033[1mMods\033[0m  \033[2m[%s]\033[0m  \033[2m%s\033[0m\n\n", filterLabel, m.cfg.ActiveProfile)
+	fmt.Fprintf(&b, "  \033[1mMods\033[0m  \033[2m[%s]\033[0m  \033[2m%s\033[0m\n", filterLabel, m.cfg.ActiveProfile)
+
+	// Pending restart indicator (server filter only)
+	if m.mods.filter == filterServer {
+		pendingCount := 0
+		for _, r := range m.mods.auditRows {
+			if r.LocalVersion != "-" && r.ServerVersion != "-" && r.LocalVersion != r.ServerVersion {
+				pendingCount++
+			}
+		}
+		if pendingCount > 0 {
+			fmt.Fprintf(&b, "  \033[33m%d mod(s) pending restart\033[0m\n", pendingCount)
+		}
+	}
+	b.WriteString("\n")
 
 	// Audit list
 	rows := filterAuditRows(m.mods.auditRows, m.mods.filter)
@@ -945,6 +959,17 @@ func (m model) handleModsConfirmRemove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.mods.auditRows = m.buildAuditRows()
 				if m.server.client != nil {
 					return m, removeModFromServer(m.paths, m.cfg, m.reg, m.server.client)
+				}
+			}
+		} else if m.isFullMode() && m.mods.filter == filterModpack {
+			// Remove from modpack
+			row := m.filteredAuditRow()
+			if row != nil && row.ModpackVersion != "-" && m.cfg.ModpackPath != "" {
+				if err := modpack.RemoveDep(m.cfg.ModpackPath, row.Name); err != nil {
+					m.mods.err = err
+				} else {
+					m.modpack.loadFromDisk(m.cfg.ModpackPath)
+					m.mods.auditRows = m.buildAuditRows()
 				}
 			}
 		} else if m.isFullMode() {

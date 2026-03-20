@@ -664,7 +664,7 @@ func fetchLaunchConfigsForEditor(c *client.AgentClient) tea.Cmd {
 }
 
 func serverTick() tea.Cmd {
-	return tea.Tick(30*time.Second, func(time.Time) tea.Msg {
+	return tea.Tick(5*time.Second, func(time.Time) tea.Msg {
 		return serverTickMsg{}
 	})
 }
