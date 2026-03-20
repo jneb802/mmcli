@@ -194,11 +194,15 @@ func buildStatusEmbed(running bool, status *ModAPIStatus, players []ModAPIPlayer
 	// Mod lists from manifest
 	var required, optional []string
 	for _, m := range manifestMods {
+		entry := m.Name
+		if m.Version != "" {
+			entry += " v" + m.Version
+		}
 		switch m.Anticheat {
 		case "whitelist":
-			required = append(required, m.Name)
+			required = append(required, entry)
 		case "greylist":
-			optional = append(optional, m.Name)
+			optional = append(optional, entry)
 		}
 	}
 	if len(required) > 0 {
@@ -223,20 +227,17 @@ func buildStatusEmbed(running bool, status *ModAPIStatus, players []ModAPIPlayer
 	}
 }
 
-func truncateModList(names []string) string {
+func truncateModList(entries []string) string {
 	var b strings.Builder
-	for i, name := range names {
-		entry := name
-		if i < len(names)-1 {
-			entry += ", "
-		}
-		if b.Len()+len(entry) > maxFieldLen {
-			fmt.Fprintf(&b, "... and %d more", len(names)-i)
+	for i, entry := range entries {
+		line := "• " + entry + "\n"
+		if b.Len()+len(line) > maxFieldLen {
+			fmt.Fprintf(&b, "… and %d more", len(entries)-i)
 			break
 		}
-		b.WriteString(entry)
+		b.WriteString(line)
 	}
-	return b.String()
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func createDiscordEmbed(webhookURL string, msg discordEmbedMessage) (string, error) {

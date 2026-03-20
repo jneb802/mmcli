@@ -221,11 +221,6 @@ func renderLogViewer(b *strings.Builder, lv logViewerState) {
 			fmt.Fprintf(b, "  %s\n", line)
 		}
 	}
-	hints := "↑/↓ scroll • esc back"
-	if lv.live && !lv.following {
-		hints = "↑/↓ scroll • f follow • esc back"
-	}
-	fmt.Fprintf(b, "\n  \033[2m%s\033[0m\n\n", hints)
 }
 
 // waitForLogLines returns a tea.Cmd that blocks on a channel for new log lines.

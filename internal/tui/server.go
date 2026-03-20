@@ -243,13 +243,17 @@ func (m model) buildServerStatusItems() []settingsItem {
 	})
 
 	// World
+	worldVal := "\033[2m–\033[0m"
 	if m.server.status != nil && m.server.status.World != "" {
-		items = append(items, settingsItem{
-			label:   "World",
-			value:   m.server.status.World,
-			tooltip: "Name of the active Valheim world save.",
-		})
+		worldVal = m.server.status.World
+	} else if m.server.settings != nil && m.server.settings.World != "" {
+		worldVal = m.server.settings.World
 	}
+	items = append(items, settingsItem{
+		label:   "World",
+		value:   worldVal,
+		tooltip: "Name of the active Valheim world save.",
+	})
 
 	// Last restart
 	var restartVal string
@@ -608,29 +612,16 @@ func streamServerLogs(c *client.AgentClient) (tea.Cmd, <-chan []string, chan str
 			defer close(ch)
 			scanner := bufio.NewScanner(body)
 			scanner.Buffer(make([]byte, 0, 256*1024), 256*1024)
-			var batch []string
 			for scanner.Scan() {
 				select {
 				case <-stop:
 					return
 				default:
 				}
-				batch = append(batch, scanner.Text())
-				// Send batch when channel is ready (non-blocking) or batch is large
-				if len(batch) >= 50 {
-					select {
-					case ch <- batch:
-						batch = nil
-					case <-stop:
-						return
-					}
-				}
-			}
-			// Flush remaining
-			if len(batch) > 0 {
 				select {
-				case ch <- batch:
+				case ch <- []string{scanner.Text()}:
 				case <-stop:
+					return
 				}
 			}
 		}()
