@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"mmcli/internal/agentapi"
+	"mmcli/internal/client"
 	"mmcli/internal/config"
 )
 
@@ -24,6 +25,15 @@ type settingsTabState struct {
 	// Modpack editing
 	editingField int // -1=none, 0=token, 1=author, 2=path
 	fieldInput   string
+
+	// Admin list modal
+	adminList    bool
+	adminCursor  int
+	adminAdding  bool
+	adminEditing bool
+	adminInput   string
+	adminIDs     []string // working copy
+	adminSaving  bool
 }
 
 // --- Settings item used by this tab ---
@@ -66,6 +76,11 @@ func (m model) viewSettingsTab() string {
 		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.settingsTab.fieldInput)
 		b.WriteString("\n  \033[2menter save • esc cancel\033[0m\n\n")
 		return b.String()
+	}
+
+	// Admin list modal
+	if m.settingsTab.adminList {
+		return m.viewAdminList()
 	}
 
 	// Server settings editor (takes over the whole view)
@@ -167,6 +182,23 @@ func (m model) buildSettingsTabItems() []settingsTabItem {
 		tooltip:  "Edit world settings, manage launch configs. Opens the server settings editor.",
 		editable: true,
 		action:   "server-editor",
+	})
+
+	// Admin list
+	adminCount := 0
+	if m.server.settings != nil {
+		adminCount = len(m.server.settings.Admins)
+	}
+	adminVal := fmt.Sprintf("%d entries", adminCount)
+	if adminCount == 0 {
+		adminVal = "\033[2mnone\033[0m"
+	}
+	items = append(items, settingsTabItem{
+		label:    "Admin List",
+		value:    adminVal,
+		tooltip:  "Steam IDs with admin permissions on the server.",
+		editable: true,
+		action:   "admin-list",
 	})
 
 	// --- Modpack section ---
@@ -311,6 +343,11 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Admin list modal
+	if m.settingsTab.adminList {
+		return m.handleAdminListKeys(msg)
+	}
+
 	// Server settings editor
 	if m.server.editor.active {
 		return m.handleSettingsEditor(msg)
@@ -372,6 +409,15 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, fetchLaunchConfigsForEditor(m.server.client)
 			}
+		case "admin-list":
+			if m.server.role == agentapi.RoleAdmin && m.server.settings != nil {
+				m.settingsTab.adminList = true
+				m.settingsTab.adminCursor = 0
+				m.settingsTab.adminAdding = false
+				m.settingsTab.adminEditing = false
+				m.settingsTab.adminInput = ""
+				m.settingsTab.adminIDs = append([]string{}, m.server.settings.Admins...)
+			}
 		case "modpack-field-0":
 			m.settingsTab.editingField = 0
 			m.settingsTab.fieldInput = m.cfg.ThunderstoreToken
@@ -392,4 +438,130 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// --- Admin list modal ---
+
+type adminSaveDoneMsg struct{ err error }
+
+func (m model) viewAdminList() string {
+	var b strings.Builder
+
+	if m.settingsTab.adminAdding || m.settingsTab.adminEditing {
+		label := "Add Steam ID"
+		if m.settingsTab.adminEditing {
+			label = "Edit Steam ID"
+		}
+		fmt.Fprintf(&b, "\n  %s:\n\n", label)
+		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.settingsTab.adminInput)
+		b.WriteString("\n  \033[2menter save • esc cancel\033[0m\n\n")
+		return b.String()
+	}
+
+	if m.settingsTab.adminSaving {
+		b.WriteString("\n  \033[33mSaving admin list...\033[0m\n\n")
+		return b.String()
+	}
+
+	b.WriteString("\n  \033[1mAdmin List\033[0m\n\n")
+
+	if len(m.settingsTab.adminIDs) == 0 {
+		b.WriteString("  \033[2mNo admins configured.\033[0m\n")
+	} else {
+		for i, id := range m.settingsTab.adminIDs {
+			cursor := "    "
+			if i == m.settingsTab.adminCursor {
+				cursor = "  \033[36m>\033[0m "
+			}
+			fmt.Fprintf(&b, "%s%s\n", cursor, id)
+		}
+	}
+
+	b.WriteString("\n")
+	hotkeys := []string{"↑/↓ navigate", "a add", "e edit", "x remove", "esc back"}
+	renderHotkeyBar(&b, hotkeys, m.width)
+	return b.String()
+}
+
+func (m model) handleAdminListKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	// Text input mode (add/edit)
+	if m.settingsTab.adminAdding || m.settingsTab.adminEditing {
+		switch msg.String() {
+		case "esc":
+			m.settingsTab.adminAdding = false
+			m.settingsTab.adminEditing = false
+		case "enter":
+			id := strings.TrimSpace(m.settingsTab.adminInput)
+			if id != "" {
+				if m.settingsTab.adminAdding {
+					m.settingsTab.adminIDs = append(m.settingsTab.adminIDs, id)
+					m.settingsTab.adminCursor = len(m.settingsTab.adminIDs) - 1
+				} else if m.settingsTab.adminEditing && m.settingsTab.adminCursor < len(m.settingsTab.adminIDs) {
+					m.settingsTab.adminIDs[m.settingsTab.adminCursor] = id
+				}
+				m.settingsTab.adminAdding = false
+				m.settingsTab.adminEditing = false
+				// Save immediately
+				m.settingsTab.adminSaving = true
+				return m, saveAdminList(m.server.client, m.settingsTab.adminIDs)
+			}
+		case "backspace":
+			if len(m.settingsTab.adminInput) > 0 {
+				m.settingsTab.adminInput = m.settingsTab.adminInput[:len(m.settingsTab.adminInput)-1]
+			}
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+				m.settingsTab.adminInput += string(msg.Runes)
+			}
+		}
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "esc", "q":
+		m.settingsTab.adminList = false
+	case "up", "k":
+		if m.settingsTab.adminCursor > 0 {
+			m.settingsTab.adminCursor--
+		}
+	case "down", "j":
+		if m.settingsTab.adminCursor < len(m.settingsTab.adminIDs)-1 {
+			m.settingsTab.adminCursor++
+		}
+	case "a":
+		m.settingsTab.adminAdding = true
+		m.settingsTab.adminInput = ""
+	case "e":
+		if m.settingsTab.adminCursor < len(m.settingsTab.adminIDs) {
+			m.settingsTab.adminEditing = true
+			m.settingsTab.adminInput = m.settingsTab.adminIDs[m.settingsTab.adminCursor]
+		}
+	case "x", "d":
+		if m.settingsTab.adminCursor < len(m.settingsTab.adminIDs) {
+			m.settingsTab.adminIDs = append(m.settingsTab.adminIDs[:m.settingsTab.adminCursor], m.settingsTab.adminIDs[m.settingsTab.adminCursor+1:]...)
+			if m.settingsTab.adminCursor >= len(m.settingsTab.adminIDs) && m.settingsTab.adminCursor > 0 {
+				m.settingsTab.adminCursor--
+			}
+			// Save immediately
+			m.settingsTab.adminSaving = true
+			return m, saveAdminList(m.server.client, m.settingsTab.adminIDs)
+		}
+	case "ctrl+c":
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func saveAdminList(c *client.AgentClient, admins []string) tea.Cmd {
+	return func() tea.Msg {
+		if c == nil {
+			return adminSaveDoneMsg{err: fmt.Errorf("no server connection")}
+		}
+		_, err := c.UpdateSettings(&agentapi.SettingsUpdateRequest{
+			Admins: admins,
+		})
+		return adminSaveDoneMsg{err: err}
+	}
 }

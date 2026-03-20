@@ -731,6 +731,14 @@ func (h *Handlers) HandleSettingsUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Write permission files if updated
+	if req.Admins != nil {
+		saveDir := h.resolveSaveDir()
+		if err := writePermissionFile(filepath.Join(saveDir, "adminlist.txt"), settings.Admins); err != nil {
+			log.Printf("Warning: failed to write adminlist.txt: %v", err)
+		}
+	}
+
 	log.Printf("Settings updated: %s", h.cfg.ResolvedStartScript())
 	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "settings updated"})
 }

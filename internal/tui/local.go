@@ -15,6 +15,7 @@ import (
 	"mmcli/internal/client"
 	"mmcli/internal/config"
 	"mmcli/internal/installer"
+	"mmcli/internal/modpack"
 	"mmcli/internal/profile"
 	"mmcli/internal/thunderstore"
 )
@@ -425,6 +426,58 @@ func updateMod(paths config.Paths, cfg config.Config, reg *config.Registry, full
 			defer func() { os.Stdout = old }()
 		}
 		return installDoneMsg{err: installer.Update(paths, cfg, reg, fullName)}
+	}
+}
+
+func pushToServer(paths config.Paths, cfg config.Config, reg *config.Registry, c *client.AgentClient) tea.Cmd {
+	return func() tea.Msg {
+		if c == nil {
+			return installDoneMsg{err: fmt.Errorf("no server connection")}
+		}
+		manifest := profile.BuildManifest(cfg.ActiveProfile, *reg)
+		uploads, err := profile.BuildUploads(paths, cfg.ActiveProfile, manifest, *reg)
+		if err != nil {
+			return installDoneMsg{err: fmt.Errorf("push failed: %w", err)}
+		}
+		if _, err := c.SyncMods(manifest, uploads); err != nil {
+			return installDoneMsg{err: fmt.Errorf("push failed: %w", err)}
+		}
+		return installDoneMsg{}
+	}
+}
+
+func updateModToServer(paths config.Paths, cfg config.Config, reg *config.Registry, fullName string, c *client.AgentClient) tea.Cmd {
+	return func() tea.Msg {
+		old := os.Stdout
+		if devnull, err := os.Open(os.DevNull); err == nil {
+			os.Stdout = devnull
+			defer devnull.Close()
+			defer func() { os.Stdout = old }()
+		}
+		if err := installer.Update(paths, cfg, reg, fullName); err != nil {
+			return installDoneMsg{err: err}
+		}
+		if c != nil {
+			config.SaveRegistry(paths, *reg)
+			manifest := profile.BuildManifest(cfg.ActiveProfile, *reg)
+			uploads, err := profile.BuildUploads(paths, cfg.ActiveProfile, manifest, *reg)
+			if err != nil {
+				return installDoneMsg{err: fmt.Errorf("updated locally but push failed: %w", err)}
+			}
+			if _, err := c.SyncMods(manifest, uploads); err != nil {
+				return installDoneMsg{err: fmt.Errorf("updated locally but push failed: %w", err)}
+			}
+		}
+		return installDoneMsg{}
+	}
+}
+
+func updateModpackDep(modpackPath, fullName, newVersion string) tea.Cmd {
+	return func() tea.Msg {
+		if err := modpack.UpdateDep(modpackPath, fullName, newVersion); err != nil {
+			return installDoneMsg{err: err}
+		}
+		return installDoneMsg{}
 	}
 }
 

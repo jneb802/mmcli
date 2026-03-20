@@ -165,14 +165,22 @@ func DetectLocalMods(pluginsDir string, registered map[string]ModEntry) []ModEnt
 				})
 			}
 		} else if strings.HasSuffix(strings.ToLower(name), ".dll.old") {
+			modName := strings.TrimSuffix(name, ".dll.old")
+			if knownDirs[modName] {
+				continue
+			}
 			locals = append(locals, ModEntry{
-				Name:     strings.TrimSuffix(name, ".dll.old"),
+				Name:     modName,
 				IsLocal:  true,
 				Disabled: true,
 			})
 		} else if strings.HasSuffix(strings.ToLower(name), ".dll") {
+			modName := strings.TrimSuffix(name, filepath.Ext(name))
+			if knownDirs[modName] {
+				continue
+			}
 			locals = append(locals, ModEntry{
-				Name:    strings.TrimSuffix(name, filepath.Ext(name)),
+				Name:    modName,
 				IsLocal: true,
 			})
 		}

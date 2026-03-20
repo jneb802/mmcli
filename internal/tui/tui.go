@@ -160,13 +160,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.mods.err = nil
 			m.local.err = nil
+			m.mods.statusMsg = "Done"
 			config.SaveRegistry(m.paths, *m.reg)
 			m.refreshMods()
 			if m.isFullMode() {
+				m.modpack.loadFromDisk(m.cfg.ModpackPath)
 				m.mods.auditRows = m.buildAuditRows()
 			}
 			m.local.checkingUpdates = true
 			return m, checkUpdates(m.local.mods)
+		}
+		return m, nil
+
+	case adminSaveDoneMsg:
+		m.settingsTab.adminSaving = false
+		if msg.err != nil {
+			m.mods.err = msg.err
+		} else if m.server.settings != nil {
+			m.server.settings.Admins = m.settingsTab.adminIDs
 		}
 		return m, nil
 

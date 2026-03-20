@@ -212,6 +212,9 @@ func ApplySettingsUpdate(current *agentapi.SettingsResponse, req *agentapi.Setti
 	if req.SetKeys != nil {
 		current.SetKeys = req.SetKeys
 	}
+	if req.Admins != nil {
+		current.Admins = req.Admins
+	}
 }
 
 // tokenizeExecLine splits a command line respecting quoted strings.
@@ -310,6 +313,18 @@ func parseExecArgs(args []string) *agentapi.SettingsResponse {
 	}
 
 	return s
+}
+
+// readPermissionFile reads a Valheim permission file (adminlist.txt etc.)
+// writePermissionFile writes a Valheim permission file (adminlist.txt etc.).
+func writePermissionFile(path string, ids []string) error {
+	var b strings.Builder
+	b.WriteString("// List of Steam IDs\n")
+	for _, id := range ids {
+		b.WriteString(id)
+		b.WriteByte('\n')
+	}
+	return os.WriteFile(path, []byte(b.String()), 0644)
 }
 
 // readPermissionFile reads a Valheim permission file (adminlist.txt etc.)

@@ -214,6 +214,7 @@ type SettingsUpdateRequest struct {
 	Preset       *string           `json:"preset,omitempty"`
 	Modifiers    map[string]string `json:"modifiers,omitempty"`
 	SetKeys      []string          `json:"setkeys,omitempty"`
+	Admins       []string          `json:"admins,omitempty"`
 }
 
 type ConfigPushResponse struct {

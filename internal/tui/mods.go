@@ -71,7 +71,8 @@ type modsState struct {
 	scopeLocal, scopeServer, scopeModpack bool
 	scopeCursor                          int // 0=local, 1=server, 2=modpack
 
-	err error
+	err       error
+	statusMsg string // transient success message (cleared on next action)
 }
 
 // --- Audit row (moved from sync.go) ---
@@ -297,8 +298,10 @@ func (m model) viewModsFull() string {
 	b.WriteString("\n")
 	if m.mods.err != nil {
 		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.mods.err)
+	} else if m.mods.statusMsg != "" {
+		fmt.Fprintf(&b, "  \033[32m%s\033[0m\n", m.mods.statusMsg)
 	}
-	hotkeys := []string{"↑/↓ navigate", "f filter", "space toggle", "x remove", "i install", "u update", "t target", "a moderation", "c config", "p profile", "s start"}
+	hotkeys := []string{"↑/↓ navigate", "f filter", "x remove", "i install", "u update", "t target", "a moderation", "c config", "p profile", "s start"}
 	hotkeys = append(hotkeys, "tab next", "q quit")
 	renderHotkeyBar(&b, hotkeys, m.width)
 
@@ -401,6 +404,8 @@ func (m model) viewModsLocal() string {
 	b.WriteString("\n")
 	if m.mods.err != nil {
 		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.mods.err)
+	} else if m.mods.statusMsg != "" {
+		fmt.Fprintf(&b, "  \033[32m%s\033[0m\n", m.mods.statusMsg)
 	}
 	hotkeys := []string{"↑/↓ navigate", "space toggle", "x remove", "u update", "i install", "c config", "o open folder", "s start", "p profile"}
 	hotkeys = append(hotkeys, "tab next", "q quit")
@@ -516,6 +521,9 @@ func (m model) handleModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Clear transient status on any key press
+	m.mods.statusMsg = ""
+
 	// Shared actions (same in full and local-only mode)
 	switch msg.String() {
 	case "i":
@@ -568,32 +576,6 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.mods.cursor = 0
 
-	case " ":
-		// Toggle enabled/disabled (local only)
-		if n == 0 {
-			return m, nil
-		}
-		row := rows[m.mods.cursor]
-		mod, ok := m.reg.GetMod(m.cfg.ActiveProfile, row.Name)
-		if !ok {
-			return m, nil
-		}
-		if mod.IsLocal {
-			pluginsDir := m.paths.ProfilePluginsDir(m.cfg.ActiveProfile)
-			if err := installer.ToggleLocalMod(pluginsDir, mod); err != nil {
-				m.mods.err = err
-			} else {
-				m.mods.err = nil
-			}
-		} else if err := installer.Toggle(m.paths, m.cfg, m.reg, mod.FullName()); err != nil {
-			m.mods.err = err
-		} else {
-			m.mods.err = nil
-			config.SaveRegistry(m.paths, *m.reg)
-		}
-		m.refreshMods()
-		m.mods.auditRows = m.buildAuditRows()
-
 	case "x":
 		// Remove — context-sensitive based on active filter
 		if n == 0 {
@@ -636,11 +618,48 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mods.err = nil
 
 	case "u":
-		// Update selected mod if update available
+		// Update selected mod — context-sensitive based on active filter
 		if n == 0 {
 			return m, nil
 		}
 		row := rows[m.mods.cursor]
+		if m.mods.filter == filterServer {
+			// Update on server: push local version if local differs from server
+			if row.ServerVersion != "-" && row.LocalVersion != "-" && row.ServerVersion != row.LocalVersion {
+				// Local and server differ — just push to sync
+				m.mods.installBusy = true
+				m.mods.err = nil
+				return m, pushToServer(m.paths, m.cfg, m.reg, m.server.client)
+			}
+			// Otherwise check for Thunderstore update
+			if _, ok := m.local.updates[row.Name]; !ok {
+				m.mods.err = fmt.Errorf("no update available")
+				return m, nil
+			}
+			m.mods.installBusy = true
+			m.mods.err = nil
+			return m, updateModToServer(m.paths, m.cfg, m.reg, row.Name, m.server.client)
+		}
+		if m.mods.filter == filterModpack {
+			// Update modpack dep to match local version
+			mod, ok := m.reg.GetMod(m.cfg.ActiveProfile, row.Name)
+			if !ok || mod.Version == "" {
+				m.mods.err = fmt.Errorf("not in local registry")
+				return m, nil
+			}
+			if row.ModpackVersion == mod.Version {
+				m.mods.err = fmt.Errorf("modpack already up to date")
+				return m, nil
+			}
+			if m.cfg.ModpackPath == "" {
+				m.mods.err = fmt.Errorf("no modpack configured")
+				return m, nil
+			}
+			m.mods.installBusy = true
+			m.mods.err = nil
+			return m, updateModpackDep(m.cfg.ModpackPath, row.Name, mod.Version)
+		}
+		// Default: update locally
 		if _, ok := m.local.updates[row.Name]; ok {
 			m.mods.installBusy = true
 			m.mods.err = nil
