@@ -47,6 +47,7 @@ func Run(cfg AgentConfig, addr, version string) error {
 	mux.HandleFunc("POST "+agentapi.PathUpdate, adminOnly(h.HandleUpdate))
 	mux.HandleFunc("GET "+agentapi.PathWorlds, h.HandleWorldsList)
 	mux.HandleFunc("POST "+agentapi.PathWorldUpload, adminOnly(h.HandleWorldUpload))
+	mux.HandleFunc("POST "+agentapi.PathWorldDelete, adminOnly(h.HandleWorldDelete))
 	mux.HandleFunc("GET "+agentapi.PathLaunchConfigs, h.HandleLaunchConfigsList)
 	mux.HandleFunc("POST "+agentapi.PathLaunchConfigs, adminOnly(h.HandleLaunchConfigCreate))
 	mux.HandleFunc("GET "+agentapi.PathLaunchConfigs+"/", h.HandleLaunchConfigGet)

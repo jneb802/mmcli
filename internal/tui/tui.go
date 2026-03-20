@@ -384,6 +384,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case worldDeleteMsg:
+		m.server.editor.worldDeleting = false
+		if msg.err != nil {
+			m.server.editor.worldErr = msg.err.Error()
+		} else {
+			m.server.editor.worldErr = ""
+			// Re-fetch worlds list after delete
+			m.server.editor.worldFetching = true
+			return m, fetchWorlds(m.server.client)
+		}
+		return m, nil
+
 	case editorLCInfoMsg:
 		if msg.err == nil {
 			m.server.editor.lcActive = msg.active

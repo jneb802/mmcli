@@ -164,7 +164,7 @@ func (st *StateTracker) poll(initializing bool) {
 
 func (st *StateTracker) updateEmbed(processRunning bool, status *ModAPIStatus) {
 	wcfg := st.cfg.DiscordWebhook
-	if !wcfg.StatusEmbed || wcfg.URL == "" {
+	if wcfg.StatusEmbedURL == "" {
 		return
 	}
 
@@ -192,7 +192,7 @@ func (st *StateTracker) updateEmbed(processRunning bool, status *ModAPIStatus) {
 
 	// Try to edit existing message
 	if wcfg.StatusEmbedMessageID != "" {
-		if err := editDiscordEmbed(wcfg.URL, wcfg.StatusEmbedMessageID, embed); err == nil {
+		if err := editDiscordEmbed(wcfg.StatusEmbedURL, wcfg.StatusEmbedMessageID, embed); err == nil {
 			return
 		}
 		log.Printf("Discord embed: edit failed, creating new message")
@@ -200,7 +200,7 @@ func (st *StateTracker) updateEmbed(processRunning bool, status *ModAPIStatus) {
 	}
 
 	// Create new message
-	msgID, err := createDiscordEmbed(wcfg.URL, embed)
+	msgID, err := createDiscordEmbed(wcfg.StatusEmbedURL, embed)
 	if err != nil {
 		log.Printf("Discord embed: create failed: %v", err)
 		return

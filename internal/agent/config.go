@@ -29,7 +29,7 @@ type DiscordWebhookConfig struct {
 	PlayerLeft      bool   `json:"player_left"`
 	PlayerDied      bool   `json:"player_died"`
 	PlayerFirstJoin bool   `json:"player_first_join"`
-	StatusEmbed     bool   `json:"status_embed,omitempty"`
+	StatusEmbedURL string `json:"status_embed_url,omitempty"`
 
 	// Internal: persisted message ID for editing the status embed
 	StatusEmbedMessageID string `json:"status_embed_message_id,omitempty"`

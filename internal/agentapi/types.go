@@ -17,8 +17,9 @@ const (
 	PathSettings = "/api/v1/settings"
 	PathUpdate   = "/api/v1/update"
 
-	PathWorlds      = "/api/v1/worlds"
-	PathWorldUpload = "/api/v1/worlds/upload"
+	PathWorlds       = "/api/v1/worlds"
+	PathWorldUpload  = "/api/v1/worlds/upload"
+	PathWorldDelete  = "/api/v1/worlds/delete"
 
 	PathPlayers = "/api/v1/players"
 	PathWebhook = "/api/v1/webhook"
@@ -50,7 +51,7 @@ type StatusResponse struct {
 	// Webhook config summary
 	WebhookURL     string `json:"webhook_url,omitempty"`
 	WebhookEnabled bool   `json:"webhook_enabled,omitempty"`
-	StatusEmbed    bool   `json:"status_embed,omitempty"`
+	StatusEmbedURL string `json:"status_embed_url,omitempty"`
 }
 
 type WebhookConfigResponse struct {
@@ -62,7 +63,7 @@ type WebhookConfigResponse struct {
 	PlayerLeft      bool   `json:"player_left"`
 	PlayerDied      bool   `json:"player_died"`
 	PlayerFirstJoin bool   `json:"player_first_join"`
-	StatusEmbed     bool   `json:"status_embed"`
+	StatusEmbedURL  string `json:"status_embed_url"`
 }
 
 type WebhookConfigUpdate struct {
@@ -74,7 +75,7 @@ type WebhookConfigUpdate struct {
 	PlayerLeft      *bool   `json:"player_left,omitempty"`
 	PlayerDied      *bool   `json:"player_died,omitempty"`
 	PlayerFirstJoin *bool   `json:"player_first_join,omitempty"`
-	StatusEmbed     *bool   `json:"status_embed,omitempty"`
+	StatusEmbedURL  *string `json:"status_embed_url,omitempty"`
 }
 
 type PlayerInfo struct {
@@ -264,6 +265,15 @@ type WorldInfo struct {
 type WorldUploadResponse struct {
 	OK      bool   `json:"ok"`
 	Name    string `json:"name"`
+	Message string `json:"message,omitempty"`
+}
+
+type WorldDeleteRequest struct {
+	Name string `json:"name"`
+}
+
+type WorldDeleteResponse struct {
+	OK      bool   `json:"ok"`
 	Message string `json:"message,omitempty"`
 }
 

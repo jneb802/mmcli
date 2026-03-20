@@ -227,6 +227,14 @@ func (c *AgentClient) ListWorlds() (*agentapi.WorldListResponse, error) {
 	return &resp, nil
 }
 
+func (c *AgentClient) DeleteWorld(name string) (*agentapi.WorldDeleteResponse, error) {
+	var resp agentapi.WorldDeleteResponse
+	if err := c.doJSON("POST", agentapi.PathWorldDelete, agentapi.WorldDeleteRequest{Name: name}, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *AgentClient) UploadWorld(name string, dbData, fwlData io.Reader) (*agentapi.WorldUploadResponse, error) {
 	pr, pw := io.Pipe()
 	w := multipart.NewWriter(pw)

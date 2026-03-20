@@ -59,7 +59,15 @@ func (h *Handlers) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	// Webhook summary
 	if h.cfg.DiscordWebhook != nil && h.cfg.DiscordWebhook.URL != "" {
 		resp.WebhookEnabled = true
-		resp.StatusEmbed = h.cfg.DiscordWebhook.StatusEmbed
+		// Mask status embed URL
+		if h.cfg.DiscordWebhook.StatusEmbedURL != "" {
+			embedURL := h.cfg.DiscordWebhook.StatusEmbedURL
+			if len(embedURL) > 12 {
+				resp.StatusEmbedURL = "…" + embedURL[len(embedURL)-8:]
+			} else {
+				resp.StatusEmbedURL = "***"
+			}
+		}
 		// Mask the URL for security — show last 8 chars
 		url := h.cfg.DiscordWebhook.URL
 		if len(url) > 12 {
@@ -83,7 +91,7 @@ func (h *Handlers) HandleWebhookGet(w http.ResponseWriter, r *http.Request) {
 		resp.PlayerLeft = h.cfg.DiscordWebhook.PlayerLeft
 		resp.PlayerDied = h.cfg.DiscordWebhook.PlayerDied
 		resp.PlayerFirstJoin = h.cfg.DiscordWebhook.PlayerFirstJoin
-		resp.StatusEmbed = h.cfg.DiscordWebhook.StatusEmbed
+		resp.StatusEmbedURL = h.cfg.DiscordWebhook.StatusEmbedURL
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -122,8 +130,12 @@ func (h *Handlers) HandleWebhookUpdate(w http.ResponseWriter, r *http.Request) {
 	if req.PlayerFirstJoin != nil {
 		h.cfg.DiscordWebhook.PlayerFirstJoin = *req.PlayerFirstJoin
 	}
-	if req.StatusEmbed != nil {
-		h.cfg.DiscordWebhook.StatusEmbed = *req.StatusEmbed
+	if req.StatusEmbedURL != nil {
+		// If URL changed, clear the old message ID so a new embed is created
+		if *req.StatusEmbedURL != h.cfg.DiscordWebhook.StatusEmbedURL {
+			h.cfg.DiscordWebhook.StatusEmbedMessageID = ""
+		}
+		h.cfg.DiscordWebhook.StatusEmbedURL = *req.StatusEmbedURL
 	}
 
 	// Persist to disk
@@ -914,6 +926,55 @@ func (h *Handlers) HandleWorldsList(w http.ResponseWriter, r *http.Request) {
 
 	sort.Slice(worlds, func(i, j int) bool { return worlds[i].Name < worlds[j].Name })
 	writeJSON(w, http.StatusOK, agentapi.WorldListResponse{Worlds: worlds, SaveDir: saveDir})
+}
+
+func (h *Handlers) HandleWorldDelete(w http.ResponseWriter, r *http.Request) {
+	var req agentapi.WorldDeleteRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	// Validate name to prevent path traversal
+	if strings.Contains(req.Name, "/") || strings.Contains(req.Name, "\\") || req.Name == "." || req.Name == ".." {
+		writeError(w, http.StatusBadRequest, "invalid world name")
+		return
+	}
+
+	// Prevent deleting the active world
+	if lc, err := h.loadLaunchConfig(h.activeLaunchConfigName()); err == nil && lc.Settings.World == req.Name {
+		writeError(w, http.StatusConflict, "cannot delete the active world — switch to a different world first")
+		return
+	}
+
+	saveDir := h.resolveSaveDir()
+	worldsDir := filepath.Join(saveDir, "worlds_local")
+
+	dbPath := filepath.Join(worldsDir, req.Name+".db")
+	fwlPath := filepath.Join(worldsDir, req.Name+".fwl")
+	dbOldPath := filepath.Join(worldsDir, req.Name+".db.old")
+	fwlOldPath := filepath.Join(worldsDir, req.Name+".fwl.old")
+
+	removed := 0
+	for _, p := range []string{dbPath, fwlPath, dbOldPath, fwlOldPath} {
+		if err := os.Remove(p); err == nil {
+			removed++
+		}
+	}
+
+	if removed == 0 {
+		writeError(w, http.StatusNotFound, "world not found: "+req.Name)
+		return
+	}
+
+	writeJSON(w, http.StatusOK, agentapi.WorldDeleteResponse{
+		OK:      true,
+		Message: fmt.Sprintf("deleted %d file(s) for world %q", removed, req.Name),
+	})
 }
 
 func (h *Handlers) HandleWorldUpload(w http.ResponseWriter, r *http.Request) {

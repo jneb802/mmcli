@@ -49,9 +49,11 @@ type settingsEditor struct {
 	worldCursor    int
 	worldMode      int // 0=select, 1=new, 2=upload
 	worldInput     string
-	worldFetching  bool
-	worldUploading bool
-	worldErr       string
+	worldFetching      bool
+	worldUploading     bool
+	worldDeleting      bool
+	worldConfirmDelete bool
+	worldErr           string
 
 	// Launch config manager sub-modal
 	lcManager       bool
@@ -75,6 +77,7 @@ type worldUploadMsg struct {
 	name string
 	err  error
 }
+type worldDeleteMsg struct{ err error }
 type lcListMsg struct {
 	configs []agentapi.LaunchConfigSummary
 	active  string
@@ -331,9 +334,27 @@ func (m model) handleEditorTyping(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m model) handleWorldPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	ed := &m.server.editor
 
-	if ed.worldFetching || ed.worldUploading {
+	if ed.worldFetching || ed.worldUploading || ed.worldDeleting {
 		if msg.String() == "ctrl+c" {
 			return m, tea.Quit
+		}
+		return m, nil
+	}
+
+	// Delete confirmation
+	if ed.worldConfirmDelete {
+		switch msg.String() {
+		case "y":
+			ed.worldConfirmDelete = false
+			if ed.worldCursor < len(ed.worlds) {
+				ed.worldDeleting = true
+				ed.worldErr = ""
+				return m, deleteWorld(m.server.client, ed.worlds[ed.worldCursor].Name)
+			}
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			ed.worldConfirmDelete = false
 		}
 		return m, nil
 	}
@@ -399,6 +420,11 @@ func (m model) handleWorldPicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "right", "l":
 		if ed.worldMode < 2 {
 			ed.worldMode++
+		}
+	case "x":
+		if ed.worldMode == 0 && len(ed.worlds) > 0 {
+			ed.worldConfirmDelete = true
+			ed.worldErr = ""
 		}
 	case "n":
 		ed.worldMode = 1
@@ -678,6 +704,16 @@ func renderWorldPicker(b *strings.Builder, ed *settingsEditor) {
 		b.WriteString("  \033[33mUploading world...\033[0m\n\n")
 		return
 	}
+	if ed.worldDeleting {
+		b.WriteString("  \033[33mDeleting world...\033[0m\n\n")
+		return
+	}
+	if ed.worldConfirmDelete {
+		if ed.worldCursor < len(ed.worlds) {
+			fmt.Fprintf(b, "  \033[33mDelete world %q? This cannot be undone. (y/n)\033[0m\n\n", ed.worlds[ed.worldCursor].Name)
+		}
+		return
+	}
 	if ed.worldErr != "" {
 		fmt.Fprintf(b, "  \033[31m%s\033[0m\n", ed.worldErr)
 	}
@@ -723,7 +759,7 @@ func renderWorldPicker(b *strings.Builder, ed *settingsEditor) {
 	b.WriteString("\n  \033[2m")
 	switch ed.worldMode {
 	case 0:
-		b.WriteString("enter select • n new • u upload • ←/→ mode • esc cancel")
+		b.WriteString("enter select • x delete • n new • u upload • ←/→ mode • esc cancel")
 	case 1:
 		b.WriteString("enter create • esc back")
 	case 2:
@@ -941,6 +977,13 @@ func fetchWorlds(c *client.AgentClient) tea.Cmd {
 			return worldListMsg{err: err}
 		}
 		return worldListMsg{worlds: resp.Worlds}
+	}
+}
+
+func deleteWorld(c *client.AgentClient, name string) tea.Cmd {
+	return func() tea.Msg {
+		_, err := c.DeleteWorld(name)
+		return worldDeleteMsg{err: err}
 	}
 }
 
