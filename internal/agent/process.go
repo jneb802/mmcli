@@ -20,6 +20,7 @@ type ProcessManager struct {
 	pgid      int
 	startTime time.Time
 	running   bool
+	gen       uint64 // generation counter — prevents stale goroutines from clobbering state
 	mu        sync.Mutex
 	logFile   *os.File
 }
@@ -74,6 +75,7 @@ func (pm *ProcessManager) Start() error {
 		pgid = cmd.Process.Pid
 	}
 
+	pm.gen++
 	pm.cmd = cmd
 	pm.pid = cmd.Process.Pid
 	pm.pgid = pgid
@@ -85,18 +87,22 @@ func (pm *ProcessManager) Start() error {
 		log.Printf("Warning: failed to save process state: %v", err)
 	}
 
-	// Wait for process in background
+	// Wait for process in background. Capture the generation so a stale
+	// goroutine from a previous Start/Stop cycle cannot clobber current state.
+	startGen := pm.gen
 	go func() {
 		cmd.Wait()
 		pm.mu.Lock()
-		pm.running = false
-		pm.cmd = nil
-		if pm.logFile != nil {
-			pm.logFile.Close()
-			pm.logFile = nil
+		if pm.gen == startGen {
+			pm.running = false
+			pm.cmd = nil
+			if pm.logFile != nil {
+				pm.logFile.Close()
+				pm.logFile = nil
+			}
+			clearState()
 		}
 		pm.mu.Unlock()
-		clearState()
 	}()
 
 	return nil
@@ -124,7 +130,16 @@ func (pm *ProcessManager) Stop() error {
 		case <-deadline:
 			syscall.Kill(-pgid, syscall.SIGKILL)
 			time.Sleep(500 * time.Millisecond)
+			pm.mu.Lock()
+			pm.gen++ // invalidate stale wait goroutine
+			pm.running = false
+			pm.cmd = nil
+			if pm.logFile != nil {
+				pm.logFile.Close()
+				pm.logFile = nil
+			}
 			clearState()
+			pm.mu.Unlock()
 			return nil
 		case <-ticker.C:
 			pm.mu.Lock()
@@ -134,11 +149,11 @@ func (pm *ProcessManager) Stop() error {
 				if err := syscall.Kill(pm.pid, 0); err != nil {
 					pm.running = false
 					still = false
+					clearState()
 				}
 			}
 			pm.mu.Unlock()
 			if !still {
-				clearState()
 				return nil
 			}
 		}
@@ -160,10 +175,12 @@ func (pm *ProcessManager) TryAdopt() bool {
 	}
 
 	pm.mu.Lock()
+	pm.gen++
 	pm.pid = state.PID
 	pm.pgid = state.PGID
 	pm.startTime = state.StartTime
 	pm.running = true
+	adoptGen := pm.gen
 	pm.mu.Unlock()
 
 	// Poll for process exit since we have no *exec.Cmd to Wait() on
@@ -171,11 +188,19 @@ func (pm *ProcessManager) TryAdopt() bool {
 		ticker := time.NewTicker(5 * time.Second)
 		defer ticker.Stop()
 		for range ticker.C {
+			pm.mu.Lock()
+			if pm.gen != adoptGen {
+				pm.mu.Unlock()
+				return // superseded by a new Start/Stop cycle
+			}
+			pm.mu.Unlock()
 			if !isServerProcess(state.PID) {
 				pm.mu.Lock()
-				pm.running = false
+				if pm.gen == adoptGen {
+					pm.running = false
+					clearState()
+				}
 				pm.mu.Unlock()
-				clearState()
 				log.Printf("Adopted server process (PID %d) has exited", state.PID)
 				return
 			}
