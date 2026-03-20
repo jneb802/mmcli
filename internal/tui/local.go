@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"mmcli/internal/agentapi"
+	"mmcli/internal/client"
 	"mmcli/internal/config"
 	"mmcli/internal/installer"
 	"mmcli/internal/profile"
@@ -236,6 +237,72 @@ func installMod(paths config.Paths, cfg config.Config, reg *config.Registry, que
 			return installDoneMsg{err: installer.InstallLocal(paths, cfg, reg, query, "both")}
 		}
 		return installDoneMsg{err: installer.Install(paths, cfg, reg, query, "both")}
+	}
+}
+
+func installModToServer(paths config.Paths, cfg config.Config, reg *config.Registry, query string, c *client.AgentClient) tea.Cmd {
+	return func() tea.Msg {
+		old := os.Stdout
+		if devnull, err := os.Open(os.DevNull); err == nil {
+			os.Stdout = devnull
+			defer devnull.Close()
+			defer func() { os.Stdout = old }()
+		}
+		// Install locally (needed to build manifest and uploads for push)
+		var err error
+		if installer.IsLocalPath(query) {
+			err = installer.InstallLocal(paths, cfg, reg, query, "server")
+		} else {
+			err = installer.Install(paths, cfg, reg, query, "server")
+		}
+		if err != nil {
+			return installDoneMsg{err: err}
+		}
+		// Push to server
+		if c != nil {
+			config.SaveRegistry(paths, *reg)
+			manifest := profile.BuildManifest(cfg.ActiveProfile, *reg)
+			uploads, err := profile.BuildUploads(paths, cfg.ActiveProfile, manifest, *reg)
+			if err != nil {
+				return installDoneMsg{err: fmt.Errorf("push failed: %w", err)}
+			}
+			if _, err := c.SyncMods(manifest, uploads); err != nil {
+				return installDoneMsg{err: fmt.Errorf("push failed: %w", err)}
+			}
+		}
+		// Clean up local files — registry entry stays so future pushes
+		// still include the mod in the manifest for the server.
+		for _, mod := range reg.ListMods(cfg.ActiveProfile) {
+			if mod.ResolvedTarget() != "server" {
+				continue
+			}
+			name := mod.FullName()
+			// Only clean up mods we just installed (match query loosely)
+			if !strings.Contains(strings.ToLower(name), strings.ToLower(strings.ReplaceAll(query, " ", "_"))) {
+				continue
+			}
+			for _, dir := range []string{
+				filepath.Join(paths.ProfilePluginsDir(cfg.ActiveProfile), name),
+				filepath.Join(paths.ProfilePatchersDir(cfg.ActiveProfile), name),
+			} {
+				os.RemoveAll(dir)
+			}
+		}
+		return installDoneMsg{}
+	}
+}
+
+func removeModFromServer(paths config.Paths, cfg config.Config, reg *config.Registry, c *client.AgentClient) tea.Cmd {
+	return func() tea.Msg {
+		manifest := profile.BuildManifest(cfg.ActiveProfile, *reg)
+		uploads, err := profile.BuildUploads(paths, cfg.ActiveProfile, manifest, *reg)
+		if err != nil {
+			return installDoneMsg{err: fmt.Errorf("push failed: %w", err)}
+		}
+		if _, err := c.SyncMods(manifest, uploads); err != nil {
+			return installDoneMsg{err: fmt.Errorf("push failed: %w", err)}
+		}
+		return installDoneMsg{}
 	}
 }
 

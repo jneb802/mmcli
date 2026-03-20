@@ -19,9 +19,10 @@ import (
 )
 
 type Handlers struct {
-	cfg     AgentConfig
-	pm      *ProcessManager
-	version string
+	cfg              AgentConfig
+	pm               *ProcessManager
+	version          string
+	lastAPIPlugins   []ModAPIPlugin // cached last successful mod API response
 }
 
 func NewHandlers(cfg AgentConfig, pm *ProcessManager, version string) *Handlers {
@@ -179,6 +180,7 @@ func (h *Handlers) HandleStop(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
+	h.lastAPIPlugins = nil // clear cached plugin data
 	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "server stopped"})
 }
 
@@ -265,6 +267,11 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 	apiQueried := false
 
 	apiPlugins, _ := QueryModAPI(h.cfg.ResolvedModAPIPort())
+	if apiPlugins != nil {
+		h.lastAPIPlugins = apiPlugins // cache for fallback
+	} else if h.lastAPIPlugins != nil {
+		apiPlugins = h.lastAPIPlugins // use cached result
+	}
 	if apiPlugins != nil {
 		apiQueried = true
 		matched, unmatched := MatchAPIToMods(apiPlugins, modMap, manifestNames)

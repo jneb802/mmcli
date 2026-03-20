@@ -223,7 +223,11 @@ func (m model) viewModsFull() string {
 
 	// Install input
 	if m.mods.installing && !m.mods.installBusy {
-		b.WriteString("\n  Install mod (Owner-Name, URL, or local path):\n\n")
+		target := "local"
+		if m.mods.filter == filterServer {
+			target = "server"
+		}
+		fmt.Fprintf(&b, "\n  Install mod → \033[36m%s\033[0m (Owner-Name, URL, or local path):\n\n", target)
 		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.mods.installInput)
 		b.WriteString("\n  \033[2menter install • esc cancel\033[0m\n\n")
 		return b.String()
@@ -235,7 +239,11 @@ func (m model) viewModsFull() string {
 		if query == "" {
 			query = "mod"
 		}
-		fmt.Fprintf(&b, "\n  \033[33mInstalling %s...\033[0m\n\n", query)
+		target := "locally"
+		if m.mods.filter == filterServer {
+			target = "to server"
+		}
+		fmt.Fprintf(&b, "\n  \033[33mInstalling %s %s...\033[0m\n\n", query, target)
 		return b.String()
 	}
 
@@ -246,7 +254,11 @@ func (m model) viewModsFull() string {
 	if m.mods.confirmRemove {
 		row := m.filteredAuditRow()
 		if row != nil {
-			fmt.Fprintf(&b, "\n  \033[33mRemove %s? (y/n)\033[0m\n\n", row.Name)
+			target := "locally"
+			if m.mods.filter == filterServer {
+				target = "from server"
+			}
+			fmt.Fprintf(&b, "\n  \033[33mRemove %s %s? (y/n)\033[0m\n\n", row.Name, target)
 		}
 		return b.String()
 	}
@@ -583,15 +595,22 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mods.auditRows = m.buildAuditRows()
 
 	case "x":
-		// Remove — scope picker if in multiple places, direct confirm otherwise
+		// Remove — context-sensitive based on active filter
 		if n == 0 {
 			return m, nil
 		}
 		row := rows[m.mods.cursor]
-		// Can only remove locally-installed mods from this tab.
-		// Server/modpack-only removals happen via Changes tab push.
+		if m.mods.filter == filterServer {
+			if row.ServerVersion == "-" {
+				m.mods.err = fmt.Errorf("not on server")
+				return m, nil
+			}
+			m.mods.confirmRemove = true
+			m.mods.err = nil
+			return m, nil
+		}
 		if row.LocalVersion == "-" {
-			m.mods.err = fmt.Errorf("not installed locally — remove via Changes tab")
+			m.mods.err = fmt.Errorf("not installed locally")
 			return m, nil
 		}
 		places := 0
@@ -773,6 +792,9 @@ func (m model) handleModsInstallInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.mods.installInput != "" {
 			m.mods.installBusy = true
+			if m.mods.filter == filterServer {
+				return m, installModToServer(m.paths, m.cfg, m.reg, m.mods.installInput, m.server.client)
+			}
 			return m, installMod(m.paths, m.cfg, m.reg, m.mods.installInput)
 		}
 	case "backspace":
@@ -878,7 +900,19 @@ func (m model) handleModsConfirmRemove(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y":
 		m.mods.confirmRemove = false
-		if m.isFullMode() {
+		if m.isFullMode() && m.mods.filter == filterServer {
+			// Remove from server: remove locally then push
+			row := m.filteredAuditRow()
+			if row != nil {
+				m.reg.RemoveMod(m.cfg.ActiveProfile, row.Name)
+				config.SaveRegistry(m.paths, *m.reg)
+				m.refreshMods()
+				m.mods.auditRows = m.buildAuditRows()
+				if m.server.client != nil {
+					return m, removeModFromServer(m.paths, m.cfg, m.reg, m.server.client)
+				}
+			}
+		} else if m.isFullMode() {
 			row := m.filteredAuditRow()
 			if row != nil && row.LocalVersion != "-" {
 				m.modsRemoveMod(row.Name)
