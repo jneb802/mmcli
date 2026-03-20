@@ -288,9 +288,10 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 			}
 			t := true
 			modMap[ap.GUID] = &agentapi.ModInfo{
-				Name:    ap.Name,
-				Version: ap.Version,
-				Loaded:  &t,
+				Name:       ap.Name,
+				Version:    ap.Version,
+				Loaded:     &t,
+				PluginOnly: true,
 			}
 		}
 	} else {

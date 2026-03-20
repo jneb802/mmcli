@@ -412,7 +412,7 @@ func buildPushItems(cfg config.Config, reg *config.Registry, paths config.Paths,
 
 		// Add removed items (on server but not local)
 		for _, sm := range serverMods {
-			if !localSet[sm.Name] {
+			if !localSet[sm.Name] && !sm.PluginOnly {
 				items = append(items, modListItem{
 					Name:           sm.Name,
 					ServerVersion:  sm.Version,
