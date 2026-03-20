@@ -245,6 +245,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.server.modsResp = msg.modsResp
 		}
 		m.server.players = msg.players
+		// Sync server anticheat values back to local registry (server is authoritative)
+		if msg.mods != nil {
+			dirty := false
+			for _, sm := range msg.mods {
+				if sm.Anticheat == "" {
+					continue
+				}
+				if mod, ok := m.reg.GetMod(m.cfg.ActiveProfile, sm.Name); ok {
+					if mod.Anticheat != sm.Anticheat {
+						mod.Anticheat = sm.Anticheat
+						m.reg.SetMod(m.cfg.ActiveProfile, mod)
+						dirty = true
+					}
+				}
+			}
+			if dirty {
+				config.SaveRegistry(m.paths, *m.reg)
+			}
+		}
+
 		// Refresh views when server data arrives
 		if msg.mods != nil {
 			if m.activeTab == tabChanges {

@@ -12,7 +12,8 @@ const (
 	PathStop    = "/api/v1/stop"
 	PathRestart = "/api/v1/restart"
 	PathMods     = "/api/v1/mods"
-	PathModsSync = "/api/v1/mods/sync"
+	PathModsSync       = "/api/v1/mods/sync"
+	PathModsModeration = "/api/v1/mods/moderation"
 	PathLogs     = "/api/v1/logs"
 	PathSettings = "/api/v1/settings"
 	PathUpdate   = "/api/v1/update"
@@ -94,6 +95,12 @@ type ErrorResponse struct {
 type ActionResponse struct {
 	OK      bool   `json:"ok"`
 	Message string `json:"message"`
+}
+
+// ModerationUpdateRequest sets the anticheat classification for a single mod.
+type ModerationUpdateRequest struct {
+	ModName   string `json:"mod_name"`   // Thunderstore name (e.g. "RandyKnapp-EpicLoot")
+	Anticheat string `json:"anticheat"`  // "whitelist", "greylist", "adminonly", ""
 }
 
 type ModListResponse struct {

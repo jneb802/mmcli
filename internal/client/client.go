@@ -90,6 +90,14 @@ func (c *AgentClient) UpdateWebhookConfig(req agentapi.WebhookConfigUpdate) (*ag
 	return &resp, nil
 }
 
+func (c *AgentClient) UpdateModeration(req agentapi.ModerationUpdateRequest) (*agentapi.ActionResponse, error) {
+	var resp agentapi.ActionResponse
+	if err := c.doJSON("POST", agentapi.PathModsModeration, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // SyncMods sends a manifest and optional upload mod zips to the server.
 // The uploads map is keyed by DirName → zip data for mods with Source="upload".
 func (c *AgentClient) SyncMods(manifest agentapi.PushManifest, uploads map[string]io.Reader) (*agentapi.SyncResponse, error) {

@@ -293,6 +293,16 @@ func installModToServer(paths config.Paths, cfg config.Config, reg *config.Regis
 	}
 }
 
+func updateServerModeration(c *client.AgentClient, modName, anticheat string) tea.Cmd {
+	return func() tea.Msg {
+		c.UpdateModeration(agentapi.ModerationUpdateRequest{
+			ModName:   modName,
+			Anticheat: anticheat,
+		})
+		return nil
+	}
+}
+
 func removeModFromServer(paths config.Paths, cfg config.Config, reg *config.Registry, c *client.AgentClient) tea.Cmd {
 	return func() tea.Msg {
 		manifest := profile.BuildManifest(cfg.ActiveProfile, *reg)

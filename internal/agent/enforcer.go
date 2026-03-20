@@ -162,6 +162,71 @@ func resolveGUID(mod agentapi.ManifestMod, index map[string]enforcerGUIDEntry) (
 	return enforcerGUIDEntry{}, false
 }
 
+// patchEnforcerModeration updates a single mod's classification in the existing Mods.yaml.
+// It resolves the Thunderstore mod name to a BepInEx GUID, removes the mod from all
+// category buckets, then re-adds it to the correct one.
+func patchEnforcerModeration(bepDir string, modName, anticheat string, modAPIPort int) error {
+	existing, err := loadEnforcerConfig(bepDir)
+	if err != nil || existing == nil {
+		return fmt.Errorf("enforcer: cannot read Mods.yaml: %w", err)
+	}
+
+	apiPlugins, _ := QueryModAPI(modAPIPort)
+	index := buildGUIDIndex(existing, apiPlugins)
+
+	// Resolve mod name to GUID — try multiple forms
+	var entry enforcerGUIDEntry
+	var found bool
+	for _, candidate := range []string{modName} {
+		mod := agentapi.ManifestMod{Name: candidate, DirName: candidate}
+		entry, found = resolveGUID(mod, index)
+		if found {
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("enforcer: cannot resolve GUID for %s", modName)
+	}
+
+	modEntry := EnforcerModEntry{
+		PluginID: entry.guid,
+		Version:  entry.version,
+		Name:     entry.name,
+	}
+
+	// Remove from all category buckets
+	for _, bucket := range []map[string]EnforcerModEntry{
+		existing.RequiredMods, existing.OptionalMods, existing.AdminOnlyMods, existing.ServerOnlyMods,
+	} {
+		delete(bucket, entry.guid)
+	}
+
+	// Add to correct bucket
+	switch anticheat {
+	case "whitelist":
+		existing.RequiredMods[entry.guid] = modEntry
+	case "greylist":
+		existing.OptionalMods[entry.guid] = modEntry
+	case "adminonly":
+		existing.AdminOnlyMods[entry.guid] = modEntry
+	}
+	// Always keep in activeMods
+	existing.ActiveMods[entry.guid] = modEntry
+
+	// Write back
+	data, err := yaml.Marshal(existing)
+	if err != nil {
+		return fmt.Errorf("enforcer: marshal: %w", err)
+	}
+	path := filepath.Join(bepDir, "config", "ValheimEnforcer", "Mods.yaml")
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("enforcer: write: %w", err)
+	}
+
+	log.Printf("Enforcer: patched %s (%s) → %s", modName, entry.guid, anticheat)
+	return nil
+}
+
 // setupValheimEnforcer generates the ValheimEnforcer Mods.yaml config from
 // the push manifest and available GUID sources.
 func setupValheimEnforcer(bepDir string, mods []agentapi.ManifestMod, modAPIPort int) error {

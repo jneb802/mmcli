@@ -344,6 +344,43 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handlers) HandleModsModeration(w http.ResponseWriter, r *http.Request) {
+	var req agentapi.ModerationUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	// Update the push manifest
+	manifestPath := filepath.Join(h.cfg.BepInExDir(), agentapi.ManifestFileName)
+	if data, err := os.ReadFile(manifestPath); err == nil {
+		var manifest agentapi.PushManifest
+		if json.Unmarshal(data, &manifest) == nil {
+			for i := range manifest.Mods {
+				if manifest.Mods[i].DirName == req.ModName || manifest.Mods[i].Name == req.ModName {
+					manifest.Mods[i].Anticheat = req.Anticheat
+					break
+				}
+			}
+			if updated, err := json.MarshalIndent(manifest, "", "  "); err == nil {
+				os.WriteFile(manifestPath, updated, 0644)
+			}
+		}
+	}
+
+	// Update anticheat config (ValheimEnforcer Mods.yaml or AzuAntiCheat)
+	hasAzu, hasEnforcer := detectAnticheatSystems(h.cfg.BepInExDir(), nil)
+	if hasEnforcer {
+		if err := patchEnforcerModeration(h.cfg.BepInExDir(), req.ModName, req.Anticheat, h.cfg.ResolvedModAPIPort()); err != nil {
+			log.Printf("Moderation: enforcer patch failed: %v", err)
+		}
+	}
+	_ = hasAzu // TODO: AzuAntiCheat patching
+
+	log.Printf("Moderation: %s → %s", req.ModName, req.Anticheat)
+	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "moderation updated"})
+}
+
 func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
 	log.Println("Sync request received, parsing multipart...")
 

@@ -109,10 +109,13 @@ func (m model) buildAuditRows() []auditRow {
 		r.Anticheat = mod.Anticheat
 	}
 
-	// Server mods
+	// Server mods — server anticheat is authoritative when available
 	for _, sm := range m.server.mods {
 		r := ensure(sm.Name)
 		r.ServerVersion = syncVersionStr(sm.Version)
+		if sm.Anticheat != "" {
+			r.Anticheat = sm.Anticheat
+		}
 	}
 
 	// Modpack mods
@@ -716,8 +719,9 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		config.SaveRegistry(m.paths, *m.reg)
 		m.mods.auditRows = m.buildAuditRows()
-		if m.mods.filter == filterServer && m.server.client != nil {
-			return m, pushToServer(m.paths, m.cfg, m.reg, m.server.client)
+		// Immediately update server moderation (targeted, no full push)
+		if m.server.client != nil {
+			return m, updateServerModeration(m.server.client, row.Name, mod.Anticheat)
 		}
 
 	case "c":
