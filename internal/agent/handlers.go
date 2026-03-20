@@ -108,6 +108,8 @@ func (h *Handlers) HandleWebhookGet(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) HandleWebhookUpdate(w http.ResponseWriter, r *http.Request) {
+	h.reloadConfig()
+
 	var req agentapi.WebhookConfigUpdate
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
@@ -150,8 +152,7 @@ func (h *Handlers) HandleWebhookUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Persist to disk
-	cfgPath := DefaultConfigPath()
-	if err := SaveConfig(cfgPath, h.cfg); err != nil {
+	if err := SaveConfig(h.cfgPath, h.cfg); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save config: "+err.Error())
 		return
 	}

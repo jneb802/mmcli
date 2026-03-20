@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -192,10 +193,17 @@ func (st *StateTracker) updateEmbed(processRunning bool, status *ModAPIStatus) {
 
 	// Try to edit existing message
 	if wcfg.StatusEmbedMessageID != "" {
-		if err := editDiscordEmbed(wcfg.StatusEmbedURL, wcfg.StatusEmbedMessageID, embed); err == nil {
+		err := editDiscordEmbed(wcfg.StatusEmbedURL, wcfg.StatusEmbedMessageID, embed)
+		if err == nil {
 			return
 		}
-		log.Printf("Discord embed: edit failed, creating new message")
+		if !errors.Is(err, errMessageNotFound) {
+			// Transient error (rate limit, network, etc.) — skip this cycle, retry next tick
+			log.Printf("Discord embed: edit failed (transient): %v", err)
+			return
+		}
+		// 404: message was deleted — create a new one
+		log.Printf("Discord embed: message deleted, creating new one")
 		wcfg.StatusEmbedMessageID = ""
 	}
 

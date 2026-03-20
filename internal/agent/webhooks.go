@@ -266,6 +266,9 @@ func createDiscordEmbed(webhookURL string, msg discordEmbedMessage) (string, err
 	return result.ID, nil
 }
 
+// errMessageNotFound is returned when Discord 404s on an embed edit (message deleted).
+var errMessageNotFound = fmt.Errorf("message not found")
+
 func editDiscordEmbed(webhookURL string, messageID string, msg discordEmbedMessage) error {
 	body, err := json.Marshal(msg)
 	if err != nil {
@@ -286,7 +289,7 @@ func editDiscordEmbed(webhookURL string, messageID string, msg discordEmbedMessa
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return fmt.Errorf("message not found")
+		return errMessageNotFound
 	}
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
