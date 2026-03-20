@@ -14,92 +14,57 @@ import (
 // Version is set from cmd package before Run.
 var Version = "dev"
 
-type mode int
+// --- Flat tab system (new) ---
+
+type flatTab int
 
 const (
-	modeLocal  mode = iota
-	modeServer
-	modeSync
-	modeModpack
+	tabMods flatTab = iota
+	tabLogs
+	tabStatus
+	tabSettings
+	tabChanges // full mode only
 )
 
-type contentTab int
-
-const (
-	contentMods contentTab = iota
-	contentLogs
-	contentStatus
-	contentWorld
-	contentSettings
-	contentPlayers
-	contentConfig
-	contentSyncMods
-	contentSyncConfigs
-	contentSyncModeration
-	contentSyncAudit
-	contentModpackMods
-	contentModpackConfig
-	contentModpackReadme
-	contentModpackManifest
-	contentModpackImage
-	contentModpackSettings
-)
-
-var localTabs = []contentTab{contentMods, contentConfig, contentLogs, contentStatus, contentSettings}
-var serverTabs = []contentTab{contentMods, contentConfig, contentLogs, contentPlayers, contentWorld, contentSyncModeration, contentStatus}
-var syncTabs = []contentTab{contentSyncMods, contentSyncConfigs, contentSyncModeration, contentSyncAudit}
-var modpackTabs = []contentTab{contentModpackMods, contentModpackConfig, contentModpackReadme, contentModpackManifest, contentModpackImage, contentModpackSettings}
-
-func contentTabName(t contentTab) string {
+func flatTabName(t flatTab) string {
 	switch t {
-	case contentMods:
+	case tabMods:
 		return "Mods"
-	case contentLogs:
+	case tabLogs:
 		return "Logs"
-	case contentStatus:
+	case tabStatus:
 		return "Status"
-	case contentWorld:
-		return "World"
-	case contentSettings:
+	case tabSettings:
 		return "Settings"
-	case contentPlayers:
-		return "Players"
-	case contentConfig:
-		return "Config"
-	case contentSyncMods:
-		return "Mods"
-	case contentSyncConfigs:
-		return "Configs"
-	case contentSyncModeration:
-		return "Moderation"
-	case contentSyncAudit:
-		return "Audit"
-	case contentModpackMods:
-		return "Mods"
-	case contentModpackConfig:
-		return "Config"
-	case contentModpackReadme:
-		return "README"
-	case contentModpackManifest:
-		return "Manifest"
-	case contentModpackImage:
-		return "Image"
-	case contentModpackSettings:
-		return "Settings"
+	case tabChanges:
+		return "Changes"
 	default:
 		return "?"
 	}
 }
 
+func (m model) isFullMode() bool {
+	return m.server.client != nil
+}
+
+func (m model) availableTabs() []flatTab {
+	if m.isFullMode() {
+		return []flatTab{tabMods, tabLogs, tabStatus, tabSettings, tabChanges}
+	}
+	return []flatTab{tabMods, tabLogs, tabStatus, tabSettings}
+}
+
 type model struct {
-	activeMode      mode
-	activeLocalTab  contentTab
-	activeServerTab contentTab
-	activeSyncTab    contentTab
-	activeModpackTab contentTab
-	paths            config.Paths
+	activeTab flatTab
+
+	paths           config.Paths
 	cfg             config.Config
 	reg             *config.Registry
+	mods            modsState
+	logs            logsState
+	status          statusState
+	settingsTab     settingsTabState
+	changes         changesState
 	local           localModel
 	server          serverModel
 	sync            syncModel
@@ -111,12 +76,11 @@ type model struct {
 
 func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model {
 	m := model{
-		activeMode:       modeLocal,
-		activeSyncTab:    contentSyncMods,
-		activeModpackTab: contentModpackMods,
-		paths:         paths,
-		cfg:           cfg,
-		reg:           reg,
+		paths:       paths,
+		cfg:         cfg,
+		reg:         reg,
+		status:      statusState{cursor: 1},                        // skip "Local" section header
+		settingsTab: settingsTabState{cursor: 1, editingField: -1}, // skip "Local" section header
 		local: localModel{
 			updates: make(map[string]string),
 		},
@@ -142,6 +106,16 @@ func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model
 		m.server.lastPushTime = t
 	}
 
+	// Load modpack data at startup (needed by audit rows)
+	if cfg.ModpackPath != "" {
+		m.modpack.loadFromDisk(cfg.ModpackPath)
+	}
+
+	// Build initial audit rows for full mode
+	if m.isFullMode() {
+		m.mods.auditRows = m.buildAuditRows()
+	}
+
 	return m
 }
 
@@ -164,7 +138,11 @@ func resolveAnticheatSystem(cfg config.Config, mods []config.ModEntry) string {
 
 func (m model) Init() tea.Cmd {
 	m.local.checkingUpdates = true
-	return tea.Batch(checkUpdates(m.local.mods), checkGameRunning(), localTick())
+	cmds := []tea.Cmd{checkUpdates(m.local.mods), checkGameRunning(), localTick()}
+	if m.isFullMode() {
+		cmds = append(cmds, fetchServerStatus(m.server.client), serverTick())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -172,14 +150,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// --- Local async messages ---
 	case installDoneMsg:
+		m.mods.installBusy = false
+		m.mods.installing = false
 		m.local.installBusy = false
 		m.local.installing = false
 		if msg.err != nil {
+			m.mods.err = msg.err
 			m.local.err = msg.err
 		} else {
+			m.mods.err = nil
 			m.local.err = nil
 			config.SaveRegistry(m.paths, *m.reg)
 			m.refreshMods()
+			if m.isFullMode() {
+				m.mods.auditRows = m.buildAuditRows()
+			}
 			m.local.checkingUpdates = true
 			return m, checkUpdates(m.local.mods)
 		}
@@ -197,17 +182,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case gameStartMsg:
 		if msg.err != nil {
 			m.local.err = msg.err
+			m.mods.err = msg.err
 		} else {
 			m.local.err = nil
+			m.mods.err = nil
 			m.local.gameRunning = true
 		}
 		return m, nil
 
 	case localTickMsg:
-		if m.activeMode == modeLocal {
-			return m, tea.Batch(checkGameRunning(), localTick())
-		}
-		return m, nil
+		return m, tea.Batch(checkGameRunning(), localTick())
 
 	case localLogLineMsg:
 		m.local.logs.lines = append(m.local.logs.lines, msg.lines...)
@@ -250,22 +234,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.server.modsResp = msg.modsResp
 		}
 		m.server.players = msg.players
-		// Refresh sync mod items when server data arrives,
-		// but not while the user is viewing the Moderation tab (avoids re-sort jitter).
-		if m.activeMode == modeSync && msg.mods != nil && m.activeSyncTab != contentSyncModeration {
-			m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
+		// Refresh views when server data arrives
+		if msg.mods != nil {
+			if m.activeTab == tabChanges {
+				m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
+			}
+			if m.activeTab == tabMods && m.isFullMode() {
+				m.mods.auditRows = m.buildAuditRows()
+			}
 		}
 		// If we were waiting for server data to run preflight check
-		if m.local.preflightFetching {
-			m.local.preflightFetching = false
+		if m.mods.preflightFetching {
+			m.mods.preflightFetching = false
 			if msg.err != nil {
-				m.local.err = fmt.Errorf("could not reach server for mod check: %v", msg.err)
+				m.mods.err = fmt.Errorf("could not reach server for mod check: %v", msg.err)
 				return m, startGame(m.paths, m.cfg)
 			}
 			warnings := preflightCheck(m.local.mods, m.server.mods)
 			if len(warnings) > 0 {
-				m.local.preflightWarnings = warnings
-				m.local.confirmStart = true
+				m.mods.preflightWarnings = warnings
+				m.mods.confirmStart = true
 				return m, nil
 			}
 			return m, startGame(m.paths, m.cfg)
@@ -299,10 +287,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				saveLastPush(m.paths, msg.resp, m.server.lastPushTime)
 			}
 		}
-		// Show push result screen in sync mode
-		if m.activeMode == modeSync {
+		// Show push result screen in Changes tab
+		if m.activeTab == tabChanges {
 			m.sync.pushResult = true
 			m.sync.pushResultScroll = 0
+		}
+		// Refresh audit rows after push
+		if m.isFullMode() {
+			m.mods.auditRows = m.buildAuditRows()
 		}
 		// Re-fetch status after push
 		if m.server.client != nil {
@@ -422,7 +414,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case serverTickMsg:
 		// Silent background refresh — no "fetching..." indicator
-		if (m.activeMode == modeServer || m.activeMode == modeSync) && m.server.client != nil && !m.server.fetching && !m.server.actionBusy {
+		if m.isFullMode() && !m.server.fetching && !m.server.actionBusy {
 			return m, tea.Batch(fetchServerStatus(m.server.client), serverTick())
 		}
 		return m, nil
@@ -481,48 +473,79 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// --- Key dispatch ---
 	case tea.KeyMsg:
-		if m.activeMode == modeLocal {
-			// Global blockers
-			if m.local.installBusy {
-				if msg.String() == "ctrl+c" {
-					return m, tea.Quit
-				}
-				return m, nil
+		// Global blockers
+		if m.mods.installBusy || m.local.installBusy {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
 			}
-			if m.local.preflightFetching {
-				if msg.String() == "ctrl+c" {
-					return m, tea.Quit
-				}
-				return m, nil
+			return m, nil
+		}
+		if m.mods.preflightFetching || m.local.preflightFetching {
+			if msg.String() == "ctrl+c" {
+				return m, tea.Quit
 			}
-			// Mods-tab modals
-			if m.activeLocalTab == contentMods {
-				if m.local.installing {
-					return m.handleInstallInput(msg)
-				}
-				if m.local.pickProfile {
-					return m.handleProfilePicker(msg)
-				}
-				if m.local.confirmRemove {
-					return m.handleConfirmRemove(msg)
-				}
-				if m.local.confirmStart {
-					return m.handleConfirmStart(msg)
-				}
-			}
-			return m.handleLocalNormal(msg)
+			return m, nil
 		}
 
-		if m.activeMode == modeServer {
-			return m.handleServerNormal(msg)
+		// Mods tab — delegate fully to mods handler (it handles its own modals)
+		if m.activeTab == tabMods {
+			if m.mods.installing || m.mods.pickProfile || m.mods.scopePicker ||
+				m.mods.confirmRemove || m.mods.confirmStart || m.mods.confirmUpdateAll {
+				return m.handleModsKeys(msg)
+			}
 		}
 
-		if m.activeMode == modeSync {
-			return m.handleSyncNormal(msg)
+		// Changes tab modals (must be checked before global keys)
+		if m.activeTab == tabChanges {
+			if m.sync.pushResult || m.sync.confirmModPush ||
+				m.sync.confirmConfigPush || m.sync.configPushBusy || m.server.actionBusy {
+				return m.handleChangesKeys(msg)
+			}
 		}
 
-		// Modpack mode
-		return m.handleModpackNormal(msg)
+		// Status tab modals (must be checked before global keys)
+		if m.activeTab == tabStatus {
+			if m.status.editingWebhook || m.status.editingEmbedURL ||
+				m.status.confirmStart || m.status.confirmStop || m.status.confirmRestart {
+				return m.handleStatusKeys(msg)
+			}
+		}
+
+		// Settings tab modals (must be checked before global keys)
+		if m.activeTab == tabSettings {
+			if m.settingsTab.editingPath || m.settingsTab.editingField >= 0 || m.server.editor.active {
+				return m.handleSettingsTabKeys(msg)
+			}
+		}
+
+		// Global keys — consumed here, never reach old handlers
+		switch msg.String() {
+		case "ctrl+c":
+			return m, tea.Quit
+		case "q", "esc":
+			return m, tea.Quit
+		case "tab":
+			return m, m.cycleTab(1)
+		case "shift+tab":
+			return m, m.cycleTab(-1)
+		case "`", "1", "2", "3", "4":
+			// Ignore legacy mode-switching keys
+			return m, nil
+		}
+
+		// Tab-specific key dispatch
+		switch m.activeTab {
+		case tabMods:
+			return m.handleModsKeys(msg)
+		case tabLogs:
+			return m.handleLogsKeys(msg)
+		case tabStatus:
+			return m.handleStatusKeys(msg)
+		case tabSettings:
+			return m.handleSettingsTabKeys(msg)
+		case tabChanges:
+			return m.handleChangesKeys(msg)
+		}
 	}
 
 	return m, nil
@@ -530,123 +553,39 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	var b strings.Builder
-	b.WriteString(m.renderModeBar())
+	b.WriteString(m.renderTabBar())
 	b.WriteString(renderSeparator(m.width))
 
-	switch m.activeMode {
-	case modeLocal:
-		b.WriteString(renderContentTabBar(localTabs, m.activeLocalTab))
-		switch m.activeLocalTab {
-		case contentMods:
-			b.WriteString(m.viewLocal())
-		case contentConfig:
-			b.WriteString(m.viewLocalConfig())
-		case contentLogs:
-			b.WriteString(m.viewLocalLogs())
-		case contentStatus:
-			b.WriteString(m.viewLocalStatus())
-		case contentSettings:
-			b.WriteString(m.viewLocalSettings())
-		}
-	case modeServer:
-		b.WriteString(renderContentTabBar(serverTabs, m.activeServerTab))
-		switch m.activeServerTab {
-		case contentMods:
-			b.WriteString(m.viewServer())
-		case contentConfig:
-			b.WriteString(m.viewServerConfig())
-		case contentLogs:
-			b.WriteString(m.viewServerLogs())
-		case contentWorld:
-			b.WriteString(m.viewServerWorld())
-		case contentSyncModeration:
-			b.WriteString(m.viewServerModeration())
-		case contentStatus:
-			b.WriteString(m.viewServerStatus())
-		case contentPlayers:
-			b.WriteString(m.viewServerPlayers())
-		}
-	case modeSync:
-		b.WriteString(renderContentTabBar(syncTabs, m.activeSyncTab))
-		switch m.activeSyncTab {
-		case contentSyncMods:
-			b.WriteString(m.viewSyncMods())
-		case contentSyncConfigs:
-			b.WriteString(m.viewSyncConfigs())
-		case contentSyncModeration:
-			b.WriteString(m.viewSyncModeration())
-		case contentSyncAudit:
-			b.WriteString(m.viewSyncAudit())
-		}
-	case modeModpack:
-		if m.modpack.editingPath {
-			b.WriteString(m.viewModpackPathInput())
-			break
-		}
-		b.WriteString(renderContentTabBar(modpackTabs, m.activeModpackTab))
-		switch m.activeModpackTab {
-		case contentModpackMods:
-			b.WriteString(m.viewModpackMods())
-		case contentModpackConfig:
-			b.WriteString(m.viewModpackConfig())
-		case contentModpackReadme:
-			b.WriteString(m.viewModpackReadme())
-		case contentModpackManifest:
-			b.WriteString(m.viewModpackManifest())
-		case contentModpackImage:
-			b.WriteString(m.viewModpackImage())
-		case contentModpackSettings:
-			b.WriteString(m.viewModpackSettings())
-		}
+	switch m.activeTab {
+	case tabMods:
+		b.WriteString(m.viewMods())
+	case tabLogs:
+		b.WriteString(m.viewLogs())
+	case tabStatus:
+		b.WriteString(m.viewStatus())
+	case tabSettings:
+		b.WriteString(m.viewSettingsTab())
+	case tabChanges:
+		b.WriteString(m.viewChanges())
 	}
 
 	return b.String()
 }
 
-func (m model) renderModeBar() string {
-	localLabel := fmt.Sprintf("Local — %s", m.cfg.ActiveProfile)
-	serverLabel := "Server"
-	if m.server.serverName != "" {
-		serverLabel = fmt.Sprintf("Server — %s", m.server.serverName)
-	}
-	modpackLabel := "Modpack"
-	changesLabel := "Changes"
-
-	labels := []struct {
-		text   string
-		active bool
-	}{
-		{localLabel, m.activeMode == modeLocal},
-		{serverLabel, m.activeMode == modeServer},
-		{modpackLabel, m.activeMode == modeModpack},
-		{changesLabel, m.activeMode == modeSync},
-	}
-
-	var b strings.Builder
-	b.WriteString("  ")
-	for i, l := range labels {
-		if i > 0 {
-			b.WriteString("  ")
-		}
-		if l.active {
-			fmt.Fprintf(&b, "\033[1;37m[%s]\033[0m", l.text)
-		} else {
-			fmt.Fprintf(&b, "\033[2m%s\033[0m", l.text)
-		}
-	}
-	b.WriteString("\n")
-	return b.String()
-}
-
-func renderContentTabBar(tabs []contentTab, active contentTab) string {
+func (m model) renderTabBar() string {
+	tabs := m.availableTabs()
 	var b strings.Builder
 	b.WriteString("  ")
 	for i, t := range tabs {
 		if i > 0 {
 			b.WriteString("  ")
 		}
-		name := contentTabName(t)
-		if t == active {
+		name := flatTabName(t)
+		// Add context to tab names
+		if t == tabMods {
+			name = fmt.Sprintf("Mods — %s", m.cfg.ActiveProfile)
+		}
+		if t == m.activeTab {
 			fmt.Fprintf(&b, "\033[1;36m[%s]\033[0m", name)
 		} else {
 			fmt.Fprintf(&b, "\033[2m%s\033[0m", name)
@@ -663,156 +602,51 @@ func renderSeparator(width int) string {
 	return fmt.Sprintf("  \033[37m%s\033[0m\n", strings.Repeat("─", width-4))
 }
 
-// --- Tab lifecycle helpers ---
+// --- Flat tab lifecycle ---
 
-func (m *model) switchLocalTab(to contentTab) tea.Cmd {
-	old := m.activeLocalTab
-	m.activeLocalTab = to
-	if old == to {
+// switchTab transitions to the given flat tab, setting up bridge state.
+func (m *model) switchTab(to flatTab) tea.Cmd {
+	if to == m.activeTab {
 		return nil
 	}
-	if old == contentLogs {
-		m.stopLocalLogStream()
-	}
-	if to == contentConfig {
-		m.local.configFiles = listProfileConfigs(m.paths, m.cfg.ActiveProfile)
-	}
-	if to == contentLogs {
-		return m.loadLocalLogs()
-	}
-	return nil
-}
 
-func (m *model) switchServerTab(to contentTab) tea.Cmd {
-	old := m.activeServerTab
-	m.activeServerTab = to
-	if old == to {
+	// Tear down current tab
+	m.stopLocalLogStream()
+	m.stopServerLogStream()
+
+	m.activeTab = to
+
+	switch to {
+	case tabMods:
+		if m.isFullMode() {
+			m.mods.auditRows = m.buildAuditRows()
+		}
 		return nil
-	}
-	if old == contentLogs {
-		m.stopServerLogStream()
-	}
-	if to == contentConfig {
-		m.server.configFiles = listProfileConfigs(m.paths, m.cfg.ActiveProfile)
-	}
-	if to == contentSyncModeration {
+	case tabLogs:
+		return m.startLogStream()
+	case tabStatus:
+		return nil
+	case tabSettings:
+		if m.isFullMode() && m.server.settings == nil && m.server.client != nil {
+			return fetchSettings(m.server.client)
+		}
+		return nil
+	case tabChanges:
 		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
-	}
-	if to == contentLogs && m.server.client != nil {
-		return m.loadServerLogs()
-	}
-	if to == contentWorld && m.server.client != nil && m.server.settings == nil {
-		return fetchSettings(m.server.client)
-	}
-	return nil
-}
-
-func (m *model) switchSyncTab(to contentTab) tea.Cmd {
-	old := m.activeSyncTab
-	m.activeSyncTab = to
-	if old == to {
 		return nil
 	}
-	if to == contentSyncConfigs && m.server.client != nil && m.sync.configItems == nil {
-		m.sync.configFetching = true
-		return fetchConfigDiffs(m.server.client, m.paths, m.cfg)
-	}
-	if to == contentSyncAudit {
-		m.sync.auditRows = m.buildAuditRows()
-	}
 	return nil
 }
 
-func (m *model) cycleLocalTab(dir int) tea.Cmd {
-	for i, t := range localTabs {
-		if t == m.activeLocalTab {
-			return m.switchLocalTab(localTabs[(i+dir+len(localTabs))%len(localTabs)])
+func (m *model) cycleTab(dir int) tea.Cmd {
+	tabs := m.availableTabs()
+	for i, t := range tabs {
+		if t == m.activeTab {
+			next := tabs[(i+dir+len(tabs))%len(tabs)]
+			return m.switchTab(next)
 		}
 	}
 	return nil
-}
-
-func (m *model) cycleServerTab(dir int) tea.Cmd {
-	for i, t := range serverTabs {
-		if t == m.activeServerTab {
-			return m.switchServerTab(serverTabs[(i+dir+len(serverTabs))%len(serverTabs)])
-		}
-	}
-	return nil
-}
-
-func (m *model) cycleSyncTab(dir int) tea.Cmd {
-	for i, t := range syncTabs {
-		if t == m.activeSyncTab {
-			return m.switchSyncTab(syncTabs[(i+dir+len(syncTabs))%len(syncTabs)])
-		}
-	}
-	return nil
-}
-
-func (m *model) switchModpackTab(to contentTab) tea.Cmd {
-	m.activeModpackTab = to
-	return nil
-}
-
-func (m *model) cycleModpackTab(dir int) tea.Cmd {
-	for i, t := range modpackTabs {
-		if t == m.activeModpackTab {
-			return m.switchModpackTab(modpackTabs[(i+dir+len(modpackTabs))%len(modpackTabs)])
-		}
-	}
-	return nil
-}
-
-// enterLocalMode switches to local mode with game status check.
-func (m *model) enterLocalMode() tea.Cmd {
-	m.stopLocalLogStream()
-	m.stopServerLogStream()
-	m.activeMode = modeLocal
-	return tea.Batch(checkGameRunning(), localTick())
-}
-
-// enterServerMode switches to server mode, fetching status if needed.
-func (m *model) enterServerMode() tea.Cmd {
-	m.stopLocalLogStream()
-	m.stopServerLogStream()
-	m.activeMode = modeServer
-	cmds := []tea.Cmd{}
-	if m.server.client != nil {
-		if m.server.status == nil {
-			m.server.fetching = true
-			cmds = append(cmds, fetchServerStatus(m.server.client))
-		}
-		cmds = append(cmds, serverTick())
-		if m.activeServerTab == contentLogs {
-			cmds = append(cmds, m.loadServerLogs())
-		}
-	}
-	return tea.Batch(cmds...)
-}
-
-// enterModpackMode loads modpack data and switches to modpack mode.
-func (m *model) enterModpackMode() tea.Cmd {
-	m.activeMode = modeModpack
-	m.modpack.loadFromDisk(m.cfg.ModpackPath)
-	return nil
-}
-
-// enterSyncMode sets up sync mode state and returns any needed commands.
-func (m *model) enterSyncMode() tea.Cmd {
-	m.activeMode = modeSync
-	cmds := []tea.Cmd{}
-	if m.server.client != nil {
-		// Fetch server data if not already loaded
-		if m.server.status == nil {
-			m.server.fetching = true
-			cmds = append(cmds, fetchServerStatus(m.server.client))
-		}
-		cmds = append(cmds, serverTick())
-	}
-	// Populate mod items from current data
-	m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
-	return tea.Batch(cmds...)
 }
 
 // Run starts the interactive TUI.

@@ -12,7 +12,6 @@ import (
 	"mmcli/internal/agentapi"
 	"mmcli/internal/client"
 	"mmcli/internal/config"
-	"mmcli/internal/installer"
 	"mmcli/internal/profile"
 )
 
@@ -83,17 +82,17 @@ type serverModel struct {
 	actionBusy bool
 	actionMsg  string
 
-	confirmPush    bool
-	pushItems      []modListItem
-	pushScroll     int
-	lastPush        *agentapi.SyncResponse
-	lastPushTime    time.Time
-	pushDetail      bool // push detail view open
+	confirmPush      bool
+	pushItems        []modListItem
+	pushScroll       int
+	lastPush         *agentapi.SyncResponse
+	lastPushTime     time.Time
+	pushDetail       bool // push detail view open
 	pushDetailScroll int
-	confirmRemove  bool
-	confirmStart   bool
-	confirmStop    bool
-	confirmRestart bool
+	confirmRemove    bool
+	confirmStart     bool
+	confirmStop      bool
+	confirmRestart   bool
 
 	logs     logViewerState
 	logCh    <-chan []string
@@ -103,6 +102,8 @@ type serverModel struct {
 	statusCursor    int
 	editingWebhook  bool
 	webhookInput    string
+	editingEmbedURL bool
+	embedURLInput   string
 	configFiles     []string
 	configCursor    int
 
@@ -118,396 +119,6 @@ func (m *model) loadServerLogs() tea.Cmd {
 	m.server.logCh = ch
 	m.server.logStop = stop
 	return cmd
-}
-
-func (m model) handleServerNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Push detail view modal
-	if m.server.pushDetail {
-		switch msg.String() {
-		case "q", "esc":
-			m.server.pushDetail = false
-			m.server.pushDetailScroll = 0
-		case "up", "k":
-			if m.server.pushDetailScroll > 0 {
-				m.server.pushDetailScroll--
-			}
-		case "down", "j":
-			m.server.pushDetailScroll++
-		case "r":
-			if m.server.role == agentapi.RoleAdmin && pushNeedsRestart(m.server.lastPush) {
-				m.server.confirmRestart = true
-			}
-		case "ctrl+c":
-			return m, tea.Quit
-		}
-		return m, nil
-	}
-
-	// Push confirmation modal
-	if m.server.confirmPush {
-		switch msg.String() {
-		case "y":
-			m.server.confirmPush = false
-			m.server.actionBusy = true
-			m.server.actionMsg = "Pushing mods..."
-			return m, pushMods(m.server.client, m.paths, m.cfg, *m.reg)
-		case "up", "k":
-			if m.server.pushScroll > 0 {
-				m.server.pushScroll--
-			}
-		case "down", "j":
-			m.server.pushScroll++
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			m.server.confirmPush = false
-		}
-		return m, nil
-	}
-
-	// Remove confirmation
-	if m.server.confirmRemove {
-		switch msg.String() {
-		case "y":
-			m.server.confirmRemove = false
-			if m.server.cursor < len(m.server.mods) {
-				mod := m.server.mods[m.server.cursor]
-				regMod, ok := findModForRemove(m.reg, m.cfg.ActiveProfile, mod.Name)
-				if ok {
-					if regMod.IsLocal {
-						pluginsDir := m.paths.ProfilePluginsDir(m.cfg.ActiveProfile)
-						installer.RemoveLocalMod(pluginsDir, regMod)
-					} else {
-						installer.Remove(m.paths, m.cfg, m.reg, regMod.FullName())
-					}
-					config.SaveRegistry(m.paths, *m.reg)
-					// Remove from the server mods view
-					m.server.mods = append(m.server.mods[:m.server.cursor], m.server.mods[m.server.cursor+1:]...)
-					if m.server.cursor >= len(m.server.mods) && m.server.cursor > 0 {
-						m.server.cursor--
-					}
-				}
-			}
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			m.server.confirmRemove = false
-		}
-		return m, nil
-	}
-
-	// Start confirmation
-	if m.server.confirmStart {
-		switch msg.String() {
-		case "y":
-			m.server.confirmStart = false
-			m.server.actionBusy = true
-			m.server.actionMsg = "Starting server..."
-			return m, serverAction(m.server.client, "start")
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			m.server.confirmStart = false
-		}
-		return m, nil
-	}
-
-	// Stop confirmation
-	if m.server.confirmStop {
-		switch msg.String() {
-		case "y":
-			m.server.confirmStop = false
-			m.server.actionBusy = true
-			m.server.actionMsg = "Stopping server..."
-			return m, serverAction(m.server.client, "stop")
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			m.server.confirmStop = false
-		}
-		return m, nil
-	}
-
-	// Restart confirmation
-	if m.server.confirmRestart {
-		switch msg.String() {
-		case "y":
-			m.server.confirmRestart = false
-			m.server.actionBusy = true
-			m.server.actionMsg = "Restarting server..."
-			return m, serverAction(m.server.client, "restart")
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			m.server.confirmRestart = false
-		}
-		return m, nil
-	}
-
-	// Action busy — only allow quit
-	if m.server.actionBusy {
-		if msg.String() == "ctrl+c" {
-			return m, tea.Quit
-		}
-		return m, nil
-	}
-
-	// No server configured
-	if m.server.client == nil {
-		switch msg.String() {
-		case "q", "esc", "ctrl+c":
-			return m, tea.Quit
-		case "`", "3":
-			return m, m.enterModpackMode()
-		case "1":
-			return m, m.enterLocalMode()
-		case "4":
-			return m, m.enterSyncMode()
-		}
-		return m, nil
-	}
-
-	// Common keys across all server tabs
-	switch msg.String() {
-	case "q", "esc", "ctrl+c":
-		return m, tea.Quit
-	case "`":
-		return m, m.enterModpackMode()
-	case "1", "3", "4":
-		// Guard: don't intercept digits when settings editor is active (typing port numbers, etc.)
-		if m.server.editor.active {
-			break
-		}
-		switch msg.String() {
-		case "1":
-			return m, m.enterLocalMode()
-		case "3":
-			return m, m.enterModpackMode()
-		case "4":
-			return m, m.enterSyncMode()
-		}
-	case "tab":
-		cmd := m.cycleServerTab(1)
-		return m, cmd
-	case "shift+tab":
-		cmd := m.cycleServerTab(-1)
-		return m, cmd
-	}
-
-	// Tab-specific keys
-	switch m.activeServerTab {
-	case contentMods:
-		return m.handleServerModsKeys(msg)
-	case contentConfig:
-		return m.handleServerConfigKeys(msg)
-	case contentLogs:
-		return m.handleServerLogsKeys(msg)
-	case contentWorld:
-		return m.handleServerWorldKeys(msg)
-	case contentSyncModeration:
-		return m.handleServerModerationKeys(msg)
-	case contentStatus:
-		return m.handleServerStatusKeys(msg)
-	}
-	return m, nil
-}
-
-func (m model) handleServerModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "up", "k":
-		if m.server.cursor > 0 {
-			m.server.cursor--
-		}
-	case "down", "j":
-		if m.server.cursor < len(m.server.mods)-1 {
-			m.server.cursor++
-		}
-	case "s":
-		if m.server.role != agentapi.RoleAdmin {
-			return m, nil
-		}
-		if m.server.status != nil && m.server.status.Running {
-			m.server.confirmStart = true
-			return m, nil
-		}
-		m.server.actionBusy = true
-		m.server.actionMsg = "Starting server..."
-		return m, serverAction(m.server.client, "start")
-	case "d":
-		if m.server.role != agentapi.RoleAdmin {
-			return m, nil
-		}
-		m.server.confirmStop = true
-		return m, nil
-	case "r":
-		if m.server.role != agentapi.RoleAdmin {
-			return m, nil
-		}
-		m.server.confirmRestart = true
-		return m, nil
-	case "x":
-		if m.server.role != agentapi.RoleAdmin || len(m.server.mods) == 0 {
-			return m, nil
-		}
-		m.server.confirmRemove = true
-		return m, nil
-	}
-	return m, nil
-}
-
-func (m model) handleServerLogsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.server.logs.active {
-		switch msg.String() {
-		case "up", "k":
-			if m.server.logs.scroll > 0 {
-				m.server.logs.scroll--
-				m.server.logs.following = false
-			}
-		case "down", "j":
-			maxScroll := max(0, len(m.server.logs.lines)-m.server.logs.visible)
-			if m.server.logs.scroll < maxScroll {
-				m.server.logs.scroll++
-			}
-			if m.server.logs.scroll >= maxScroll {
-				m.server.logs.following = true
-			}
-		case "f", "G":
-			m.server.logs.scroll = max(0, len(m.server.logs.lines)-m.server.logs.visible)
-			m.server.logs.following = true
-		}
-	}
-	return m, nil
-}
-
-func (m model) viewServer() string {
-	var b strings.Builder
-
-	// No server configured
-	if m.server.client == nil {
-		b.WriteString("\n  No server configured.\n")
-		b.WriteString("  Run \033[36mmmcli server add\033[0m to register one.\n\n")
-		b.WriteString("  \033[2m` mode • q quit\033[0m\n\n")
-		return b.String()
-	}
-
-	// Push detail view
-	if m.server.pushDetail && m.server.lastPush != nil {
-		renderPushDetail(&b, m.server.lastPush, m.server.lastPushTime, m.server.pushDetailScroll, m.server.role)
-		return b.String()
-	}
-
-	// Push confirmation
-	if m.server.confirmPush {
-		renderPushConfirm(&b, m.server.serverName, m.cfg.ActiveProfile, m.server.pushItems, m.server.pushScroll, m.server.status)
-		return b.String()
-	}
-
-	// Remove confirmation
-	if m.server.confirmRemove && m.server.cursor < len(m.server.mods) {
-		mod := m.server.mods[m.server.cursor]
-		fmt.Fprintf(&b, "\n  \033[33mRemove %s from server? (y/n)\033[0m\n", mod.Name)
-		b.WriteString("  \033[2mMod will be removed on next server restart.\033[0m\n\n")
-		return b.String()
-	}
-
-	// Start confirmation (server already running)
-	if m.server.confirmStart {
-		fmt.Fprintf(&b, "\n  \033[33mServer is already running. Restart %s? (y/n)\033[0m\n\n", m.server.serverName)
-		return b.String()
-	}
-
-	// Stop confirmation
-	if m.server.confirmStop {
-		fmt.Fprintf(&b, "\n  \033[33mStop server %s? (y/n)\033[0m\n\n", m.server.serverName)
-		return b.String()
-	}
-
-	// Restart confirmation
-	if m.server.confirmRestart {
-		fmt.Fprintf(&b, "\n  \033[33mRestart server %s? (y/n)\033[0m\n\n", m.server.serverName)
-		return b.String()
-	}
-
-	// Action busy
-	if m.server.actionBusy {
-		fmt.Fprintf(&b, "\n  \033[33m%s\033[0m\n\n", m.server.actionMsg)
-		return b.String()
-	}
-
-	b.WriteString("\n")
-
-	// Mod list — use server-side data (manifest + log enrichment)
-	items := make([]modListItem, len(m.server.mods))
-	for i, mod := range m.server.mods {
-		item := modListItem{
-			Name:      mod.Name,
-			Version:   mod.Version,
-			Disabled:  mod.Disabled,
-			Anticheat: mod.Anticheat,
-		}
-		// Fallback to local registry for anticheat if not in manifest
-		if item.Anticheat == "" {
-			if regMod, ok := m.reg.GetMod(m.cfg.ActiveProfile, mod.Name); ok {
-				item.Anticheat = regMod.Anticheat
-			}
-		}
-		items[i] = item
-	}
-	renderModList(&b, items, m.server.cursor, listVisible(m.height, 11), true, m.anticheatSystem)
-
-	// Status bar
-	b.WriteString("\n")
-	if m.server.statusErr != nil {
-		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.server.statusErr)
-	}
-	var hotkeys []string
-	if m.server.role == agentapi.RoleAdmin {
-		hotkeys = []string{"x remove", "s start", "d stop", "r restart", "` mode", "tab next", "q quit"}
-	} else {
-		hotkeys = []string{"` mode", "tab next", "q quit"}
-	}
-	renderHotkeyBar(&b, hotkeys, m.width)
-
-	return b.String()
-}
-
-func (m model) viewServerConfig() string {
-	var b strings.Builder
-	b.WriteString("\n")
-	renderProfileConfigList(&b, m.server.configFiles, m.server.configCursor, listVisible(m.height, 9))
-	b.WriteString("\n")
-	hotkeys := []string{"↑/↓ navigate", "o open", "tab next", "` mode", "q quit"}
-	renderHotkeyBar(&b, hotkeys, m.width)
-	return b.String()
-}
-
-func (m model) handleServerConfigKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	configDir := m.paths.ProfileConfigDir(m.cfg.ActiveProfile)
-	newCursor, cmd := handleConfigKeys(msg, m.server.configFiles, m.server.configCursor, configDir)
-	m.server.configCursor = newCursor
-	if cmd != nil {
-		return m, cmd
-	}
-	return m, nil
-}
-
-func (m model) viewServerLogs() string {
-	var b strings.Builder
-
-	if m.server.client == nil {
-		b.WriteString("\n  \033[2mNo server configured.\033[0m\n\n")
-		hotkeys := []string{"` mode", "tab next", "q quit"}
-		renderHotkeyBar(&b, hotkeys, m.width)
-		return b.String()
-	}
-
-	if !m.server.logs.active {
-		b.WriteString("\n  \033[2mLoading logs...\033[0m\n\n")
-		return b.String()
-	}
-
-	renderLogViewer(&b, m.server.logs)
-	return b.String()
 }
 
 func (m model) buildServerStatusItems() []settingsItem {
@@ -668,310 +279,21 @@ func (m model) buildServerStatusItems() []settingsItem {
 		editable: true,
 	})
 
-	// Status embed
+	// Status embed webhook
 	var embedVal string
-	if m.server.status != nil && m.server.status.WebhookEnabled && m.server.status.StatusEmbed {
-		embedVal = "\033[32menabled\033[0m"
-	} else if m.server.status != nil && m.server.status.WebhookEnabled {
-		embedVal = "\033[2mdisabled\033[0m"
+	if m.server.status != nil && m.server.status.StatusEmbedURL != "" {
+		embedVal = fmt.Sprintf("\033[32menabled\033[0m (%s)", m.server.status.StatusEmbedURL)
 	} else {
-		embedVal = "\033[2m–\033[0m"
+		embedVal = "\033[2mnot configured\033[0m"
 	}
 	items = append(items, settingsItem{
 		label:    "Status embed",
 		value:    embedVal,
-		tooltip:  "Continuously-updated Discord embed showing server status, players, and game time.",
-		editable: m.server.status != nil && m.server.status.WebhookEnabled,
+		tooltip:  "Discord webhook URL for a continuously-updated status embed showing server status, players, and game time.",
+		editable: true,
 	})
 
 	return items
-}
-
-func (m model) handleServerStatusKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Webhook URL input modal
-	if m.server.editingWebhook {
-		switch msg.String() {
-		case "esc":
-			m.server.editingWebhook = false
-		case "enter":
-			url := m.server.webhookInput
-			m.server.editingWebhook = false
-			if m.server.client != nil {
-				return m, setWebhookURL(m.server.client, url)
-			}
-		case "backspace":
-			if len(m.server.webhookInput) > 0 {
-				m.server.webhookInput = m.server.webhookInput[:len(m.server.webhookInput)-1]
-			}
-		case "ctrl+c":
-			return m, tea.Quit
-		default:
-			if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
-				m.server.webhookInput += string(msg.Runes)
-			}
-		}
-		return m, nil
-	}
-
-	items := m.buildServerStatusItems()
-	switch msg.String() {
-	case "up", "k":
-		if m.server.statusCursor > 0 {
-			m.server.statusCursor--
-		}
-	case "down", "j":
-		if m.server.statusCursor < len(items)-1 {
-			m.server.statusCursor++
-		}
-	case "enter", " ":
-		if m.server.statusCursor < len(items) && items[m.server.statusCursor].editable {
-			switch items[m.server.statusCursor].label {
-			case "Discord webhook":
-				m.server.editingWebhook = true
-				// Pre-fill with current URL
-				if m.server.status != nil && m.server.status.WebhookURL != "" {
-					m.server.webhookInput = m.server.status.WebhookURL
-				} else {
-					m.server.webhookInput = ""
-				}
-			case "Status embed":
-				if m.server.client != nil && m.server.status != nil {
-					newVal := !m.server.status.StatusEmbed
-					return m, toggleStatusEmbed(m.server.client, newVal)
-				}
-			}
-		}
-	}
-	return m, nil
-}
-
-func (m model) viewServerStatus() string {
-	var b strings.Builder
-
-	if m.server.client == nil {
-		b.WriteString("\n  \033[2mNo server configured.\033[0m\n\n")
-		hotkeys := []string{"` mode", "tab next", "q quit"}
-		renderHotkeyBar(&b, hotkeys, m.width)
-		return b.String()
-	}
-
-	// Webhook URL input
-	if m.server.editingWebhook {
-		b.WriteString("\n  Discord webhook URL:\n\n")
-		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.server.webhookInput)
-		b.WriteString("\n  \033[2menter save • esc cancel • empty to clear\033[0m\n\n")
-		return b.String()
-	}
-
-	items := m.buildServerStatusItems()
-	b.WriteString("\n")
-
-	for i, item := range items {
-		cursor := "    "
-		if i == m.server.statusCursor {
-			cursor = "  \033[36m>\033[0m "
-		}
-		label := fmt.Sprintf("%-18s", item.Label()+":")
-		val := item.value
-		if item.editable && i == m.server.statusCursor {
-			val = fmt.Sprintf("< %s >", val)
-		}
-		fmt.Fprintf(&b, "%s%s %s\n", cursor, label, val)
-	}
-
-	// Tooltip
-	b.WriteString("\n")
-	if m.server.statusCursor < len(items) {
-		fmt.Fprintf(&b, "  \033[2m%s\033[0m\n", items[m.server.statusCursor].tooltip)
-	}
-
-	b.WriteString("\n")
-	hotkeys := []string{"↑/↓ navigate"}
-	if m.server.statusCursor < len(items) && items[m.server.statusCursor].editable {
-		hotkeys = append(hotkeys, "enter/space edit")
-	}
-	hotkeys = append(hotkeys, "` mode", "tab next", "q quit")
-	renderHotkeyBar(&b, hotkeys, m.width)
-
-	return b.String()
-}
-
-func (m model) viewServerPlayers() string {
-	var b strings.Builder
-
-	if m.server.client == nil {
-		b.WriteString("\n  \033[2mNo server configured.\033[0m\n\n")
-		hotkeys := []string{"` mode", "tab next", "q quit"}
-		renderHotkeyBar(&b, hotkeys, m.width)
-		return b.String()
-	}
-
-	b.WriteString("\n")
-
-	if m.server.status == nil || !m.server.status.Running {
-		b.WriteString("  \033[2mServer is not running.\033[0m\n")
-	} else if len(m.server.players) == 0 {
-		b.WriteString("  \033[2mNo players connected.\033[0m\n")
-	} else {
-		// Header
-		fmt.Fprintf(&b, "  \033[1m%-24s %s\033[0m\n", "Name", "Steam ID")
-		fmt.Fprintf(&b, "  \033[2m%-24s %s\033[0m\n", "────────────────────────", "──────────────────")
-
-		for _, p := range m.server.players {
-			name := p.Name
-			if name == "" {
-				name = "\033[2munknown\033[0m"
-			}
-			steamID := p.SteamID
-			if steamID == "" {
-				steamID = "–"
-			}
-			fmt.Fprintf(&b, "  %-24s %s\n", name, steamID)
-		}
-
-		fmt.Fprintf(&b, "\n  \033[2m%d player(s) online\033[0m\n", len(m.server.players))
-	}
-
-	b.WriteString("\n")
-	hotkeys := []string{"` mode", "tab next", "q quit"}
-	renderHotkeyBar(&b, hotkeys, m.width)
-
-	return b.String()
-}
-
-func (m model) handleServerWorldKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Editor sub-modal
-	if m.server.editor.active {
-		return m.handleSettingsEditor(msg)
-	}
-
-	switch msg.String() {
-	case "up", "k":
-		if m.server.settingsScroll > 0 {
-			m.server.settingsScroll--
-		}
-	case "down", "j":
-		m.server.settingsScroll++
-	case "e":
-		if m.server.role == agentapi.RoleAdmin && m.server.settings != nil {
-			m.server.editor = settingsEditor{
-				active: true,
-				fields: buildEditorFields(m.server.settings),
-				cursor: 0,
-			}
-			return m, fetchLaunchConfigsForEditor(m.server.client)
-		}
-	case "r":
-		// Refresh settings
-		if m.server.client != nil {
-			return m, fetchSettings(m.server.client)
-		}
-	}
-	return m, nil
-}
-
-func (m model) viewServerModeration() string {
-	var b strings.Builder
-
-	if m.server.client == nil {
-		b.WriteString("\n  \033[2mNo server configured.\033[0m\n\n")
-		hotkeys := []string{"` mode", "tab next", "q quit"}
-		renderHotkeyBar(&b, hotkeys, m.width)
-		return b.String()
-	}
-
-	if m.server.fetching && len(m.sync.modItems) == 0 {
-		b.WriteString("\n  \033[2mFetching server data...\033[0m\n\n")
-		return b.String()
-	}
-
-	b.WriteString("\n")
-
-	systemLabel := m.anticheatSystem
-	if systemLabel == "azu" {
-		systemLabel = "AzuAntiCheat"
-	} else {
-		systemLabel = "ValheimEnforcer"
-	}
-	fmt.Fprintf(&b, "  \033[1mModeration\033[0m  \033[2m%s\033[0m\n\n", systemLabel)
-
-	renderModerationList(&b, m.sync.modItems, m.sync.moderationCursor, listVisible(m.height, 12), m.anticheatSystem)
-
-	b.WriteString("\n")
-	if m.server.statusErr != nil {
-		fmt.Fprintf(&b, "  \033[31mError: %v\033[0m\n", m.server.statusErr)
-	}
-
-	var hotkeys []string
-	if m.server.role == agentapi.RoleAdmin {
-		hotkeys = []string{"a classify", "` mode", "tab next", "q quit"}
-	} else {
-		hotkeys = []string{"` mode", "tab next", "q quit"}
-	}
-	renderHotkeyBar(&b, hotkeys, m.width)
-
-	return b.String()
-}
-
-func (m model) handleServerModerationKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	items := m.sync.modItems
-	switch msg.String() {
-	case "up", "k":
-		if m.sync.moderationCursor > 0 {
-			m.sync.moderationCursor--
-		}
-	case "down", "j":
-		if m.sync.moderationCursor < len(items)-1 {
-			m.sync.moderationCursor++
-		}
-	case "a":
-		if m.server.role != agentapi.RoleAdmin || len(items) == 0 {
-			return m, nil
-		}
-		modName := items[m.sync.moderationCursor].Name
-		regMod, ok := m.reg.GetMod(m.cfg.ActiveProfile, modName)
-		if !ok {
-			return m, nil
-		}
-		newValue := nextAnticheatValue(regMod.Anticheat, m.anticheatSystem)
-		regMod.Anticheat = newValue
-		m.reg.SetMod(m.cfg.ActiveProfile, regMod)
-		for _, depName := range regMod.Dependencies {
-			dep, depOk := m.reg.GetMod(m.cfg.ActiveProfile, depName)
-			if !depOk {
-				continue
-			}
-			dep.Anticheat = newValue
-			m.reg.SetMod(m.cfg.ActiveProfile, dep)
-		}
-		config.SaveRegistry(m.paths, *m.reg)
-		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
-	}
-	return m, nil
-}
-
-func (m model) viewServerWorld() string {
-	var b strings.Builder
-
-	if m.server.client == nil {
-		b.WriteString("\n  \033[2mNo server configured.\033[0m\n\n")
-		hotkeys := []string{"` mode", "tab next", "q quit"}
-		renderHotkeyBar(&b, hotkeys, m.width)
-		return b.String()
-	}
-
-	if m.server.editor.active {
-		renderSettingsEdit(&b, &m.server.editor, m.width)
-		return b.String()
-	}
-
-	if m.server.settings == nil {
-		b.WriteString("\n  \033[2mLoading settings...\033[0m\n\n")
-		return b.String()
-	}
-
-	renderSettingsView(&b, m.server.settings, m.server.settingsScroll, m.server.role)
-	return b.String()
 }
 
 // pushNeedsRestart returns true if the push result has actual changes and no failures.
@@ -1244,10 +566,10 @@ func setWebhookURL(c *client.AgentClient, url string) tea.Cmd {
 	}
 }
 
-func toggleStatusEmbed(c *client.AgentClient, enabled bool) tea.Cmd {
+func setStatusEmbedURL(c *client.AgentClient, url string) tea.Cmd {
 	return func() tea.Msg {
 		_, err := c.UpdateWebhookConfig(agentapi.WebhookConfigUpdate{
-			StatusEmbed: &enabled,
+			StatusEmbedURL: &url,
 		})
 		if err != nil {
 			return serverActionMsg{action: "webhook", err: err}
@@ -1358,20 +680,6 @@ func fetchLaunchConfigsForEditor(c *client.AgentClient) tea.Cmd {
 		}
 		return editorLCInfoMsg{active: resp.Active}
 	}
-}
-
-// findModForRemove looks up a mod in the registry by server mod name.
-// Tries exact full name match, then just the mod name portion.
-func findModForRemove(reg *config.Registry, profile, name string) (config.ModEntry, bool) {
-	if mod, ok := reg.GetMod(profile, name); ok {
-		return mod, true
-	}
-	for _, mod := range reg.ListMods(profile) {
-		if strings.EqualFold(mod.Name, name) || strings.EqualFold(mod.FullName(), name) {
-			return mod, true
-		}
-	}
-	return config.ModEntry{}, false
 }
 
 func serverTick() tea.Cmd {
