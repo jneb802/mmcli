@@ -9,6 +9,7 @@ import (
 
 	"mmcli/internal/config"
 	"mmcli/internal/installer"
+	"mmcli/internal/modpack"
 	"mmcli/internal/profile"
 )
 
