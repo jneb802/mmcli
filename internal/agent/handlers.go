@@ -20,16 +20,25 @@ import (
 
 type Handlers struct {
 	cfg              AgentConfig
+	cfgPath          string
 	pm               *ProcessManager
 	version          string
 	lastAPIPlugins   []ModAPIPlugin // cached last successful mod API response
 }
 
-func NewHandlers(cfg AgentConfig, pm *ProcessManager, version string) *Handlers {
-	return &Handlers{cfg: cfg, pm: pm, version: version}
+func NewHandlers(cfg AgentConfig, cfgPath string, pm *ProcessManager, version string) *Handlers {
+	return &Handlers{cfg: cfg, cfgPath: cfgPath, pm: pm, version: version}
+}
+
+// reloadConfig re-reads the config from disk to pick up external changes.
+func (h *Handlers) reloadConfig() {
+	if cfg, err := LoadConfig(h.cfgPath); err == nil {
+		h.cfg = cfg
+	}
 }
 
 func (h *Handlers) HandleStatus(w http.ResponseWriter, r *http.Request) {
+	h.reloadConfig()
 	mods := h.listModDirs()
 	_, bepinexErr := os.Stat(h.cfg.BepInExDir())
 
@@ -82,6 +91,7 @@ func (h *Handlers) HandleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handlers) HandleWebhookGet(w http.ResponseWriter, r *http.Request) {
+	h.reloadConfig()
 	resp := agentapi.WebhookConfigResponse{}
 	if h.cfg.DiscordWebhook != nil {
 		resp.URL = h.cfg.DiscordWebhook.URL

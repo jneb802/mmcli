@@ -21,12 +21,12 @@ func RoleFromContext(r *http.Request) string {
 	return agentapi.RoleAdmin
 }
 
-func Run(cfg AgentConfig, addr, version string) error {
+func Run(cfg AgentConfig, cfgPath, addr, version string) error {
 	pm := NewProcessManager(cfg)
 	if pm.TryAdopt() {
 		log.Printf("Re-adopted running Valheim server")
 	}
-	h := NewHandlers(cfg, pm, version)
+	h := NewHandlers(cfg, cfgPath, pm, version)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+agentapi.PathStatus, h.HandleStatus)

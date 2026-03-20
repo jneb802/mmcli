@@ -34,7 +34,7 @@ func main() {
 		log.Fatalf("Error: admin and player secrets must be different")
 	}
 
-	if err := agent.Run(cfg, *listenAddr, Version); err != nil {
+	if err := agent.Run(cfg, *configPath, *listenAddr, Version); err != nil {
 		log.Fatalf("Error: %v", err)
 	}
 }
