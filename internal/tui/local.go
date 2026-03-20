@@ -299,7 +299,14 @@ func updateServerModeration(c *client.AgentClient, modName, anticheat string) te
 			ModName:   modName,
 			Anticheat: anticheat,
 		})
-		return nil
+		// Re-fetch server status so the moderation column updates immediately
+		status, _ := c.Status()
+		modsResp, _ := c.ListMods()
+		var mods []agentapi.ModInfo
+		if modsResp != nil {
+			mods = modsResp.Mods
+		}
+		return serverStatusMsg{status: status, mods: mods, modsResp: modsResp}
 	}
 }
 

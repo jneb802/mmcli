@@ -228,8 +228,11 @@ func (m model) viewModsFull() string {
 	// Install input
 	if m.mods.installing && !m.mods.installBusy {
 		target := "local"
-		if m.mods.filter == filterServer {
+		switch m.mods.filter {
+		case filterServer:
 			target = "server"
+		case filterModpack:
+			target = "modpack"
 		}
 		fmt.Fprintf(&b, "\n  Install mod → \033[36m%s\033[0m (Owner-Name, URL, or local path):\n\n", target)
 		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.mods.installInput)
@@ -237,17 +240,20 @@ func (m model) viewModsFull() string {
 		return b.String()
 	}
 
-	// Installing busy
+	// Installing/updating busy
 	if m.mods.installBusy {
 		query := m.mods.installInput
 		if query == "" {
 			query = "mod"
 		}
 		target := "locally"
-		if m.mods.filter == filterServer {
+		switch m.mods.filter {
+		case filterServer:
 			target = "to server"
+		case filterModpack:
+			target = "in modpack"
 		}
-		fmt.Fprintf(&b, "\n  \033[33mInstalling %s %s...\033[0m\n\n", query, target)
+		fmt.Fprintf(&b, "\n  \033[33mUpdating %s %s...\033[0m\n\n", query, target)
 		return b.String()
 	}
 
@@ -259,8 +265,11 @@ func (m model) viewModsFull() string {
 		row := m.filteredAuditRow()
 		if row != nil {
 			target := "locally"
-			if m.mods.filter == filterServer {
+			switch m.mods.filter {
+			case filterServer:
 				target = "from server"
+			case filterModpack:
+				target = "from modpack"
 			}
 			fmt.Fprintf(&b, "\n  \033[33mRemove %s %s? (y/n)\033[0m\n\n", row.Name, target)
 		}
