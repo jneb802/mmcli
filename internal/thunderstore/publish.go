@@ -4,7 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"crypto/md5"
-	"encoding/hex"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -137,13 +137,13 @@ func Publish(token, authorName, modpackPath string) error {
 		chunk := zipData[part.Offset:end]
 
 		hash := md5.Sum(chunk)
-		md5Hex := hex.EncodeToString(hash[:])
+		md5B64 := base64.StdEncoding.EncodeToString(hash[:])
 
 		req, err := http.NewRequest("PUT", part.URL, bytes.NewReader(chunk))
 		if err != nil {
 			return fmt.Errorf("failed to create chunk request: %w", err)
 		}
-		req.Header.Set("Content-MD5", md5Hex)
+		req.Header.Set("Content-MD5", md5B64)
 		req.ContentLength = int64(len(chunk))
 		req.Header.Set("Connection", "keep-alive")
 
@@ -151,10 +151,11 @@ func Publish(token, authorName, modpackPath string) error {
 		if err != nil {
 			return fmt.Errorf("failed to upload chunk %d: %w", part.PartNumber, err)
 		}
+		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			return fmt.Errorf("chunk upload %d failed: HTTP %d", part.PartNumber, resp.StatusCode)
+			return fmt.Errorf("chunk upload %d failed: HTTP %d: %s", part.PartNumber, resp.StatusCode, string(respBody))
 		}
 
 		etag := resp.Header.Get("ETag")

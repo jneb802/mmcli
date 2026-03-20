@@ -247,8 +247,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.server.modsResp = msg.modsResp
 		}
 		m.server.players = msg.players
-		// Refresh sync mod items when server data arrives
-		if m.activeMode == modeSync && msg.mods != nil {
+		// Refresh sync mod items when server data arrives,
+		// but not while the user is viewing the Moderation tab (avoids re-sort jitter).
+		if m.activeMode == modeSync && msg.mods != nil && m.activeSyncTab != contentSyncModeration {
 			m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
 		}
 		// If we were waiting for server data to run preflight check
