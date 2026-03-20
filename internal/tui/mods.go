@@ -716,6 +716,9 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		config.SaveRegistry(m.paths, *m.reg)
 		m.mods.auditRows = m.buildAuditRows()
+		if m.mods.filter == filterServer && m.server.client != nil {
+			return m, pushToServer(m.paths, m.cfg, m.reg, m.server.client)
+		}
 
 	case "c":
 		// Open config file for selected mod

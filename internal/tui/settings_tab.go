@@ -26,6 +26,12 @@ type settingsTabState struct {
 	editingField int // -1=none, 0=token, 1=author, 2=path
 	fieldInput   string
 
+	// Webhook editing
+	editingWebhook  bool
+	webhookInput    string
+	editingEmbedURL bool
+	embedURLInput   string
+
 	// Admin list modal
 	adminList    bool
 	adminCursor  int
@@ -75,6 +81,20 @@ func (m model) viewSettingsTab() string {
 		fmt.Fprintf(&b, "\n  %s:\n\n", label)
 		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.settingsTab.fieldInput)
 		b.WriteString("\n  \033[2menter save • esc cancel\033[0m\n\n")
+		return b.String()
+	}
+
+	// Webhook URL editing
+	if m.settingsTab.editingWebhook {
+		b.WriteString("\n  Discord webhook URL:\n\n")
+		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.settingsTab.webhookInput)
+		b.WriteString("\n  \033[2menter save • esc cancel • empty to clear\033[0m\n\n")
+		return b.String()
+	}
+	if m.settingsTab.editingEmbedURL {
+		b.WriteString("\n  Status embed webhook URL:\n\n")
+		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.settingsTab.embedURLInput)
+		b.WriteString("\n  \033[2menter save • esc cancel • empty to clear\033[0m\n\n")
 		return b.String()
 	}
 
@@ -200,6 +220,68 @@ func (m model) buildSettingsTabItems() []settingsTabItem {
 		editable: true,
 		action:   "admin-list",
 	})
+
+	// --- Discord section ---
+	items = append(items, settingsTabItem{label: "Discord", isSectionHeader: true})
+
+	// Webhook URL
+	var webhookVal string
+	if m.server.status != nil && m.server.status.WebhookEnabled {
+		webhookVal = fmt.Sprintf("\033[32menabled\033[0m (%s)", m.server.status.WebhookURL)
+	} else {
+		webhookVal = "\033[2mnot configured\033[0m"
+	}
+	items = append(items, settingsTabItem{
+		label:    "Webhook URL",
+		value:    webhookVal,
+		tooltip:  "Discord webhook URL for server event notifications.",
+		editable: true,
+		action:   "webhook-url",
+	})
+
+	// Status embed URL
+	var embedVal string
+	if m.server.status != nil && m.server.status.StatusEmbedURL != "" {
+		embedVal = fmt.Sprintf("\033[32menabled\033[0m (%s)", m.server.status.StatusEmbedURL)
+	} else {
+		embedVal = "\033[2mnot configured\033[0m"
+	}
+	items = append(items, settingsTabItem{
+		label:    "Status Embed",
+		value:    embedVal,
+		tooltip:  "Discord webhook for a continuously-updated status embed.",
+		editable: true,
+		action:   "embed-url",
+	})
+
+	// Webhook event toggles
+	if m.server.webhookCfg != nil {
+		wcfg := m.server.webhookCfg
+		for _, toggle := range []struct {
+			label, tooltip, action string
+			enabled                bool
+		}{
+			{"Server Started", "Send notification when server starts.", "wh-server-started", wcfg.ServerStarted},
+			{"Server Stopped", "Send notification when server stops.", "wh-server-stopped", wcfg.ServerStopped},
+			{"World Saved", "Send notification when world is saved.", "wh-world-saved", wcfg.WorldSaved},
+			{"Player Joined", "Send notification when a player joins.", "wh-player-joined", wcfg.PlayerJoined},
+			{"Player Left", "Send notification when a player leaves.", "wh-player-left", wcfg.PlayerLeft},
+			{"Player Died", "Send notification when a player dies.", "wh-player-died", wcfg.PlayerDied},
+			{"First Join", "Send notification on a player's first connection.", "wh-player-first-join", wcfg.PlayerFirstJoin},
+		} {
+			val := "\033[2moff\033[0m"
+			if toggle.enabled {
+				val = "\033[32mon\033[0m"
+			}
+			items = append(items, settingsTabItem{
+				label:    toggle.label,
+				value:    val,
+				tooltip:  toggle.tooltip,
+				editable: true,
+				action:   toggle.action,
+			})
+		}
+	}
 
 	// --- Modpack section ---
 	if m.cfg.ModpackPath != "" {
@@ -343,6 +425,54 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	// Webhook URL editing
+	if m.settingsTab.editingWebhook {
+		switch msg.String() {
+		case "esc":
+			m.settingsTab.editingWebhook = false
+		case "enter":
+			url := m.settingsTab.webhookInput
+			m.settingsTab.editingWebhook = false
+			if m.server.client != nil {
+				return m, setWebhookURL(m.server.client, url)
+			}
+		case "backspace":
+			if len(m.settingsTab.webhookInput) > 0 {
+				m.settingsTab.webhookInput = m.settingsTab.webhookInput[:len(m.settingsTab.webhookInput)-1]
+			}
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+				m.settingsTab.webhookInput += string(msg.Runes)
+			}
+		}
+		return m, nil
+	}
+	if m.settingsTab.editingEmbedURL {
+		switch msg.String() {
+		case "esc":
+			m.settingsTab.editingEmbedURL = false
+		case "enter":
+			url := m.settingsTab.embedURLInput
+			m.settingsTab.editingEmbedURL = false
+			if m.server.client != nil {
+				return m, setStatusEmbedURL(m.server.client, url)
+			}
+		case "backspace":
+			if len(m.settingsTab.embedURLInput) > 0 {
+				m.settingsTab.embedURLInput = m.settingsTab.embedURLInput[:len(m.settingsTab.embedURLInput)-1]
+			}
+		case "ctrl+c":
+			return m, tea.Quit
+		default:
+			if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
+				m.settingsTab.embedURLInput += string(msg.Runes)
+			}
+		}
+		return m, nil
+	}
+
 	// Admin list modal
 	if m.settingsTab.adminList {
 		return m.handleAdminListKeys(msg)
@@ -409,6 +539,23 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, fetchLaunchConfigsForEditor(m.server.client)
 			}
+		case "webhook-url":
+			m.settingsTab.editingWebhook = true
+			if m.server.status != nil && m.server.status.WebhookURL != "" {
+				m.settingsTab.webhookInput = m.server.status.WebhookURL
+			} else {
+				m.settingsTab.webhookInput = ""
+			}
+		case "embed-url":
+			m.settingsTab.editingEmbedURL = true
+			if m.server.status != nil && m.server.status.StatusEmbedURL != "" {
+				m.settingsTab.embedURLInput = m.server.status.StatusEmbedURL
+			} else {
+				m.settingsTab.embedURLInput = ""
+			}
+		case "wh-server-started", "wh-server-stopped", "wh-world-saved",
+			"wh-player-joined", "wh-player-left", "wh-player-died", "wh-player-first-join":
+			return m.toggleWebhookEvent(item.action)
 		case "admin-list":
 			if m.server.role == agentapi.RoleAdmin && m.server.settings != nil {
 				m.settingsTab.adminList = true
@@ -438,6 +585,52 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// --- Webhook toggle ---
+
+func (m model) toggleWebhookEvent(action string) (tea.Model, tea.Cmd) {
+	if m.server.webhookCfg == nil || m.server.client == nil {
+		return m, nil
+	}
+	wcfg := m.server.webhookCfg
+	req := agentapi.WebhookConfigUpdate{}
+
+	switch action {
+	case "wh-server-started":
+		v := !wcfg.ServerStarted
+		req.ServerStarted = &v
+		wcfg.ServerStarted = v
+	case "wh-server-stopped":
+		v := !wcfg.ServerStopped
+		req.ServerStopped = &v
+		wcfg.ServerStopped = v
+	case "wh-world-saved":
+		v := !wcfg.WorldSaved
+		req.WorldSaved = &v
+		wcfg.WorldSaved = v
+	case "wh-player-joined":
+		v := !wcfg.PlayerJoined
+		req.PlayerJoined = &v
+		wcfg.PlayerJoined = v
+	case "wh-player-left":
+		v := !wcfg.PlayerLeft
+		req.PlayerLeft = &v
+		wcfg.PlayerLeft = v
+	case "wh-player-died":
+		v := !wcfg.PlayerDied
+		req.PlayerDied = &v
+		wcfg.PlayerDied = v
+	case "wh-player-first-join":
+		v := !wcfg.PlayerFirstJoin
+		req.PlayerFirstJoin = &v
+		wcfg.PlayerFirstJoin = v
+	}
+
+	return m, func() tea.Msg {
+		m.server.client.UpdateWebhookConfig(req)
+		return nil
+	}
 }
 
 // --- Admin list modal ---

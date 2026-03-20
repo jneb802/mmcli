@@ -342,6 +342,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.server.logs.live = false
 		return m, nil
 
+	case webhookCfgMsg:
+		if msg.err == nil && msg.cfg != nil {
+			m.server.webhookCfg = msg.cfg
+		}
+		return m, nil
+
 	case serverSettingsMsg:
 		m.server.actionBusy = false
 		if msg.err != nil {
@@ -528,15 +534,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Status tab modals (must be checked before global keys)
 		if m.activeTab == tabStatus {
-			if m.status.editingWebhook || m.status.editingEmbedURL ||
-				m.status.confirmStart || m.status.confirmStop || m.status.confirmRestart {
+			if m.status.confirmStart || m.status.confirmStop || m.status.confirmRestart {
 				return m.handleStatusKeys(msg)
 			}
 		}
 
 		// Settings tab modals (must be checked before global keys)
 		if m.activeTab == tabSettings {
-			if m.settingsTab.editingPath || m.settingsTab.editingField >= 0 || m.server.editor.active {
+			if m.settingsTab.editingPath || m.settingsTab.editingField >= 0 || m.server.editor.active ||
+				m.settingsTab.editingWebhook || m.settingsTab.editingEmbedURL || m.settingsTab.adminList {
 				return m.handleSettingsTabKeys(msg)
 			}
 		}
@@ -650,10 +656,16 @@ func (m *model) switchTab(to flatTab) tea.Cmd {
 	case tabStatus:
 		return nil
 	case tabSettings:
-		if m.isFullMode() && m.server.settings == nil && m.server.client != nil {
-			return fetchSettings(m.server.client)
+		var cmds []tea.Cmd
+		if m.isFullMode() && m.server.client != nil {
+			if m.server.settings == nil {
+				cmds = append(cmds, fetchSettings(m.server.client))
+			}
+			if m.server.webhookCfg == nil {
+				cmds = append(cmds, fetchWebhookConfig(m.server.client))
+			}
 		}
-		return nil
+		return tea.Batch(cmds...)
 	case tabChanges:
 		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
 		return nil

@@ -16,32 +16,12 @@ type statusState struct {
 	confirmStart   bool
 	confirmStop    bool
 	confirmRestart bool
-
-	// Webhook/embed editing (reused from serverModel)
-	editingWebhook  bool
-	webhookInput    string
-	editingEmbedURL bool
-	embedURLInput   string
 }
 
 // --- View ---
 
 func (m model) viewStatus() string {
 	var b strings.Builder
-
-	// Webhook editing modals
-	if m.status.editingWebhook {
-		b.WriteString("\n  Discord webhook URL:\n\n")
-		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.status.webhookInput)
-		b.WriteString("\n  \033[2menter save • esc cancel • empty to clear\033[0m\n\n")
-		return b.String()
-	}
-	if m.status.editingEmbedURL {
-		b.WriteString("\n  Status embed webhook URL:\n\n")
-		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.status.embedURLInput)
-		b.WriteString("\n  \033[2menter save • esc cancel • empty to clear\033[0m\n\n")
-		return b.String()
-	}
 
 	// Confirm modals
 	if m.status.confirmStart {
@@ -184,14 +164,6 @@ func (m model) buildStatusItems() []statusItem {
 // --- Key handler ---
 
 func (m model) handleStatusKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	// Webhook editing modals
-	if m.status.editingWebhook {
-		return m.handleStatusWebhookInput(msg)
-	}
-	if m.status.editingEmbedURL {
-		return m.handleStatusEmbedInput(msg)
-	}
-
 	// Confirm modals
 	if m.status.confirmStart {
 		switch msg.String() {
@@ -277,73 +249,6 @@ func (m model) handleStatusKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.status.confirmRestart = true
 		}
 
-	case "enter", " ":
-		if m.status.cursor < len(items) && items[m.status.cursor].editable {
-			switch items[m.status.cursor].label {
-			case "Discord webhook":
-				m.status.editingWebhook = true
-				if m.server.status != nil && m.server.status.WebhookURL != "" {
-					m.status.webhookInput = m.server.status.WebhookURL
-				} else {
-					m.status.webhookInput = ""
-				}
-			case "Status embed":
-				m.status.editingEmbedURL = true
-				if m.server.status != nil && m.server.status.StatusEmbedURL != "" {
-					m.status.embedURLInput = m.server.status.StatusEmbedURL
-				} else {
-					m.status.embedURLInput = ""
-				}
-			}
-		}
-	}
-	return m, nil
-}
-
-func (m model) handleStatusWebhookInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.status.editingWebhook = false
-	case "enter":
-		url := m.status.webhookInput
-		m.status.editingWebhook = false
-		if m.server.client != nil {
-			return m, setWebhookURL(m.server.client, url)
-		}
-	case "backspace":
-		if len(m.status.webhookInput) > 0 {
-			m.status.webhookInput = m.status.webhookInput[:len(m.status.webhookInput)-1]
-		}
-	case "ctrl+c":
-		return m, tea.Quit
-	default:
-		if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
-			m.status.webhookInput += string(msg.Runes)
-		}
-	}
-	return m, nil
-}
-
-func (m model) handleStatusEmbedInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		m.status.editingEmbedURL = false
-	case "enter":
-		url := m.status.embedURLInput
-		m.status.editingEmbedURL = false
-		if m.server.client != nil {
-			return m, setStatusEmbedURL(m.server.client, url)
-		}
-	case "backspace":
-		if len(m.status.embedURLInput) > 0 {
-			m.status.embedURLInput = m.status.embedURLInput[:len(m.status.embedURLInput)-1]
-		}
-	case "ctrl+c":
-		return m, tea.Quit
-	default:
-		if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace {
-			m.status.embedURLInput += string(msg.Runes)
-		}
 	}
 	return m, nil
 }

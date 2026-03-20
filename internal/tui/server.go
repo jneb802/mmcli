@@ -110,6 +110,8 @@ type serverModel struct {
 	settings       *agentapi.SettingsResponse
 	settingsScroll int
 
+	webhookCfg *agentapi.WebhookConfigResponse
+
 	editor settingsEditor
 }
 
@@ -267,34 +269,6 @@ func (m model) buildServerStatusItems() []settingsItem {
 		label:   "Last restart",
 		value:   restartVal,
 		tooltip: "When the server process was last started, computed from uptime.",
-	})
-
-	// Discord webhook
-	var webhookVal string
-	if m.server.status != nil && m.server.status.WebhookEnabled {
-		webhookVal = fmt.Sprintf("\033[32menabled\033[0m (%s)", m.server.status.WebhookURL)
-	} else {
-		webhookVal = "\033[2mnot configured\033[0m"
-	}
-	items = append(items, settingsItem{
-		label:    "Discord webhook",
-		value:    webhookVal,
-		tooltip:  "Discord webhook URL for server event notifications.",
-		editable: true,
-	})
-
-	// Status embed webhook
-	var embedVal string
-	if m.server.status != nil && m.server.status.StatusEmbedURL != "" {
-		embedVal = fmt.Sprintf("\033[32menabled\033[0m (%s)", m.server.status.StatusEmbedURL)
-	} else {
-		embedVal = "\033[2mnot configured\033[0m"
-	}
-	items = append(items, settingsItem{
-		label:    "Status embed",
-		value:    embedVal,
-		tooltip:  "Discord webhook URL for a continuously-updated status embed showing server status, players, and game time.",
-		editable: true,
 	})
 
 	return items
@@ -658,6 +632,18 @@ func fetchSettings(c *client.AgentClient) tea.Cmd {
 			return serverSettingsMsg{err: err}
 		}
 		return serverSettingsMsg{settings: settings}
+	}
+}
+
+type webhookCfgMsg struct {
+	cfg *agentapi.WebhookConfigResponse
+	err error
+}
+
+func fetchWebhookConfig(c *client.AgentClient) tea.Cmd {
+	return func() tea.Msg {
+		cfg, err := c.GetWebhookConfig()
+		return webhookCfgMsg{cfg: cfg, err: err}
 	}
 }
 
