@@ -157,6 +157,28 @@ func renderModList(b *strings.Builder, items []modListItem, cursor, visible int,
 	}
 }
 
+// displayWidth returns the visible character count (not byte count).
+func displayWidth(s string) int {
+	return utf8.RuneCountInString(s)
+}
+
+// padRight pads a string to the given display width with spaces.
+func padRight(s string, width int) string {
+	gap := width - displayWidth(s)
+	if gap <= 0 {
+		return s
+	}
+	return s + strings.Repeat(" ", gap)
+}
+
+// syncVersionStr resolves the display version for a sync column, returning "-" for empty.
+func syncVersionStr(v string) string {
+	if v == "" {
+		return "-"
+	}
+	return v
+}
+
 // renderSyncModList renders a mod list with local/server/modpack version columns and diff status.
 // If showModpack is true, a Modpack column is displayed.
 func renderSyncModList(b *strings.Builder, items []modListItem, cursor, visible int, showModpack bool) {
@@ -165,52 +187,59 @@ func renderSyncModList(b *strings.Builder, items []modListItem, cursor, visible 
 		return
 	}
 
-	maxName := 0
-	maxLocal := len("Local")
-	maxServer := len("Server")
-	maxModpack := len("Modpack")
-	for _, item := range items {
-		if l := len(item.Name); l > maxName {
-			maxName = l
+	// Resolve display values for each item upfront.
+	type row struct {
+		name, local, server, modpack string
+	}
+	rows := make([]row, len(items))
+	for i, item := range items {
+		r := row{name: item.Name, local: syncVersionStr(item.Version)}
+		// Server version
+		switch item.Status {
+		case "":
+			r.server = syncVersionStr(item.Version) // unchanged — same as local
+		case "added":
+			r.server = "-"
+		default:
+			r.server = syncVersionStr(item.ServerVersion)
 		}
-		v := item.Version
-		if v == "" {
-			v = "—"
-		}
-		if l := len(v); l > maxLocal {
-			maxLocal = l
-		}
-		sv := item.ServerVersion
-		if sv == "" && item.Status != "added" {
-			sv = item.Version // unchanged items have same version on both sides
-		}
-		if sv == "" {
-			sv = "—"
-		}
-		if l := len(sv); l > maxServer {
-			maxServer = l
-		}
-		if showModpack {
-			mv := item.ModpackVersion
-			if mv == "" {
-				mv = "—"
-			}
-			if l := len(mv); l > maxModpack {
-				maxModpack = l
-			}
-		}
+		r.modpack = syncVersionStr(item.ModpackVersion)
+		rows[i] = r
 	}
 
-	// Header
-	namePad := strings.Repeat(" ", maxName-len("Name")+2)
-	localPad := strings.Repeat(" ", maxLocal-len("Local")+2)
-	serverPad := strings.Repeat(" ", maxServer-len("Server")+2)
-	if showModpack {
-		modpackPad := strings.Repeat(" ", maxModpack-len("Modpack")+2)
-		fmt.Fprintf(b, "  \033[2m    Name%sLocal%sServer%sModpack%sStatus\033[0m\n", namePad, localPad, serverPad, modpackPad)
-	} else {
-		fmt.Fprintf(b, "  \033[2m    Name%sLocal%sServer%sStatus\033[0m\n", namePad, localPad, serverPad)
+	// Compute column widths from display widths.
+	colName, colLocal, colServer, colModpack := len("Name"), len("Local"), len("Server"), len("Modpack")
+	for _, r := range rows {
+		if w := displayWidth(r.name); w > colName {
+			colName = w
+		}
+		if w := displayWidth(r.local); w > colLocal {
+			colLocal = w
+		}
+		if w := displayWidth(r.server); w > colServer {
+			colServer = w
+		}
+		if showModpack {
+			if w := displayWidth(r.modpack); w > colModpack {
+				colModpack = w
+			}
+		}
 	}
+	// Add gutter between columns.
+	colName += 2
+	colLocal += 2
+	colServer += 2
+	colModpack += 2
+
+	// Header
+	b.WriteString("  \033[2m    ")
+	b.WriteString(padRight("Name", colName))
+	b.WriteString(padRight("Local", colLocal))
+	b.WriteString(padRight("Server", colServer))
+	if showModpack {
+		b.WriteString(padRight("Modpack", colModpack))
+	}
+	b.WriteString("Status\033[0m\n")
 
 	start, end := listWindow(len(items), cursor, visible)
 
@@ -219,54 +248,30 @@ func renderSyncModList(b *strings.Builder, items []modListItem, cursor, visible 
 	}
 
 	for i := start; i < end; i++ {
-		item := items[i]
+		r := rows[i]
 		cur := "  "
 		if i == cursor {
 			cur = "\033[36m>\033[0m "
 		}
 
-		pad := strings.Repeat(" ", maxName-len(item.Name)+2)
-
-		localVer := item.Version
-		if localVer == "" {
-			localVer = "—"
-		}
-		lPad := strings.Repeat(" ", maxLocal-len(localVer)+2)
-
-		// Determine server version
-		serverVer := item.ServerVersion
-		if item.Status == "" {
-			// Unchanged — server has same version
-			serverVer = item.Version
-		}
-		if item.Status == "added" {
-			serverVer = "—"
-		}
-		if serverVer == "" {
-			serverVer = "—"
-		}
-		sPad := strings.Repeat(" ", maxServer-len(serverVer)+2)
-
-		// Modpack version suffix
-		modpackSuffix := ""
+		// Build the row content without color first.
+		var content strings.Builder
+		content.WriteString(padRight(r.name, colName))
+		content.WriteString(padRight(r.local, colLocal))
+		content.WriteString(padRight(r.server, colServer))
 		if showModpack {
-			modpackVer := item.ModpackVersion
-			if modpackVer == "" {
-				modpackVer = "—"
-			}
-			mPad := strings.Repeat(" ", maxModpack-len(modpackVer)+2)
-			modpackSuffix = modpackVer + mPad
+			content.WriteString(padRight(r.modpack, colModpack))
 		}
 
-		switch item.Status {
+		switch items[i].Status {
 		case "added":
-			fmt.Fprintf(b, "  %s\033[32m%s%s%s%s%s%s%s+ added\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad, modpackSuffix)
+			fmt.Fprintf(b, "  %s\033[32m%s+ added\033[0m\n", cur, content.String())
 		case "removed":
-			fmt.Fprintf(b, "  %s\033[31m%s%s%s%s%s%s%s- removed\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad, modpackSuffix)
+			fmt.Fprintf(b, "  %s\033[31m%s- removed\033[0m\n", cur, content.String())
 		case "changed":
-			fmt.Fprintf(b, "  %s\033[33m%s%s%s%s%s%s%s~ changed\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad, modpackSuffix)
+			fmt.Fprintf(b, "  %s\033[33m%s~ changed\033[0m\n", cur, content.String())
 		default:
-			fmt.Fprintf(b, "  %s\033[2m%s%s%s%s%s%s%s✓\033[0m\n", cur, item.Name, pad, localVer, lPad, serverVer, sPad, modpackSuffix)
+			fmt.Fprintf(b, "  %s\033[2m%s✓\033[0m\n", cur, content.String())
 		}
 	}
 

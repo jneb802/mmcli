@@ -63,14 +63,17 @@ type syncConfigPushMsg struct {
 // syncModsFiltered returns the mod items filtered to only show mods with
 // differences across local, server, and modpack.
 func (m model) syncModsFiltered() []modListItem {
-	if m.modpack.manifest == nil {
-		return m.sync.modItems // no filtering without modpack
-	}
 	var filtered []modListItem
+	hasModpack := m.modpack.manifest != nil
 	for _, item := range m.sync.modItems {
-		// Hide mods that are the same across all three sources
-		if item.Status == "" && item.Version != "" && item.ModpackVersion == item.Version {
-			continue
+		// Hide mods where local == server and (no modpack, or modpack matches too)
+		if item.Status == "" {
+			if !hasModpack {
+				continue
+			}
+			if item.ModpackVersion == "" || item.ModpackVersion == item.Version {
+				continue
+			}
 		}
 		filtered = append(filtered, item)
 	}
