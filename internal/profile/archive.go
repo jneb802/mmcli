@@ -22,6 +22,12 @@ func BuildManifest(profileName string, reg config.Registry) agentapi.PushManifes
 		if mod.ResolvedTarget() == "client" {
 			continue
 		}
+		// Skip non-Thunderstore mods with no owner — these are server-detected
+		// mods (e.g. loose DLLs) that are already on the server and can't be
+		// downloaded or uploaded.
+		if mod.Owner == "" {
+			continue
+		}
 		source := "thunderstore"
 		if mod.Owner == "local" {
 			source = "upload"

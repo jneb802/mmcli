@@ -1103,8 +1103,14 @@ func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, a
 
 		targetColored := auditTargetColor(r.Target, padRight(r.Target, colTarget))
 
+		namePad := padRight(r.Name, colName)
+		if i == cursor {
+			nameWidth := displayWidth(r.Name)
+			namePad = r.Name + "\033[2m" + strings.Repeat("─", colName-nameWidth-1) + "\033[0m "
+		}
+
 		fmt.Fprintf(b, "  %s%s%s%s%s%s%s\n", cur,
-			padRight(r.Name, colName),
+			namePad,
 			padRight(r.LocalVersion, colLocal),
 			padRight(r.ServerVersion, colServer),
 			padRight(r.ModpackVersion, colModpack),

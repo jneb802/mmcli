@@ -102,7 +102,7 @@ func buildPendingChanges(items []modListItem, reg *config.Registry, profileName 
 	if modpackDeps != nil {
 		localTS := make(map[string]string)
 		for _, mod := range reg.ListMods(profileName) {
-			if mod.IsLocal || mod.Owner == "" {
+			if mod.IsLocal || mod.Owner == "" || mod.Owner == "local" {
 				continue
 			}
 			name := mod.FullName()
@@ -637,28 +637,32 @@ func renderSyncPushResult(b *strings.Builder, lp *agentapi.SyncResponse, pushTim
 			end = len(lp.Results)
 		}
 
-		maxName := 0
+		maxName, maxVer := 0, 0
 		for _, r := range lp.Results {
 			if l := len(r.Mod); l > maxName {
 				maxName = l
 			}
+			if l := len(r.Version); l > maxVer {
+				maxVer = l
+			}
 		}
 
 		for _, r := range lp.Results[scroll:end] {
-			pad := strings.Repeat(" ", maxName-len(r.Mod)+2)
+			name := padRight(r.Mod, maxName+2)
+			ver := padRight(r.Version, maxVer+2)
 			switch r.Status {
 			case "downloaded":
-				fmt.Fprintf(b, "    \033[32m↓\033[0m %s%s%s  \033[32mdownloaded\033[0m\n", r.Mod, pad, r.Version)
+				fmt.Fprintf(b, "    \033[32m↓\033[0m %s%s\033[32mdownloaded\033[0m\n", name, ver)
 			case "uploaded":
-				fmt.Fprintf(b, "    \033[32m↑\033[0m %s%s%s  \033[32muploaded\033[0m\n", r.Mod, pad, r.Version)
+				fmt.Fprintf(b, "    \033[32m↑\033[0m %s%s\033[32muploaded\033[0m\n", name, ver)
 			case "cached":
-				fmt.Fprintf(b, "    \033[36m↓\033[0m %s%s%s  \033[36mcached\033[0m\n", r.Mod, pad, r.Version)
+				fmt.Fprintf(b, "    \033[36m↓\033[0m %s%s\033[36mcached\033[0m\n", name, ver)
 			case "skipped":
-				fmt.Fprintf(b, "    \033[2m· %s%s%s  unchanged\033[0m\n", r.Mod, pad, r.Version)
+				fmt.Fprintf(b, "    \033[2m· %s%sunchanged\033[0m\n", name, ver)
 			case "removed":
-				fmt.Fprintf(b, "    \033[31m✗ %s%s     removed\033[0m\n", r.Mod, pad)
+				fmt.Fprintf(b, "    \033[31m✗ %s%sremoved\033[0m\n", name, padRight("", maxVer+2))
 			case "failed":
-				fmt.Fprintf(b, "    \033[31m✗ %s%s     %s\033[0m\n", r.Mod, pad, r.Reason)
+				fmt.Fprintf(b, "    \033[31m✗ %s%s%s\033[0m\n", name, padRight("", maxVer+2), r.Reason)
 			}
 		}
 
