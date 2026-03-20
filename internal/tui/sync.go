@@ -15,6 +15,7 @@ import (
 	"mmcli/internal/cfgfile"
 	"mmcli/internal/client"
 	"mmcli/internal/config"
+	"mmcli/internal/installer"
 )
 
 type syncModel struct {
@@ -30,6 +31,10 @@ type syncModel struct {
 
 	// Moderation sub-tab
 	moderationCursor int
+
+	// Audit sub-tab
+	auditCursor int
+	auditRows   []auditRow
 
 	// Push state (mods — shared by Mods and Moderation tabs)
 	confirmModPush   bool
@@ -60,24 +65,206 @@ type syncConfigPushMsg struct {
 	err  error
 }
 
-// syncModsFiltered returns the mod items filtered to only show mods with
-// differences across local, server, and modpack.
-func (m model) syncModsFiltered() []modListItem {
-	var filtered []modListItem
-	hasModpack := m.modpack.manifest != nil
-	for _, item := range m.sync.modItems {
-		// Hide mods where local == server and (no modpack, or modpack matches too)
+// pendingMod represents a mod with at least one pending action across server/modpack.
+type pendingMod struct {
+	Name       string
+	LocalVer   string
+	ServerAct  string // "add", "remove", "update", "" (in sync)
+	ServerVer  string // current version on server
+	ModpackAct string // "add", "remove", "update", "" (in sync)
+	ModpackVer string // current version in modpack
+}
+
+// buildPendingChanges computes the list of mods with pending actions needed
+// to bring server and modpack in sync with local.
+func buildPendingChanges(items []modListItem, reg *config.Registry, profileName string, modpackDeps map[string]string) []pendingMod {
+	byName := make(map[string]*pendingMod)
+
+	// Server actions: derived from buildPushItems diff
+	for _, item := range items {
 		if item.Status == "" {
-			if !hasModpack {
+			continue
+		}
+		pm := &pendingMod{Name: item.Name, LocalVer: item.Version}
+		switch item.Status {
+		case "added":
+			pm.ServerAct = "add"
+		case "removed":
+			pm.ServerAct = "remove"
+			pm.ServerVer = item.ServerVersion
+		case "changed":
+			pm.ServerAct = "update"
+			pm.ServerVer = item.ServerVersion
+		}
+		byName[item.Name] = pm
+	}
+
+	// Modpack actions: compare all local Thunderstore mods to modpack deps
+	if modpackDeps != nil {
+		localTS := make(map[string]string)
+		for _, mod := range reg.ListMods(profileName) {
+			if mod.IsLocal || mod.Owner == "" {
 				continue
 			}
-			if item.ModpackVersion == "" || item.ModpackVersion == item.Version {
-				continue
+			name := mod.FullName()
+			ver := mod.Version
+			localTS[name] = ver
+
+			mpVer := modpackDeps[name]
+			var act, actVer string
+			if mpVer == "" {
+				act = "add"
+			} else if mpVer != ver {
+				act = "update"
+				actVer = mpVer
+			}
+
+			if act != "" {
+				if pm, ok := byName[name]; ok {
+					pm.ModpackAct = act
+					pm.ModpackVer = actVer
+				} else {
+					byName[name] = &pendingMod{
+						Name:       name,
+						LocalVer:   ver,
+						ModpackAct: act,
+						ModpackVer: actVer,
+					}
+				}
 			}
 		}
-		filtered = append(filtered, item)
+
+		// Mods in modpack but not local → remove from modpack
+		for name, ver := range modpackDeps {
+			if _, isLocal := localTS[name]; !isLocal {
+				if pm, ok := byName[name]; ok {
+					pm.ModpackAct = "remove"
+					pm.ModpackVer = ver
+				} else {
+					byName[name] = &pendingMod{
+						Name:       name,
+						ModpackAct: "remove",
+						ModpackVer: ver,
+					}
+				}
+			}
+		}
 	}
-	return filtered
+
+	var result []pendingMod
+	for _, pm := range byName {
+		result = append(result, *pm)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Name < result[j].Name
+	})
+	return result
+}
+
+// actionText returns the plain display text for a pending action cell.
+func actionText(act, targetVer, localVer string) string {
+	switch act {
+	case "add":
+		return "+ add"
+	case "remove":
+		return "- remove"
+	case "update":
+		return "~ " + targetVer + " → " + localVer
+	default:
+		return "✓"
+	}
+}
+
+// colorAction wraps action text with ANSI color based on action type.
+func colorAction(act, text string, width int) string {
+	if width > 0 {
+		text = padRight(text, width)
+	}
+	switch act {
+	case "add":
+		return "\033[32m" + text + "\033[0m"
+	case "remove":
+		return "\033[31m" + text + "\033[0m"
+	case "update":
+		return "\033[33m" + text + "\033[0m"
+	default:
+		return "\033[2m" + text + "\033[0m"
+	}
+}
+
+func renderPendingChanges(b *strings.Builder, items []pendingMod, cursor, visible int, showModpack bool) {
+	if len(items) == 0 {
+		b.WriteString("  \033[32mAll in sync.\033[0m\n")
+		return
+	}
+
+	// Build plain-text cells for width calculation.
+	type row struct {
+		name, server, modpack string
+	}
+	rows := make([]row, len(items))
+	for i, pm := range items {
+		rows[i] = row{
+			name:    pm.Name,
+			server:  actionText(pm.ServerAct, pm.ServerVer, pm.LocalVer),
+			modpack: actionText(pm.ModpackAct, pm.ModpackVer, pm.LocalVer),
+		}
+	}
+
+	colName := len("Mod")
+	colServer := len("Server")
+	colModpack := len("Modpack")
+	for _, r := range rows {
+		if w := displayWidth(r.name); w > colName {
+			colName = w
+		}
+		if w := displayWidth(r.server); w > colServer {
+			colServer = w
+		}
+		if showModpack {
+			if w := displayWidth(r.modpack); w > colModpack {
+				colModpack = w
+			}
+		}
+	}
+	colName += 2
+	colServer += 2
+
+	// Header
+	b.WriteString("  \033[2m  ")
+	b.WriteString(padRight("Mod", colName))
+	b.WriteString(padRight("Server", colServer))
+	if showModpack {
+		b.WriteString("Modpack")
+	}
+	b.WriteString("\033[0m\n")
+
+	start, end := listWindow(len(items), cursor, visible)
+	if start > 0 {
+		fmt.Fprintf(b, "  \033[2m  ↑ %d more\033[0m\n", start)
+	}
+
+	for i := start; i < end; i++ {
+		pm := items[i]
+		r := rows[i]
+		cur := "  "
+		if i == cursor {
+			cur = "\033[36m>\033[0m "
+		}
+
+		b.WriteString("  ")
+		b.WriteString(cur)
+		b.WriteString(padRight(r.name, colName))
+		b.WriteString(colorAction(pm.ServerAct, r.server, colServer))
+		if showModpack {
+			b.WriteString(colorAction(pm.ModpackAct, r.modpack, 0))
+		}
+		b.WriteString("\n")
+	}
+
+	if end < len(items) {
+		fmt.Fprintf(b, "  \033[2m  ↓ %d more\033[0m\n", len(items)-end)
+	}
 }
 
 func (m model) handleSyncNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -189,13 +376,15 @@ func (m model) handleSyncNormal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleSyncConfigsKeys(msg)
 	case contentSyncModeration:
 		return m.handleSyncModerationKeys(msg)
+	case contentSyncAudit:
+		return m.handleSyncAuditKeys(msg)
 	}
 	return m, nil
 }
 
 func (m model) handleSyncModsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	filtered := m.syncModsFiltered()
-	n := len(filtered)
+	pending := buildPendingChanges(m.sync.modItems, m.reg, m.cfg.ActiveProfile, m.modpack.versionMap)
+	n := len(pending)
 	if m.sync.modCursor >= n && n > 0 {
 		m.sync.modCursor = n - 1
 	}
@@ -464,19 +653,15 @@ func (m model) viewSyncMods() string {
 	b.WriteString("\n")
 
 	// Header
-	fmt.Fprintf(&b, "  \033[1mMod sync: %s → %s\033[0m\n\n", m.cfg.ActiveProfile, m.server.serverName)
+	fmt.Fprintf(&b, "  \033[1mPending Changes\033[0m\n\n")
 
-	filtered := m.syncModsFiltered()
+	pending := buildPendingChanges(m.sync.modItems, m.reg, m.cfg.ActiveProfile, m.modpack.versionMap)
 	cursor := m.sync.modCursor
-	if cursor >= len(filtered) {
-		cursor = max(0, len(filtered)-1)
+	if cursor >= len(pending) {
+		cursor = max(0, len(pending)-1)
 	}
 
-	if len(filtered) == 0 && len(m.sync.modItems) > 0 {
-		fmt.Fprintf(&b, "  \033[32mAll %d mods in sync.\033[0m\n", len(m.sync.modItems))
-	} else {
-		renderSyncModList(&b, filtered, cursor, listVisible(m.height, 12), m.modpack.manifest != nil)
-	}
+	renderPendingChanges(&b, pending, cursor, listVisible(m.height, 12), m.modpack.manifest != nil)
 
 	// Status
 	b.WriteString("\n")
@@ -958,4 +1143,253 @@ func loadLastPush(paths config.Paths) (*agentapi.SyncResponse, time.Time) {
 		return nil, time.Time{}
 	}
 	return &sp.Response, sp.PushedAt
+}
+
+// --- Audit tab ---
+
+type auditRow struct {
+	Name           string
+	LocalVersion   string
+	ServerVersion  string
+	ModpackVersion string
+	Target         string // "client", "server", "both"
+	Anticheat      string // "whitelist", "greylist", "adminonly", ""
+}
+
+func (m model) buildAuditRows() []auditRow {
+	seen := make(map[string]*auditRow)
+	var order []string
+
+	ensure := func(name string) *auditRow {
+		if r, ok := seen[name]; ok {
+			return r
+		}
+		r := &auditRow{Name: name, LocalVersion: "-", ServerVersion: "-", ModpackVersion: "-", Target: "both"}
+		seen[name] = r
+		order = append(order, name)
+		return r
+	}
+
+	// Local mods
+	localMods := m.reg.ListAllMods(m.cfg.ActiveProfile, m.paths.ProfilePluginsDir(m.cfg.ActiveProfile))
+	for _, mod := range localMods {
+		r := ensure(mod.FullName())
+		r.LocalVersion = syncVersionStr(mod.Version)
+		r.Target = mod.ResolvedTarget()
+		r.Anticheat = mod.Anticheat
+	}
+
+	// Server mods
+	for _, sm := range m.server.mods {
+		r := ensure(sm.Name)
+		r.ServerVersion = syncVersionStr(sm.Version)
+	}
+
+	// Modpack mods
+	for _, dep := range m.modpack.deps {
+		key := fmt.Sprintf("%s-%s", dep.Owner, dep.Name)
+		r := ensure(key)
+		r.ModpackVersion = syncVersionStr(dep.Version)
+	}
+
+	rows := make([]auditRow, len(order))
+	for i, name := range order {
+		rows[i] = *seen[name]
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		return rows[i].Name < rows[j].Name
+	})
+	return rows
+}
+
+func (m model) handleSyncAuditKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	n := len(m.sync.auditRows)
+	if m.sync.auditCursor >= n && n > 0 {
+		m.sync.auditCursor = n - 1
+	}
+	switch msg.String() {
+	case "up", "k":
+		if m.sync.auditCursor > 0 {
+			m.sync.auditCursor--
+		}
+	case "down", "j":
+		if m.sync.auditCursor < n-1 {
+			m.sync.auditCursor++
+		}
+	case "t":
+		if n == 0 {
+			return m, nil
+		}
+		row := m.sync.auditRows[m.sync.auditCursor]
+		mod, ok := m.reg.GetMod(m.cfg.ActiveProfile, row.Name)
+		if !ok {
+			return m, nil
+		}
+
+		oldTarget := mod.ResolvedTarget()
+		// Cycle: both → client → server → both
+		switch oldTarget {
+		case "both":
+			mod.Target = "client"
+		case "client":
+			mod.Target = "server"
+		case "server":
+			mod.Target = "both"
+		}
+
+		// Auto-disable/enable for server target transitions
+		if mod.Target == "server" && !mod.Disabled {
+			_ = installer.Disable(m.paths, m.cfg, m.reg, mod.FullName())
+		} else if oldTarget == "server" && mod.Target != "server" && mod.Disabled {
+			_ = installer.Enable(m.paths, m.cfg, m.reg, mod.FullName())
+		}
+
+		m.reg.SetMod(m.cfg.ActiveProfile, mod)
+		config.SaveRegistry(m.paths, *m.reg)
+		m.sync.auditRows = m.buildAuditRows()
+	}
+	return m, nil
+}
+
+func (m model) viewSyncAudit() string {
+	var b strings.Builder
+
+	b.WriteString("\n")
+	fmt.Fprintf(&b, "  \033[1mMod Audit\033[0m  \033[2m%s\033[0m\n\n", m.cfg.ActiveProfile)
+
+	cursor := m.sync.auditCursor
+	if cursor >= len(m.sync.auditRows) {
+		cursor = max(0, len(m.sync.auditRows)-1)
+	}
+
+	renderAuditList(&b, m.sync.auditRows, cursor, listVisible(m.height, 12), m.anticheatSystem)
+
+	b.WriteString("\n")
+	renderHotkeyBar(&b, []string{"t target", "` mode", "tab next", "q quit"}, m.width)
+	return b.String()
+}
+
+func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, anticheatSystem string) {
+	if len(rows) == 0 {
+		b.WriteString("  No mods.\n")
+		return
+	}
+
+	// Resolve moderation labels for width calculation.
+	modLabels := make([]string, len(rows))
+	for i, r := range rows {
+		modLabels[i] = auditModerationText(r.Anticheat, anticheatSystem)
+	}
+
+	// Compute column widths.
+	colName, colLocal, colServer, colModpack, colTarget, colMod := len("Name"), len("Local"), len("Server"), len("Modpack"), len("Target"), len("Moderation")
+	for i, r := range rows {
+		if w := displayWidth(r.Name); w > colName {
+			colName = w
+		}
+		if w := displayWidth(r.LocalVersion); w > colLocal {
+			colLocal = w
+		}
+		if w := displayWidth(r.ServerVersion); w > colServer {
+			colServer = w
+		}
+		if w := displayWidth(r.ModpackVersion); w > colModpack {
+			colModpack = w
+		}
+		if w := displayWidth(r.Target); w > colTarget {
+			colTarget = w
+		}
+		if w := displayWidth(modLabels[i]); w > colMod {
+			colMod = w
+		}
+	}
+	colName += 2
+	colLocal += 2
+	colServer += 2
+	colModpack += 2
+	colTarget += 2
+
+	// Header
+	b.WriteString("  \033[2m  ")
+	b.WriteString(padRight("Name", colName))
+	b.WriteString(padRight("Local", colLocal))
+	b.WriteString(padRight("Server", colServer))
+	b.WriteString(padRight("Modpack", colModpack))
+	b.WriteString(padRight("Target", colTarget))
+	b.WriteString("Moderation\033[0m\n")
+
+	start, end := listWindow(len(rows), cursor, visible)
+
+	if start > 0 {
+		fmt.Fprintf(b, "  \033[2m  ↑ %d more\033[0m\n", start)
+	}
+
+	for i := start; i < end; i++ {
+		r := rows[i]
+		cur := "  "
+		if i == cursor {
+			cur = "\033[36m>\033[0m "
+		}
+
+		targetColored := auditTargetColor(r.Target, padRight(r.Target, colTarget))
+
+		fmt.Fprintf(b, "  %s%s%s%s%s%s%s\n", cur,
+			padRight(r.Name, colName),
+			padRight(r.LocalVersion, colLocal),
+			padRight(r.ServerVersion, colServer),
+			padRight(r.ModpackVersion, colModpack),
+			targetColored,
+			auditModerationColor(r.Anticheat, modLabels[i]),
+		)
+	}
+
+	if end < len(rows) {
+		fmt.Fprintf(b, "  \033[2m  ↓ %d more\033[0m\n", len(rows)-end)
+	}
+}
+
+// auditTargetColor wraps a pre-padded target string with ANSI color.
+func auditTargetColor(target, text string) string {
+	switch target {
+	case "client":
+		return "\033[36m" + text + "\033[0m"
+	case "server":
+		return "\033[35m" + text + "\033[0m"
+	default:
+		return "\033[2m" + text + "\033[0m"
+	}
+}
+
+// auditModerationText returns the plain-text moderation label.
+func auditModerationText(anticheat, system string) string {
+	switch anticheat {
+	case "whitelist":
+		if system == "enforcer" {
+			return "required"
+		}
+		return "whitelist"
+	case "greylist":
+		if system == "enforcer" {
+			return "optional"
+		}
+		return "greylist"
+	case "adminonly":
+		return "admin only"
+	default:
+		return "-"
+	}
+}
+
+// auditModerationColor wraps a moderation label with ANSI color.
+func auditModerationColor(anticheat, text string) string {
+	switch anticheat {
+	case "whitelist":
+		return "\033[32m" + text + "\033[0m"
+	case "greylist":
+		return "\033[33m" + text + "\033[0m"
+	case "adminonly":
+		return "\033[35m" + text + "\033[0m"
+	default:
+		return "\033[2m" + text + "\033[0m"
+	}
 }

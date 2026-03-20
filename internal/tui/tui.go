@@ -36,6 +36,7 @@ const (
 	contentSyncMods
 	contentSyncConfigs
 	contentSyncModeration
+	contentSyncAudit
 	contentModpackMods
 	contentModpackConfig
 	contentModpackReadme
@@ -46,7 +47,7 @@ const (
 
 var localTabs = []contentTab{contentMods, contentConfig, contentLogs, contentStatus, contentSettings}
 var serverTabs = []contentTab{contentMods, contentConfig, contentLogs, contentPlayers, contentWorld, contentSyncModeration, contentStatus}
-var syncTabs = []contentTab{contentSyncMods, contentSyncConfigs, contentSyncModeration}
+var syncTabs = []contentTab{contentSyncMods, contentSyncConfigs, contentSyncModeration, contentSyncAudit}
 var modpackTabs = []contentTab{contentModpackMods, contentModpackConfig, contentModpackReadme, contentModpackManifest, contentModpackImage, contentModpackSettings}
 
 func contentTabName(t contentTab) string {
@@ -71,6 +72,8 @@ func contentTabName(t contentTab) string {
 		return "Configs"
 	case contentSyncModeration:
 		return "Moderation"
+	case contentSyncAudit:
+		return "Audit"
 	case contentModpackMods:
 		return "Mods"
 	case contentModpackConfig:
@@ -572,6 +575,8 @@ func (m model) View() string {
 			b.WriteString(m.viewSyncConfigs())
 		case contentSyncModeration:
 			b.WriteString(m.viewSyncModeration())
+		case contentSyncAudit:
+			b.WriteString(m.viewSyncAudit())
 		}
 	case modeModpack:
 		if m.modpack.editingPath {
@@ -711,6 +716,9 @@ func (m *model) switchSyncTab(to contentTab) tea.Cmd {
 	if to == contentSyncConfigs && m.server.client != nil && m.sync.configItems == nil {
 		m.sync.configFetching = true
 		return fetchConfigDiffs(m.server.client, m.paths, m.cfg)
+	}
+	if to == contentSyncAudit {
+		m.sync.auditRows = m.buildAuditRows()
 	}
 	return nil
 }
