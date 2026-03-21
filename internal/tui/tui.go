@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -23,7 +22,6 @@ const (
 	tabLogs
 	tabStatus
 	tabSettings
-	tabChanges // full mode only
 )
 
 func flatTabName(t flatTab) string {
@@ -36,8 +34,6 @@ func flatTabName(t flatTab) string {
 		return "Status"
 	case tabSettings:
 		return "Settings"
-	case tabChanges:
-		return "Changes"
 	default:
 		return "?"
 	}
@@ -49,7 +45,7 @@ func (m model) isFullMode() bool {
 
 func (m model) availableTabs() []flatTab {
 	if m.isFullMode() {
-		return []flatTab{tabMods, tabLogs, tabStatus, tabSettings, tabChanges}
+		return []flatTab{tabMods, tabLogs, tabStatus, tabSettings}
 	}
 	return []flatTab{tabMods, tabLogs, tabStatus, tabSettings}
 }
@@ -64,10 +60,8 @@ type model struct {
 	logs            logsState
 	status          statusState
 	settingsTab     settingsTabState
-	changes         changesState
 	local           localModel
 	server          serverModel
-	sync            syncModel
 	modpack         modpackModel
 	confirm         confirmModal
 	width           int
@@ -99,12 +93,6 @@ func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model
 				m.server.role = "admin"
 			}
 		}
-	}
-
-	// Load last push result from disk
-	if resp, t := loadLastPush(paths); resp != nil {
-		m.server.lastPush = resp
-		m.server.lastPushTime = t
 	}
 
 	// Load modpack data at startup (needed by audit rows)
@@ -279,9 +267,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Refresh views when server data arrives
 		if msg.mods != nil {
-			if m.activeTab == tabChanges {
-				m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
-			}
 			if m.activeTab == tabMods && m.isFullMode() {
 				m.mods.auditRows = m.buildAuditRows()
 			}
@@ -310,34 +295,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.server.statusErr = nil
 		}
 		// Re-fetch status after action
-		if m.server.client != nil {
-			m.server.fetching = true
-			return m, fetchServerStatus(m.server.client)
-		}
-		return m, nil
-
-	case serverPushMsg:
-		m.server.actionBusy = false
-		if msg.err != nil {
-			m.server.statusErr = msg.err
-		} else {
-			m.server.statusErr = nil
-			if msg.resp != nil {
-				m.server.lastPush = msg.resp
-				m.server.lastPushTime = time.Now()
-				saveLastPush(m.paths, msg.resp, m.server.lastPushTime)
-			}
-		}
-		// Show push result screen in Changes tab
-		if m.activeTab == tabChanges {
-			m.sync.pushResult = true
-			m.sync.pushResultScroll = 0
-		}
-		// Refresh audit rows after push
-		if m.isFullMode() {
-			m.mods.auditRows = m.buildAuditRows()
-		}
-		// Re-fetch status after push
 		if m.server.client != nil {
 			m.server.fetching = true
 			return m, fetchServerStatus(m.server.client)
@@ -483,33 +440,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	// --- Sync async messages ---
-	case syncConfigListMsg:
-		m.sync.configFetching = false
-		if msg.err != nil {
-			m.sync.configErr = msg.err
-		} else {
-			m.sync.configItems = msg.items
-		}
-		return m, nil
-
-	case syncConfigPushMsg:
-		m.sync.configPushBusy = false
-		if msg.err != nil {
-			m.sync.configErr = msg.err
-		} else {
-			m.sync.configErr = nil
-			if msg.resp != nil {
-				m.sync.lastConfigPush = msg.resp
-			}
-		}
-		// Re-fetch config diffs after push
-		if m.server.client != nil {
-			m.sync.configFetching = true
-			return m, fetchConfigDiffs(m.server.client, m.paths, m.cfg)
-		}
-		return m, nil
-
 	// --- Modpack async messages ---
 	case modpackPublishDoneMsg:
 		m.modpack.publishing = false
@@ -563,13 +493,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		// Changes tab modals (must be checked before global keys)
-		if m.activeTab == tabChanges {
-			if m.sync.pushResult || m.sync.configPushBusy || m.server.actionBusy {
-				return m.handleChangesKeys(msg)
-			}
-		}
-
 		// (Status tab confirms now use global confirmModal)
 
 		// Settings tab modals (must be checked before global keys)
@@ -605,8 +528,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.handleStatusKeys(msg)
 		case tabSettings:
 			return m.handleSettingsTabKeys(msg)
-		case tabChanges:
-			return m.handleChangesKeys(msg)
 		}
 	}
 
@@ -632,8 +553,6 @@ func (m model) View() string {
 		b.WriteString(m.viewStatus())
 	case tabSettings:
 		b.WriteString(m.viewSettingsTab())
-	case tabChanges:
-		b.WriteString(m.viewChanges())
 	}
 
 	return b.String()
@@ -697,9 +616,6 @@ func (m *model) switchTab(to flatTab) tea.Cmd {
 		if m.isFullMode() && m.server.client != nil {
 			return tea.Batch(fetchSettings(m.server.client), fetchWebhookConfig(m.server.client))
 		}
-		return nil
-	case tabChanges:
-		m.sync.modItems = buildPushItems(m.cfg, m.reg, m.paths, m.server.mods, m.modpack.versionMap)
 		return nil
 	}
 	return nil

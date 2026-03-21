@@ -3,7 +3,6 @@ package tui
 import (
 	"bufio"
 	"fmt"
-	"sort"
 	"strings"
 	"time"
 
@@ -11,8 +10,6 @@ import (
 
 	"mmcli/internal/agentapi"
 	"mmcli/internal/client"
-	"mmcli/internal/config"
-	"mmcli/internal/profile"
 )
 
 // Async message types for server tab.
@@ -28,11 +25,6 @@ type serverActionMsg struct {
 	action string
 	resp   *agentapi.ActionResponse
 	err    error
-}
-
-type serverPushMsg struct {
-	resp *agentapi.SyncResponse
-	err  error
 }
 
 type serverLogsMsg struct {
@@ -81,14 +73,6 @@ type serverModel struct {
 
 	actionBusy bool
 	actionMsg  string
-
-	confirmPush      bool
-	pushItems        []modListItem
-	pushScroll       int
-	lastPush         *agentapi.SyncResponse
-	lastPushTime     time.Time
-	pushDetail       bool // push detail view open
-	pushDetailScroll int
 
 	logs     logViewerState
 	logCh    <-chan []string
@@ -271,231 +255,6 @@ func (m model) buildServerStatusItems() []settingsItem {
 	return items
 }
 
-// pushNeedsRestart returns true if the push result has actual changes and no failures.
-func pushNeedsRestart(lp *agentapi.SyncResponse) bool {
-	hasChanges := lp.Downloaded > 0 || lp.Cached > 0 || lp.Removed > 0
-	return hasChanges && len(lp.Failures) == 0
-}
-
-func renderPushDetail(b *strings.Builder, lp *agentapi.SyncResponse, pushTime time.Time, scroll int, role string) {
-	ago := time.Since(pushTime).Truncate(time.Second)
-	fmt.Fprintf(b, "\n  \033[1mLast Push\033[0m  \033[2m%s ago\033[0m\n", ago)
-
-	total := lp.Downloaded + lp.Cached + lp.Skipped
-	fmt.Fprintf(b, "  %d mods synced", total)
-	if lp.Removed > 0 {
-		fmt.Fprintf(b, ", %d removed", lp.Removed)
-	}
-	if len(lp.Failures) > 0 {
-		fmt.Fprintf(b, ", \033[31m%d failed\033[0m", len(lp.Failures))
-	}
-	b.WriteString("\n\n")
-
-	// Per-mod results
-	if len(lp.Results) > 0 {
-		visible := 25
-		maxScroll := len(lp.Results) - visible
-		if maxScroll < 0 {
-			maxScroll = 0
-		}
-		if scroll > maxScroll {
-			scroll = maxScroll
-		}
-		end := scroll + visible
-		if end > len(lp.Results) {
-			end = len(lp.Results)
-		}
-
-		maxName, maxVer := 0, 0
-		for _, r := range lp.Results {
-			if l := len(r.Mod); l > maxName {
-				maxName = l
-			}
-			if l := len(r.Version); l > maxVer {
-				maxVer = l
-			}
-		}
-
-		for _, r := range lp.Results[scroll:end] {
-			name := padRight(r.Mod, maxName+2)
-			ver := padRight(r.Version, maxVer+2)
-			switch r.Status {
-			case "downloaded":
-				fmt.Fprintf(b, "    \033[32m↓\033[0m %s%s\033[32mdownloaded\033[0m\n", name, ver)
-			case "cached":
-				fmt.Fprintf(b, "    \033[36m↓\033[0m %s%s\033[36mcached\033[0m\n", name, ver)
-			case "skipped":
-				fmt.Fprintf(b, "    \033[2m· %s%sunchanged\033[0m\n", name, ver)
-			case "removed":
-				fmt.Fprintf(b, "    \033[31m✗ %s%sremoved\033[0m\n", name, padRight("", maxVer+2))
-			case "failed":
-				fmt.Fprintf(b, "    \033[31m✗ %s%s%s\033[0m\n", name, padRight("", maxVer+2), r.Reason)
-			}
-		}
-
-		if len(lp.Results) > visible {
-			fmt.Fprintf(b, "\n  \033[2m(%d more — ↑/↓ scroll)\033[0m\n", len(lp.Results)-visible)
-		}
-	}
-
-	// Hotkeys
-	hints := []string{"esc back"}
-	if role == agentapi.RoleAdmin && pushNeedsRestart(lp) {
-		hints = append(hints, "r restart server")
-	}
-	fmt.Fprintf(b, "\n  \033[2m%s\033[0m\n\n", strings.Join(hints, " • "))
-}
-
-func buildPushItems(cfg config.Config, reg *config.Registry, paths config.Paths, serverMods []agentapi.ModInfo, modpackDeps map[string]string) []modListItem {
-	// Build local mod list (non-client), including locally-detected mods
-	var items []modListItem
-	localSet := make(map[string]bool)
-
-	mods := reg.ListAllMods(cfg.ActiveProfile, paths.ProfilePluginsDir(cfg.ActiveProfile))
-
-	for _, mod := range mods {
-		if mod.ResolvedTarget() == "client" {
-			continue
-		}
-		localSet[mod.FullName()] = true
-		items = append(items, modListItem{
-			Name:           mod.FullName(),
-			Version:        mod.Version,
-			Disabled:       mod.Disabled,
-			Anticheat:      mod.Anticheat,
-			ModpackVersion: modpackDeps[mod.FullName()],
-		})
-	}
-
-	// If we have server mods, compute diff
-	if len(serverMods) > 0 {
-		serverMap := make(map[string]agentapi.ModInfo)
-		for _, sm := range serverMods {
-			serverMap[sm.Name] = sm
-		}
-
-		// Tag local items
-		for i := range items {
-			sm, onServer := serverMap[items[i].Name]
-			if !onServer {
-				items[i].Status = "added"
-			} else if sm.Version != "" && items[i].Version != "" && sm.Version != items[i].Version {
-				items[i].Status = "changed"
-				items[i].ServerVersion = sm.Version
-			}
-		}
-
-		// Add removed items (on server but not local)
-		for _, sm := range serverMods {
-			if !localSet[sm.Name] && !sm.PluginOnly {
-				items = append(items, modListItem{
-					Name:           sm.Name,
-					ServerVersion:  sm.Version,
-					Anticheat:      sm.Anticheat,
-					Status:         "removed",
-					ModpackVersion: modpackDeps[sm.Name],
-				})
-			}
-		}
-
-		// Sort: changes first (added, removed, changed), then unchanged
-		statusOrder := map[string]int{"added": 0, "removed": 1, "changed": 2, "": 3}
-		sort.SliceStable(items, func(i, j int) bool {
-			return statusOrder[items[i].Status] < statusOrder[items[j].Status]
-		})
-	}
-
-	return items
-}
-
-func renderPushConfirm(b *strings.Builder, serverName, profileName string, items []modListItem, scroll int, status *agentapi.StatusResponse) {
-	fmt.Fprintf(b, "\n  \033[1mPush mods to %s?\033[0m\n", serverName)
-
-	// Count changes
-	changes := 0
-	unchanged := 0
-	for _, item := range items {
-		if item.Status != "" {
-			changes++
-		} else {
-			unchanged++
-		}
-	}
-
-	if changes > 0 {
-		fmt.Fprintf(b, "  Profile: \033[36m%s\033[0m    %d changes, %d unchanged\n", profileName, changes, unchanged)
-	} else {
-		fmt.Fprintf(b, "  Profile: \033[36m%s\033[0m    Mods: %d\n", profileName, len(items))
-	}
-	if status != nil && status.Running {
-		b.WriteString("  Server: \033[32mrunning\033[0m — will restart after push\n")
-	}
-	b.WriteString("\n")
-
-	// Display list: items are sorted changes-first, so just slice
-	displayItems := items
-	if changes > 0 {
-		displayItems = items[:changes]
-	}
-
-	visible := 20
-	maxScroll := len(displayItems) - visible
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
-	if scroll > maxScroll {
-		scroll = maxScroll
-	}
-	end := scroll + visible
-	if end > len(displayItems) {
-		end = len(displayItems)
-	}
-
-	maxName := 0
-	for _, item := range displayItems {
-		if l := len(item.Name); l > maxName {
-			maxName = l
-		}
-	}
-
-	for _, item := range displayItems[scroll:end] {
-		pad := strings.Repeat(" ", maxName-len(item.Name)+2)
-		version := item.Version
-		if version == "" {
-			version = "-"
-		}
-
-		switch item.Status {
-		case "added":
-			fmt.Fprintf(b, "    \033[32m+ %s%s%s\033[0m\n", item.Name, pad, version)
-		case "removed":
-			sv := item.ServerVersion
-			if sv == "" {
-				sv = "-"
-			}
-			fmt.Fprintf(b, "    \033[31m- %s%s%s\033[0m\n", item.Name, pad, sv)
-		case "changed":
-			fmt.Fprintf(b, "    \033[33m~ %s%s%s → %s\033[0m\n", item.Name, pad, item.ServerVersion, version)
-		default:
-			target := ""
-			if item.Disabled {
-				target = "  \033[2m(server-only)\033[0m"
-			}
-			fmt.Fprintf(b, "    \033[2m  %s%s%s%s\033[0m\n", item.Name, pad, version, target)
-		}
-	}
-
-	if len(displayItems) > visible {
-		fmt.Fprintf(b, "\n  \033[2m(%d more — ↑/↓ scroll)\033[0m\n", len(displayItems)-visible)
-	}
-
-	if changes > 0 && unchanged > 0 {
-		fmt.Fprintf(b, "\n  \033[2m%d unchanged mods not shown\033[0m\n", unchanged)
-	}
-
-	b.WriteString("\n  \033[33my push • any key cancel\033[0m\n\n")
-}
-
 // --- Async commands ---
 
 func fetchServerStatus(c *client.AgentClient) tea.Cmd {
@@ -554,18 +313,6 @@ func setStatusEmbedURL(c *client.AgentClient, url string) tea.Cmd {
 			return serverActionMsg{action: "webhook", err: err}
 		}
 		return serverActionMsg{action: "webhook"}
-	}
-}
-
-func pushMods(c *client.AgentClient, paths config.Paths, cfg config.Config, reg config.Registry) tea.Cmd {
-	return func() tea.Msg {
-		manifest := profile.BuildManifest(cfg.ActiveProfile, reg)
-		uploads, err := profile.BuildUploads(paths, cfg.ActiveProfile, manifest, reg)
-		if err != nil {
-			return serverPushMsg{err: err}
-		}
-		resp, err := c.SyncMods(manifest, uploads)
-		return serverPushMsg{resp: resp, err: err}
 	}
 }
 

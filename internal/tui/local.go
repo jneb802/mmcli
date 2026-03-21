@@ -483,23 +483,6 @@ func updateMod(paths config.Paths, cfg config.Config, reg *config.Registry, full
 	}
 }
 
-func pushToServer(paths config.Paths, cfg config.Config, reg *config.Registry, c *client.AgentClient) tea.Cmd {
-	return func() tea.Msg {
-		if c == nil {
-			return installDoneMsg{err: fmt.Errorf("no server connection")}
-		}
-		manifest := profile.BuildManifest(cfg.ActiveProfile, *reg)
-		uploads, err := profile.BuildUploads(paths, cfg.ActiveProfile, manifest, *reg)
-		if err != nil {
-			return installDoneMsg{err: fmt.Errorf("push failed: %w", err)}
-		}
-		if _, err := c.SyncMods(manifest, uploads); err != nil {
-			return installDoneMsg{err: fmt.Errorf("push failed: %w", err)}
-		}
-		return installDoneMsg{}
-	}
-}
-
 func updateModToServer(paths config.Paths, cfg config.Config, reg *config.Registry, fullName string, c *client.AgentClient) tea.Cmd {
 	return func() tea.Msg {
 		old := os.Stdout
