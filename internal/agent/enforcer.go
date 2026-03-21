@@ -325,7 +325,15 @@ func setupValheimEnforcer(bepDir string, mods []agentapi.ManifestMod, modAPIPort
 
 	resolved, unresolved := 0, 0
 	for _, mod := range mods {
-		entry, ok := resolveGUID(mod, index)
+		var entry enforcerGUIDEntry
+		var ok bool
+		// Use persisted GUID if available (skips fuzzy matching)
+		if mod.GUID != "" {
+			entry = enforcerGUIDEntry{guid: mod.GUID, name: mod.Name, version: mod.Version}
+			ok = true
+		} else {
+			entry, ok = resolveGUID(mod, index)
+		}
 		if !ok {
 			unresolved++
 			continue

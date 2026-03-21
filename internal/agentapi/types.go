@@ -117,8 +117,9 @@ type ModInfo struct {
 	Disabled   bool   `json:"disabled"`
 	Anticheat  string `json:"anticheat,omitempty"`
 	Target     string `json:"target,omitempty"`
-	Loaded     *bool  `json:"loaded,omitempty"`      // true=confirmed loaded, nil=unknown
-	PluginOnly bool   `json:"plugin_only,omitempty"` // detected from BepInEx API only, no filesystem entry
+	GUID       string `json:"guid,omitempty"`         // BepInEx plugin GUID
+	Loaded     *bool  `json:"loaded,omitempty"`        // true=confirmed loaded, nil=unknown
+	PluginOnly bool   `json:"plugin_only,omitempty"`   // detected from BepInEx API only, no filesystem entry
 }
 
 // Manifest types for server-side mod metadata.
@@ -126,13 +127,14 @@ type ModInfo struct {
 const ManifestFileName = "mmcli-manifest.json"
 
 type ManifestMod struct {
-	DirName   string `json:"dir_name"`  // "RandyKnapp-EpicLoot"
-	Owner     string `json:"owner"`     // "RandyKnapp"
-	Name      string `json:"name"`      // "EpicLoot"
-	Version   string `json:"version"`   // "0.12.11"
-	Target    string `json:"target"`    // "server" or "both"
-	Anticheat string `json:"anticheat"` // "whitelist", "greylist", "adminonly", ""
-	Source    string `json:"source"`    // "thunderstore" or "upload"
+	DirName   string `json:"dir_name"`            // "RandyKnapp-EpicLoot"
+	Owner     string `json:"owner"`               // "RandyKnapp"
+	Name      string `json:"name"`                // "EpicLoot"
+	Version   string `json:"version"`             // "0.12.11"
+	Target    string `json:"target"`              // "server" or "both"
+	Anticheat string `json:"anticheat"`           // "whitelist", "greylist", "adminonly", ""
+	Source    string `json:"source"`              // "thunderstore" or "upload"
+	GUID      string `json:"guid,omitempty"`      // BepInEx plugin GUID (persisted after first match)
 }
 
 type PushManifest struct {

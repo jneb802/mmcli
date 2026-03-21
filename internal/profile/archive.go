@@ -39,8 +39,8 @@ func BuildManifest(profileName string, reg config.Registry) agentapi.PushManifes
 			Version: mod.Version,
 			Target:  mod.ResolvedTarget(),
 			Source:  source,
+			GUID:    mod.GUID,
 			// Anticheat intentionally omitted — server is source of truth.
-			// Server preserves existing anticheat values in the manifest.
 		})
 	}
 	return agentapi.PushManifest{

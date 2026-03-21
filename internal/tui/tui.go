@@ -246,6 +246,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.server.modsResp = msg.modsResp
 		}
 		m.server.players = msg.players
+		// Sync GUIDs from server to local registry (persist after first match)
+		if msg.mods != nil {
+			dirty := false
+			for _, sm := range msg.mods {
+				if sm.GUID == "" {
+					continue
+				}
+				if mod, ok := m.reg.GetMod(m.cfg.ActiveProfile, sm.Name); ok {
+					if mod.GUID != sm.GUID {
+						mod.GUID = sm.GUID
+						m.reg.SetMod(m.cfg.ActiveProfile, mod)
+						dirty = true
+					}
+				}
+			}
+			if dirty {
+				config.SaveRegistry(m.paths, *m.reg)
+			}
+		}
+
 		// Refresh views when server data arrives
 		if msg.mods != nil {
 			if m.activeTab == tabChanges {

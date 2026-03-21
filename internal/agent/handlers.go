@@ -289,12 +289,13 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 		matched, unmatched := MatchAPIToMods(apiPlugins, modMap, manifestNames)
 		apiMatched = matched
 
-		// Update matched mods with loaded status (and version if exact match)
+		// Update matched mods with loaded status, version, and GUID
 		for dirName, m := range matched {
 			if info, ok := modMap[dirName]; ok {
 				if m.Exact || info.Version == "" {
 					info.Version = m.Plugin.Version
 				}
+				info.GUID = m.Plugin.GUID
 				t := true
 				info.Loaded = &t
 			}
@@ -310,6 +311,7 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 			modMap[ap.GUID] = &agentapi.ModInfo{
 				Name:       ap.Name,
 				Version:    ap.Version,
+				GUID:       ap.GUID,
 				Loaded:     &t,
 				PluginOnly: true,
 			}

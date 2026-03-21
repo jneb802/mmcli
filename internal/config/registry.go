@@ -18,7 +18,8 @@ type ModEntry struct {
 	Files        []string `json:"files"`
 	Dependencies []string `json:"dependencies"`
 	Target    string   `json:"target,omitempty"`    // "client", "server", "both" (default/"" = both)
-	Anticheat string   `json:"anticheat,omitempty"` // "whitelist", "greylist", "adminonly", or "" (none)
+	Anticheat string   `json:"anticheat,omitempty"` // vestigial — server is source of truth; kept for CLI compat
+	GUID      string   `json:"guid,omitempty"`      // BepInEx plugin GUID, persisted after first match
 }
 
 func (m ModEntry) ResolvedTarget() string {
