@@ -255,11 +255,13 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 
 	// Layer 2: Manifest enrichment
 	var manifestTime string
+	var serverManifest *agentapi.PushManifest
 	manifestNames := make(map[string]string) // dirName -> modName (for log matching)
 	manifestPath := filepath.Join(h.cfg.BepInExDir(), agentapi.ManifestFileName)
 	if data, err := os.ReadFile(manifestPath); err == nil {
 		var manifest agentapi.PushManifest
 		if json.Unmarshal(data, &manifest) == nil {
+			serverManifest = &manifest
 			manifestTime = manifest.PushedAt
 			for _, mm := range manifest.Mods {
 				manifestNames[mm.DirName] = mm.Name
@@ -358,6 +360,7 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, agentapi.ModListResponse{
 		Mods:         mods,
+		Manifest:     serverManifest,
 		ManifestTime: manifestTime,
 		LogParsed:    logParsed,
 		APIQueried:   apiQueried,

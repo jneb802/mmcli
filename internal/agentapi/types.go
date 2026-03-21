@@ -111,10 +111,11 @@ type TargetUpdateRequest struct {
 }
 
 type ModListResponse struct {
-	Mods         []ModInfo `json:"mods"`
-	ManifestTime string    `json:"manifest_time,omitempty"` // RFC3339 when last push occurred
-	LogParsed    bool      `json:"log_parsed"`              // whether BepInEx log was available
-	APIQueried   bool      `json:"api_queried"`             // whether MMCLIServerMod API was reachable
+	Mods         []ModInfo    `json:"mods"`
+	Manifest     *PushManifest `json:"manifest,omitempty"`      // current server manifest for reconciliation
+	ManifestTime string        `json:"manifest_time,omitempty"` // RFC3339 when last push occurred
+	LogParsed    bool          `json:"log_parsed"`              // whether BepInEx log was available
+	APIQueried   bool          `json:"api_queried"`             // whether MMCLIServerMod API was reachable
 }
 
 type ModInfo struct {

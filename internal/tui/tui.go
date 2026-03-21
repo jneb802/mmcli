@@ -244,21 +244,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.modsResp != nil {
 			m.server.modsResp = msg.modsResp
+			if msg.modsResp.Manifest != nil {
+				m.server.manifest = msg.modsResp.Manifest
+			}
 		}
 		m.server.players = msg.players
-		// Sync GUIDs from server to local registry (persist after first match)
+
+		// Reconcile server state back to local registry
 		if msg.mods != nil {
 			dirty := false
 			for _, sm := range msg.mods {
-				if sm.GUID == "" {
+				mod, ok := m.reg.GetMod(m.cfg.ActiveProfile, sm.Name)
+				if !ok {
 					continue
 				}
-				if mod, ok := m.reg.GetMod(m.cfg.ActiveProfile, sm.Name); ok {
-					if mod.GUID != sm.GUID {
-						mod.GUID = sm.GUID
-						m.reg.SetMod(m.cfg.ActiveProfile, mod)
-						dirty = true
-					}
+				// Sync GUID
+				if sm.GUID != "" && mod.GUID != sm.GUID {
+					mod.GUID = sm.GUID
+					dirty = true
+				}
+				// Sync version (fill empty local, never overwrite)
+				if mod.Version == "" && sm.Version != "" {
+					mod.Version = sm.Version
+					dirty = true
+				}
+				if dirty {
+					m.reg.SetMod(m.cfg.ActiveProfile, mod)
 				}
 			}
 			if dirty {

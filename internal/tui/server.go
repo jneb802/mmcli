@@ -107,6 +107,7 @@ type serverModel struct {
 	settingsScroll int
 
 	webhookCfg *agentapi.WebhookConfigResponse
+	manifest   *agentapi.PushManifest // latest server manifest for reconciliation
 
 	editor settingsEditor
 }
