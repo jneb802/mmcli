@@ -520,7 +520,7 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.refreshMods()
 					m.mods.auditRows = m.buildAuditRows()
 					if m.server.client != nil {
-						return m, removeModFromServer(m.paths, m.cfg, m.reg, m.server.client)
+						return m, removeModFromServer(m.server.client, modName)
 					}
 					return m, nil
 				},
@@ -595,10 +595,9 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.mods.filter == filterServer {
 			// Update on server: push local version if local differs from server
 			if row.ServerVersion != "-" && row.LocalVersion != "-" && row.ServerVersion != row.LocalVersion {
-				// Local and server differ — just push to sync
 				m.mods.installBusy = true
 				m.mods.err = nil
-				return m, pushToServer(m.paths, m.cfg, m.reg, m.server.client)
+				return m, updateModToServer(m.paths, m.cfg, m.reg, row.Name, m.server.client)
 			}
 			// Otherwise check for Thunderstore update
 			if _, ok := m.local.updates[row.Name]; !ok {

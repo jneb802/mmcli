@@ -38,6 +38,7 @@ func Run(cfg AgentConfig, cfgPath, addr, version string) error {
 	mux.HandleFunc("GET "+agentapi.PathWebhook, adminOnly(h.HandleWebhookGet))
 	mux.HandleFunc("POST "+agentapi.PathWebhook, adminOnly(h.HandleWebhookUpdate))
 	mux.HandleFunc("POST "+agentapi.PathModsSync, adminOnly(h.HandleModsSync))
+	mux.HandleFunc("POST "+agentapi.PathModsSyncSingle, adminOnly(h.HandleModsSyncSingle))
 	mux.HandleFunc("POST "+agentapi.PathModsModeration, adminOnly(h.HandleModsModeration))
 	mux.HandleFunc("POST "+agentapi.PathModsTarget, adminOnly(h.HandleModsTarget))
 	mux.HandleFunc("GET "+agentapi.PathLogs, h.HandleLogs)

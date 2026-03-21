@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -243,7 +244,7 @@ func installModToServer(paths config.Paths, cfg config.Config, reg *config.Regis
 			defer devnull.Close()
 			defer func() { os.Stdout = old }()
 		}
-		// Install locally (needed to build manifest and uploads for push)
+		// Install locally to get registry entry + files for upload
 		var err error
 		if installer.IsLocalPath(query) {
 			err = installer.InstallLocal(paths, cfg, reg, query, "server")
@@ -253,26 +254,50 @@ func installModToServer(paths config.Paths, cfg config.Config, reg *config.Regis
 		if err != nil {
 			return installDoneMsg{err: err}
 		}
-		// Push to server
+		// Find the mod we just installed and sync it to server
 		if c != nil {
 			config.SaveRegistry(paths, *reg)
-			manifest := profile.BuildManifest(cfg.ActiveProfile, *reg)
-			uploads, err := profile.BuildUploads(paths, cfg.ActiveProfile, manifest, *reg)
-			if err != nil {
-				return installDoneMsg{err: fmt.Errorf("push failed: %w", err)}
-			}
-			if _, err := c.SyncMods(manifest, uploads); err != nil {
-				return installDoneMsg{err: fmt.Errorf("push failed: %w", err)}
+			for _, mod := range reg.ListMods(cfg.ActiveProfile) {
+				if !strings.Contains(strings.ToLower(mod.FullName()), strings.ToLower(strings.ReplaceAll(query, " ", "_"))) {
+					continue
+				}
+				source := "thunderstore"
+				if mod.Owner == "local" {
+					source = "upload"
+				}
+				req := agentapi.SingleModSyncRequest{
+					Action: "add",
+					Mod: agentapi.ManifestMod{
+						DirName: mod.FullName(),
+						Owner:   mod.Owner,
+						Name:    mod.Name,
+						Version: mod.Version,
+						Target:  mod.ResolvedTarget(),
+						Source:  source,
+						GUID:    mod.GUID,
+					},
+				}
+				// Build upload zip if needed
+				var upload io.Reader
+				if source == "upload" {
+					manifest := profile.BuildManifest(cfg.ActiveProfile, *reg)
+					uploads, err := profile.BuildUploads(paths, cfg.ActiveProfile, manifest, *reg)
+					if err == nil {
+						upload = uploads[mod.FullName()]
+					}
+				}
+				if _, err := c.SyncSingleMod(req, upload); err != nil {
+					return installDoneMsg{err: fmt.Errorf("server sync failed: %w", err)}
+				}
+				break
 			}
 		}
-		// Clean up local files — registry entry stays so future pushes
-		// still include the mod in the manifest for the server.
+		// Clean up local files for server-only mods
 		for _, mod := range reg.ListMods(cfg.ActiveProfile) {
 			if mod.ResolvedTarget() != "server" {
 				continue
 			}
 			name := mod.FullName()
-			// Only clean up mods we just installed (match query loosely)
 			if !strings.Contains(strings.ToLower(name), strings.ToLower(strings.ReplaceAll(query, " ", "_"))) {
 				continue
 			}
@@ -321,15 +346,14 @@ func updateServerModeration(c *client.AgentClient, modName, anticheat string) te
 	}
 }
 
-func removeModFromServer(paths config.Paths, cfg config.Config, reg *config.Registry, c *client.AgentClient) tea.Cmd {
+func removeModFromServer(c *client.AgentClient, modName string) tea.Cmd {
 	return func() tea.Msg {
-		manifest := profile.BuildManifest(cfg.ActiveProfile, *reg)
-		uploads, err := profile.BuildUploads(paths, cfg.ActiveProfile, manifest, *reg)
-		if err != nil {
-			return installDoneMsg{err: fmt.Errorf("push failed: %w", err)}
+		req := agentapi.SingleModSyncRequest{
+			Action: "remove",
+			Mod:    agentapi.ManifestMod{DirName: modName, Name: modName},
 		}
-		if _, err := c.SyncMods(manifest, uploads); err != nil {
-			return installDoneMsg{err: fmt.Errorf("push failed: %w", err)}
+		if _, err := c.SyncSingleMod(req, nil); err != nil {
+			return installDoneMsg{err: fmt.Errorf("server remove failed: %w", err)}
 		}
 		return installDoneMsg{}
 	}
@@ -487,13 +511,27 @@ func updateModToServer(paths config.Paths, cfg config.Config, reg *config.Regist
 		}
 		if c != nil {
 			config.SaveRegistry(paths, *reg)
-			manifest := profile.BuildManifest(cfg.ActiveProfile, *reg)
-			uploads, err := profile.BuildUploads(paths, cfg.ActiveProfile, manifest, *reg)
-			if err != nil {
-				return installDoneMsg{err: fmt.Errorf("updated locally but push failed: %w", err)}
-			}
-			if _, err := c.SyncMods(manifest, uploads); err != nil {
-				return installDoneMsg{err: fmt.Errorf("updated locally but push failed: %w", err)}
+			mod, ok := reg.GetMod(cfg.ActiveProfile, fullName)
+			if ok {
+				source := "thunderstore"
+				if mod.Owner == "local" {
+					source = "upload"
+				}
+				req := agentapi.SingleModSyncRequest{
+					Action: "update",
+					Mod: agentapi.ManifestMod{
+						DirName: mod.FullName(),
+						Owner:   mod.Owner,
+						Name:    mod.Name,
+						Version: mod.Version,
+						Target:  mod.ResolvedTarget(),
+						Source:  source,
+						GUID:    mod.GUID,
+					},
+				}
+				if _, err := c.SyncSingleMod(req, nil); err != nil {
+					return installDoneMsg{err: fmt.Errorf("server sync failed: %w", err)}
+				}
 			}
 		}
 		return installDoneMsg{}

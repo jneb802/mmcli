@@ -90,6 +90,46 @@ func (c *AgentClient) UpdateWebhookConfig(req agentapi.WebhookConfigUpdate) (*ag
 	return &resp, nil
 }
 
+// SyncSingleMod adds, updates, or removes a single mod on the server.
+// upload is optional — only needed for Source="upload" mods.
+func (c *AgentClient) SyncSingleMod(req agentapi.SingleModSyncRequest, upload io.Reader) (*agentapi.SyncResponse, error) {
+	pr, pw := io.Pipe()
+	w := multipart.NewWriter(pw)
+
+	go func() {
+		reqJSON, _ := json.Marshal(req)
+		w.WriteField("request", string(reqJSON))
+		if upload != nil {
+			part, err := w.CreateFormFile("upload", req.Mod.DirName+".zip")
+			if err == nil {
+				io.Copy(part, upload)
+			}
+		}
+		w.Close()
+		pw.Close()
+	}()
+
+	httpReq, err := http.NewRequest("POST", c.BaseURL+agentapi.PathModsSyncSingle, pr)
+	if err != nil {
+		return nil, err
+	}
+	httpReq.Header.Set(agentapi.HeaderAPIKey, c.Secret)
+	httpReq.Header.Set("Content-Type", w.FormDataContentType())
+
+	httpClient := &http.Client{Timeout: 5 * time.Minute}
+	resp, err := httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("sync single mod: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result agentapi.SyncResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return &result, nil
+}
+
 func (c *AgentClient) UpdateTarget(req agentapi.TargetUpdateRequest) (*agentapi.ActionResponse, error) {
 	var resp agentapi.ActionResponse
 	if err := c.doJSON("POST", agentapi.PathModsTarget, req, &resp); err != nil {

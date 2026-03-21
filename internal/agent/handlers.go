@@ -444,6 +444,130 @@ func (h *Handlers) HandleModsTarget(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "target updated"})
 }
 
+func (h *Handlers) HandleModsSyncSingle(w http.ResponseWriter, r *http.Request) {
+	if err := r.ParseMultipartForm(1 << 30); err != nil {
+		writeError(w, http.StatusBadRequest, "failed to parse multipart: "+err.Error())
+		return
+	}
+
+	reqJSON := r.FormValue("request")
+	if reqJSON == "" {
+		writeError(w, http.StatusBadRequest, "missing 'request' field")
+		return
+	}
+
+	var req agentapi.SingleModSyncRequest
+	if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request JSON: "+err.Error())
+		return
+	}
+
+	bepDir := h.cfg.BepInExDir()
+	manifestPath := filepath.Join(bepDir, agentapi.ManifestFileName)
+
+	// Load existing manifest
+	var manifest agentapi.PushManifest
+	if data, err := os.ReadFile(manifestPath); err == nil {
+		json.Unmarshal(data, &manifest)
+	}
+
+	resp := agentapi.SyncResponse{OK: true}
+
+	switch req.Action {
+	case "add", "update":
+		// Download/extract the mod
+		if req.Mod.Source == "upload" {
+			// Extract upload zip from multipart
+			file, header, err := r.FormFile("upload")
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "missing upload file: "+err.Error())
+				return
+			}
+			defer file.Close()
+			tmpFile, err := os.CreateTemp("", "mmcli-upload-*.zip")
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			tmpPath := tmpFile.Name()
+			defer os.Remove(tmpPath)
+			size, _ := io.Copy(tmpFile, file)
+			tmpFile.Close()
+			f, _ := os.Open(tmpPath)
+			defer f.Close()
+			if err := extractUploadZip(f, size, bepDir, req.Mod.DirName); err != nil {
+				resp.Failures = append(resp.Failures, agentapi.SyncFailure{Mod: req.Mod.DirName, Reason: err.Error()})
+			} else {
+				resp.Uploaded++
+				resp.Results = append(resp.Results, agentapi.SyncModResult{Mod: req.Mod.DirName, Version: req.Mod.Version, Status: "uploaded"})
+			}
+			_ = header
+		} else {
+			// Download from Thunderstore
+			cacheDir := agentCacheDir()
+			zipPath, cached, err := downloadModZip(cacheDir, req.Mod.Owner, req.Mod.Name, req.Mod.Version)
+			if err != nil {
+				resp.Failures = append(resp.Failures, agentapi.SyncFailure{Mod: req.Mod.DirName, Reason: err.Error()})
+			} else {
+				removeModDirs(bepDir, req.Mod.DirName)
+				if err := extractModZip(zipPath, bepDir, req.Mod.Owner, req.Mod.Name); err != nil {
+					resp.Failures = append(resp.Failures, agentapi.SyncFailure{Mod: req.Mod.DirName, Reason: err.Error()})
+				} else if cached {
+					resp.Cached++
+					resp.Results = append(resp.Results, agentapi.SyncModResult{Mod: req.Mod.DirName, Version: req.Mod.Version, Status: "cached"})
+				} else {
+					resp.Downloaded++
+					resp.Results = append(resp.Results, agentapi.SyncModResult{Mod: req.Mod.DirName, Version: req.Mod.Version, Status: "downloaded"})
+				}
+			}
+		}
+
+		// Update manifest: replace or add
+		found := false
+		for i := range manifest.Mods {
+			if manifest.Mods[i].DirName == req.Mod.DirName {
+				// Preserve server-owned anticheat
+				if req.Mod.Anticheat == "" {
+					req.Mod.Anticheat = manifest.Mods[i].Anticheat
+				}
+				manifest.Mods[i] = req.Mod
+				found = true
+				break
+			}
+		}
+		if !found {
+			manifest.Mods = append(manifest.Mods, req.Mod)
+		}
+
+	case "remove":
+		removeModDirs(bepDir, req.Mod.DirName)
+		resp.Removed++
+		resp.Results = append(resp.Results, agentapi.SyncModResult{Mod: req.Mod.DirName, Status: "removed"})
+
+		// Remove from manifest
+		for i := range manifest.Mods {
+			if manifest.Mods[i].DirName == req.Mod.DirName {
+				manifest.Mods = append(manifest.Mods[:i], manifest.Mods[i+1:]...)
+				break
+			}
+		}
+	}
+
+	// Rebuild anticheat configs
+	if err := setupAnticheatSystems(bepDir, manifest.Mods, h.cfg.ResolvedModAPIPort()); err != nil {
+		log.Printf("SyncSingle: anticheat setup error: %v", err)
+	}
+
+	// Write updated manifest
+	if data, err := json.MarshalIndent(manifest, "", "  "); err == nil {
+		os.WriteFile(manifestPath, data, 0644)
+	}
+
+	resp.Message = fmt.Sprintf("single mod sync: %s %s", req.Action, req.Mod.DirName)
+	log.Printf("SyncSingle: %s", resp.Message)
+	writeJSON(w, http.StatusOK, resp)
+}
+
 func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
 	log.Println("Sync request received, parsing multipart...")
 

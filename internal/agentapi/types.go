@@ -15,6 +15,7 @@ const (
 	PathModsSync       = "/api/v1/mods/sync"
 	PathModsModeration = "/api/v1/mods/moderation"
 	PathModsTarget     = "/api/v1/mods/target"
+	PathModsSyncSingle = "/api/v1/mods/sync/single"
 	PathLogs     = "/api/v1/logs"
 	PathSettings = "/api/v1/settings"
 	PathUpdate   = "/api/v1/update"
@@ -108,6 +109,12 @@ type ModerationUpdateRequest struct {
 type TargetUpdateRequest struct {
 	ModName string `json:"mod_name"`
 	Target  string `json:"target"` // "client", "server", "both"
+}
+
+// SingleModSyncRequest adds, updates, or removes a single mod on the server.
+type SingleModSyncRequest struct {
+	Action string      `json:"action"` // "add", "update", "remove"
+	Mod    ManifestMod `json:"mod"`
 }
 
 type ModListResponse struct {
