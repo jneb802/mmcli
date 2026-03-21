@@ -289,11 +289,12 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 		matched, unmatched := MatchAPIToMods(apiPlugins, modMap, manifestNames)
 		apiMatched = matched
 
-		// Update matched mods with loaded status, version, and GUID
+		// Update matched mods with loaded status, runtime version, and GUID
 		for dirName, m := range matched {
 			if info, ok := modMap[dirName]; ok {
-				if m.Exact || info.Version == "" {
-					info.Version = m.Plugin.Version
+				info.RuntimeVersion = m.Plugin.Version
+				if info.Version == "" {
+					info.Version = m.Plugin.Version // fallback for mods not in manifest
 				}
 				info.GUID = m.Plugin.GUID
 				t := true
@@ -324,7 +325,10 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 			matched := MatchLogToManifest(logPlugins, manifestNames)
 			for dirName, lp := range matched {
 				if info, ok := modMap[dirName]; ok {
-					info.Version = lp.Version
+					info.RuntimeVersion = lp.Version
+					if info.Version == "" {
+						info.Version = lp.Version // fallback for mods not in manifest
+					}
 					t := true
 					info.Loaded = &t
 				}

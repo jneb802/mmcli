@@ -74,11 +74,12 @@ type modsState struct {
 
 type auditRow struct {
 	Name           string
-	LocalVersion   string
-	ServerVersion  string
-	ModpackVersion string
-	Target         string
-	Anticheat      string
+	LocalVersion      string
+	ServerVersion     string
+	ServerRuntimeVer  string // BepInEx-reported version (may differ from manifest)
+	ModpackVersion    string
+	Target            string
+	Anticheat         string
 }
 
 func (m model) buildAuditRows() []auditRow {
@@ -107,6 +108,7 @@ func (m model) buildAuditRows() []auditRow {
 	for _, sm := range m.server.mods {
 		r := ensure(sm.Name)
 		r.ServerVersion = syncVersionStr(sm.Version)
+		r.ServerRuntimeVer = sm.RuntimeVersion
 		r.Anticheat = sm.Anticheat
 	}
 
@@ -1136,10 +1138,16 @@ func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, a
 			namePad = r.Name + "\033[2m" + strings.Repeat("─", colName-nameWidth-1) + "\033[0m "
 		}
 
+		// Mark server version with * if runtime version differs (e.g. DLL reports different version)
+		serverVer := r.ServerVersion
+		if r.ServerRuntimeVer != "" && r.ServerVersion != "-" && r.ServerRuntimeVer != r.ServerVersion {
+			serverVer = r.ServerVersion + "\033[33m*\033[0m"
+		}
+
 		fmt.Fprintf(b, "  %s%s%s%s%s%s%s\n", cur,
 			namePad,
 			padRight(r.LocalVersion, colLocal),
-			padRight(r.ServerVersion, colServer),
+			padRight(serverVer, colServer),
 			padRight(r.ModpackVersion, colModpack),
 			targetColored,
 			auditModerationColor(r.Anticheat, modLabels[i]),

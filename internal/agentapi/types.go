@@ -118,15 +118,16 @@ type ModListResponse struct {
 }
 
 type ModInfo struct {
-	Name       string `json:"name"`
-	Version    string `json:"version,omitempty"`
-	Owner      string `json:"owner,omitempty"`
-	Disabled   bool   `json:"disabled"`
-	Anticheat  string `json:"anticheat,omitempty"`
-	Target     string `json:"target,omitempty"`
-	GUID       string `json:"guid,omitempty"`         // BepInEx plugin GUID
-	Loaded     *bool  `json:"loaded,omitempty"`        // true=confirmed loaded, nil=unknown
-	PluginOnly bool   `json:"plugin_only,omitempty"`   // detected from BepInEx API only, no filesystem entry
+	Name           string `json:"name"`
+	Version        string `json:"version,omitempty"`
+	RuntimeVersion string `json:"runtime_version,omitempty"` // BepInEx-reported version (may differ from manifest)
+	Owner          string `json:"owner,omitempty"`
+	Disabled       bool   `json:"disabled"`
+	Anticheat      string `json:"anticheat,omitempty"`
+	Target         string `json:"target,omitempty"`
+	GUID           string `json:"guid,omitempty"`
+	Loaded         *bool  `json:"loaded,omitempty"`
+	PluginOnly     bool   `json:"plugin_only,omitempty"`
 }
 
 // Manifest types for server-side mod metadata.
