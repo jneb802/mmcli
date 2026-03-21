@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"mmcli/internal/agentapi"
 	"mmcli/internal/config"
 )
 
@@ -149,106 +148,6 @@ func TestSwitchNonExistentProfile(t *testing.T) {
 	err := Switch(paths, cfg, "nonexistent")
 	if err == nil {
 		t.Error("Switch should fail for non-existent profile")
-	}
-}
-
-func TestBuildManifest(t *testing.T) {
-	reg := config.NewRegistry()
-
-	// Server mod - should be included
-	reg.SetMod("default", config.ModEntry{
-		Owner: "A", Name: "ServerMod", Version: "1.0.0", Target: "server",
-		Anticheat: "whitelist",
-	})
-
-	// Both mod - should be included
-	reg.SetMod("default", config.ModEntry{
-		Owner: "B", Name: "BothMod", Version: "2.0.0", Target: "both",
-	})
-
-	// Client-only mod - should be EXCLUDED
-	reg.SetMod("default", config.ModEntry{
-		Owner: "C", Name: "ClientMod", Version: "3.0.0", Target: "client",
-	})
-
-	// Local upload mod - should have Source="upload"
-	reg.SetMod("default", config.ModEntry{
-		Owner: "local", Name: "LocalMod", Version: "dev",
-	})
-
-	// No target (defaults to both) - should be included
-	reg.SetMod("default", config.ModEntry{
-		Owner: "D", Name: "DefaultMod", Version: "1.0.0",
-	})
-
-	manifest := BuildManifest("default", reg)
-
-	if manifest.Profile != "default" {
-		t.Errorf("Profile = %q, want %q", manifest.Profile, "default")
-	}
-	if manifest.PushedAt == "" {
-		t.Error("PushedAt should not be empty")
-	}
-
-	// Should have 4 mods (everything except client-only)
-	if len(manifest.Mods) != 4 {
-		t.Fatalf("got %d mods, want 4", len(manifest.Mods))
-	}
-
-	modMap := make(map[string]agentapi.ManifestMod)
-	for _, m := range manifest.Mods {
-		modMap[m.DirName] = m
-	}
-
-	// Client mod should not be present
-	if _, ok := modMap["C-ClientMod"]; ok {
-		t.Error("client-only mod should be excluded from manifest")
-	}
-
-	// Server mod
-	if m, ok := modMap["A-ServerMod"]; ok {
-		if m.Source != "thunderstore" {
-			t.Errorf("ServerMod source = %q, want %q", m.Source, "thunderstore")
-		}
-		// Anticheat is now server-owned; BuildManifest no longer copies it from registry
-		if m.Anticheat != "" {
-			t.Errorf("ServerMod anticheat = %q, want empty (server-owned)", m.Anticheat)
-		}
-		if m.Target != "server" {
-			t.Errorf("ServerMod target = %q, want %q", m.Target, "server")
-		}
-	} else {
-		t.Error("missing A-ServerMod in manifest")
-	}
-
-	// Local mod should have source=upload (FullName is "local-LocalMod" since IsLocal is not persisted)
-	if m, ok := modMap["local-LocalMod"]; ok {
-		if m.Source != "upload" {
-			t.Errorf("LocalMod source = %q, want %q", m.Source, "upload")
-		}
-	} else {
-		t.Error("missing local-LocalMod in manifest")
-	}
-
-	// Default target mod
-	if m, ok := modMap["D-DefaultMod"]; ok {
-		if m.Target != "both" {
-			t.Errorf("DefaultMod target = %q, want %q", m.Target, "both")
-		}
-	} else {
-		t.Error("missing D-DefaultMod in manifest")
-	}
-}
-
-func TestBuildManifestEmptyProfile(t *testing.T) {
-	reg := config.NewRegistry()
-	manifest := BuildManifest("empty", reg)
-
-	if manifest.Profile != "empty" {
-		t.Errorf("Profile = %q, want %q", manifest.Profile, "empty")
-	}
-	if len(manifest.Mods) != 0 {
-		t.Errorf("got %d mods, want 0", len(manifest.Mods))
 	}
 }
 

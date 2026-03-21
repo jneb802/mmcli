@@ -16,7 +16,6 @@ import (
 	"mmcli/internal/agentapi"
 	"mmcli/internal/client"
 	"mmcli/internal/config"
-	"mmcli/internal/profile"
 )
 
 var serverCmd = &cobra.Command{
@@ -306,77 +305,6 @@ var serverRestartCmd = &cobra.Command{
 	},
 }
 
-var serverPushCmd = &cobra.Command{
-	Use:   "push",
-	Short: "Push local profile mods to the active server",
-	Long: `Sync mods from a local profile to the active server. Only mods targeted
-at "both" or "server" are included. Client-only mods are skipped.
-Thunderstore mods are downloaded directly by the server. Local mods
-(installed from a path) are uploaded from the client.
-Mods removed from the local profile are also removed from the server.
-Use --with-config to also push config files after mods.`,
-	RunE: func(cmd *cobra.Command, args []string) error {
-		if err := requireAdmin(); err != nil {
-			return err
-		}
-		profileName, _ := cmd.Flags().GetString("profile")
-
-		name, c, err := resolveActiveServer()
-		if err != nil {
-			return err
-		}
-
-		paths, cfg, err := loadConfig()
-		if err != nil {
-			return err
-		}
-
-		reg, err := config.LoadRegistry(paths)
-		if err != nil {
-			return err
-		}
-
-		if profileName == "" {
-			profileName = cfg.ActiveProfile
-		}
-
-		// Verify profile exists
-		profileDir := paths.ProfileDir(profileName)
-		if _, err := os.Stat(profileDir); os.IsNotExist(err) {
-			return fmt.Errorf("profile '%s' not found", profileName)
-		}
-
-		fmt.Printf("Syncing profile '%s' to server '%s'...\n", profileName, name)
-
-		manifest := profile.BuildManifest(profileName, reg)
-		uploads, err := profile.BuildUploads(paths, profileName, manifest, reg)
-		if err != nil {
-			return err
-		}
-		resp, err := c.SyncMods(manifest, uploads)
-		if err != nil {
-			return err
-		}
-
-		fmt.Printf("\033[32m%s\033[0m\n", resp.Message)
-		for _, f := range resp.Failures {
-			fmt.Printf("\033[33m  Warning: %s — %s\033[0m\n", f.Mod, f.Reason)
-		}
-
-		// Push configs if requested
-		withConfig, _ := cmd.Flags().GetBool("with-config")
-		if withConfig {
-			fmt.Println("\nPushing config files...")
-			configDir := paths.ProfileConfigDir(profileName)
-			if err := pushAll(c, configDir); err != nil {
-				return fmt.Errorf("config push failed: %w", err)
-			}
-		}
-
-		return nil
-	},
-}
-
 var serverLogsCmd = &cobra.Command{
 	Use:   "logs",
 	Short: "View server logs",
@@ -607,7 +535,6 @@ func init() {
 	serverCmd.AddCommand(serverStartCmd)
 	serverCmd.AddCommand(serverStopCmd)
 	serverCmd.AddCommand(serverRestartCmd)
-	serverCmd.AddCommand(serverPushCmd)
 	serverCmd.AddCommand(serverLogsCmd)
 	serverCmd.AddCommand(serverSettingsCmd)
 	serverCmd.AddCommand(serverUpdateCmd)
@@ -636,9 +563,6 @@ func init() {
 	serverAddCmd.Flags().String("secret", "", "agent API secret (required)")
 	serverAddCmd.MarkFlagRequired("host")
 	serverAddCmd.MarkFlagRequired("secret")
-
-	serverPushCmd.Flags().String("profile", "", "profile to push (default: active profile)")
-	serverPushCmd.Flags().Bool("with-config", false, "also push config files after pushing mods")
 
 	serverLogsCmd.Flags().Int("lines", 100, "number of log lines to show")
 	serverLogsCmd.Flags().BoolP("follow", "f", false, "stream new log lines")

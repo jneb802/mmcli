@@ -90,44 +90,13 @@ func (c *AgentClient) UpdateWebhookConfig(req agentapi.WebhookConfigUpdate) (*ag
 	return &resp, nil
 }
 
-// SyncSingleMod adds, updates, or removes a single mod on the server.
-// upload is optional — only needed for Source="upload" mods.
-func (c *AgentClient) SyncSingleMod(req agentapi.SingleModSyncRequest, upload io.Reader) (*agentapi.SyncResponse, error) {
-	pr, pw := io.Pipe()
-	w := multipart.NewWriter(pw)
-
-	go func() {
-		reqJSON, _ := json.Marshal(req)
-		w.WriteField("request", string(reqJSON))
-		if upload != nil {
-			part, err := w.CreateFormFile("upload", req.Mod.DirName+".zip")
-			if err == nil {
-				io.Copy(part, upload)
-			}
-		}
-		w.Close()
-		pw.Close()
-	}()
-
-	httpReq, err := http.NewRequest("POST", c.BaseURL+agentapi.PathModsSyncSingle, pr)
-	if err != nil {
+// ManageMod adds, updates, or removes a single mod on the server.
+func (c *AgentClient) ManageMod(req agentapi.ModManageRequest) (*agentapi.ActionResponse, error) {
+	var resp agentapi.ActionResponse
+	if err := c.doJSON("POST", agentapi.PathModsManage, req, &resp); err != nil {
 		return nil, err
 	}
-	httpReq.Header.Set(agentapi.HeaderAPIKey, c.Secret)
-	httpReq.Header.Set("Content-Type", w.FormDataContentType())
-
-	httpClient := &http.Client{Timeout: 5 * time.Minute}
-	resp, err := httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("sync single mod: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var result agentapi.SyncResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, fmt.Errorf("decode response: %w", err)
-	}
-	return &result, nil
+	return &resp, nil
 }
 
 func (c *AgentClient) UpdateModeration(req agentapi.ModerationUpdateRequest) (*agentapi.ActionResponse, error) {
@@ -135,71 +104,6 @@ func (c *AgentClient) UpdateModeration(req agentapi.ModerationUpdateRequest) (*a
 	if err := c.doJSON("POST", agentapi.PathModsModeration, req, &resp); err != nil {
 		return nil, err
 	}
-	return &resp, nil
-}
-
-// SyncMods sends a manifest and optional upload mod zips to the server.
-// The uploads map is keyed by DirName → zip data for mods with Source="upload".
-func (c *AgentClient) SyncMods(manifest agentapi.PushManifest, uploads map[string]io.Reader) (*agentapi.SyncResponse, error) {
-	pr, pw := io.Pipe()
-	w := multipart.NewWriter(pw)
-
-	go func() {
-		defer pw.Close()
-
-		// Write manifest as JSON form field
-		data, err := json.Marshal(manifest)
-		if err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-		if err := w.WriteField("manifest", string(data)); err != nil {
-			pw.CloseWithError(err)
-			return
-		}
-
-		// Write upload mod zips as file parts
-		for dirName, r := range uploads {
-			part, err := w.CreateFormFile(dirName, dirName+".zip")
-			if err != nil {
-				pw.CloseWithError(err)
-				return
-			}
-			if _, err := io.Copy(part, r); err != nil {
-				pw.CloseWithError(err)
-				return
-			}
-		}
-
-		w.Close()
-	}()
-
-	req, err := http.NewRequest("POST", c.BaseURL+agentapi.PathModsSync, pr)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set(agentapi.HeaderAPIKey, c.Secret)
-	req.Header.Set("Content-Type", w.FormDataContentType())
-
-	// No timeout — server may need to download from Thunderstore + receive uploads
-	httpClient := &http.Client{}
-	httpResp, err := httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("sync failed: %w", err)
-	}
-	defer httpResp.Body.Close()
-
-	if httpResp.StatusCode != http.StatusOK {
-		var errResp agentapi.ErrorResponse
-		json.NewDecoder(httpResp.Body).Decode(&errResp)
-		if errResp.Error != "" {
-			return nil, fmt.Errorf("sync failed: %s", errResp.Error)
-		}
-		return nil, fmt.Errorf("sync failed with status %d", httpResp.StatusCode)
-	}
-
-	var resp agentapi.SyncResponse
-	json.NewDecoder(httpResp.Body).Decode(&resp)
 	return &resp, nil
 }
 

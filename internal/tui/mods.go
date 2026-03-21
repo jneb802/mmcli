@@ -96,8 +96,9 @@ func (m model) buildAuditRows() []auditRow {
 		return r
 	}
 
-	// Local mods
-	localMods := m.reg.ListAllMods(m.cfg.ActiveProfile, m.paths.ProfilePluginsDir(m.cfg.ActiveProfile))
+	// Local mods — only registered (managed) mods, not filesystem detection.
+	// Untracked directories show in the Local filter view only.
+	localMods := m.reg.ListMods(m.cfg.ActiveProfile)
 	for _, mod := range localMods {
 		r := ensure(mod.FullName())
 		r.LocalVersion = syncVersionStr(mod.Version)
@@ -854,7 +855,7 @@ func (m model) handleModsInstallInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.mods.installInput != "" {
 			m.mods.installBusy = true
 			if m.mods.filter == filterServer {
-				return m, installModToServer(m.paths, m.cfg, m.reg, m.mods.installInput, m.server.client)
+				return m, installModToServer(m.mods.installInput, m.server.client)
 			}
 			if m.mods.filter == filterModpack {
 				return m, installModToModpack(m.cfg.ModpackPath, m.mods.installInput)

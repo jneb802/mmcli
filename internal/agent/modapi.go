@@ -95,11 +95,12 @@ func QueryModStatus(port int) (*ModAPIStatus, error) {
 
 // ModAPIEvent is a game event from the mod API event log.
 type ModAPIEvent struct {
-	Seq    int    `json:"seq"`
-	Type   string `json:"type"`
-	Player string `json:"player"`
-	UID    int64  `json:"uid,omitempty"`
-	Time   string `json:"time"`
+	Seq     int    `json:"seq"`
+	Type    string `json:"type"`
+	Player  string `json:"player"`
+	UID     int64  `json:"uid,omitempty"`
+	Message string `json:"message,omitempty"`
+	Time    string `json:"time"`
 }
 
 // ModAPIEventsResponse is the JSON shape returned by GET /events on the mod API.

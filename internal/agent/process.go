@@ -49,14 +49,18 @@ func (pm *ProcessManager) Start() error {
 		return fmt.Errorf("start script not found: %s", scriptPath)
 	}
 
-	// Open log file for stdout/stderr capture
+	// Archive previous session logs before overwriting
 	logPath := pm.cfg.ValheimDir + "/mmcli-agent-server.log"
+	archiveLog(logPath)
+	archiveLog(pm.cfg.ResolvedLogFile())
+
+	// Open log file for stdout/stderr capture
 	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		return fmt.Errorf("failed to open log file: %w", err)
 	}
 
-	// Remove stale BepInEx log
+	// Remove stale BepInEx log (archived above, now delete so a fresh one is created)
 	os.Remove(pm.cfg.ResolvedLogFile())
 
 	cmd := exec.Command("/bin/bash", scriptPath)
@@ -292,4 +296,14 @@ func isServerProcess(pid int) bool {
 		return false
 	}
 	return strings.Contains(string(data), "valheim_server")
+}
+
+// archiveLog renames an existing log file with a timestamp suffix so it's preserved.
+func archiveLog(path string) {
+	info, err := os.Stat(path)
+	if err != nil || info.Size() == 0 {
+		return
+	}
+	ts := info.ModTime().Format("2006-01-02_15-04-05")
+	os.Rename(path, path+"."+ts)
 }

@@ -99,7 +99,7 @@ func TestServerSubcommands(t *testing.T) {
 	expected := []string{
 		"add", "list", "switch", "remove",
 		"status", "start", "stop", "restart",
-		"push", "logs", "settings", "update",
+		"logs", "settings", "update",
 	}
 
 	var serverCmd *cobra.Command
@@ -220,35 +220,3 @@ func TestInstallFlags(t *testing.T) {
 	}
 }
 
-// TestServerPushFlags verifies server push command flags.
-func TestServerPushFlags(t *testing.T) {
-	var serverCmd *cobra.Command
-	for _, cmd := range rootCmd.Commands() {
-		if cmd.Name() == "server" {
-			serverCmd = cmd
-			break
-		}
-	}
-	if serverCmd == nil {
-		t.Fatal("server command not found")
-	}
-
-	var pushCmd *cobra.Command
-	for _, cmd := range serverCmd.Commands() {
-		if cmd.Name() == "push" {
-			pushCmd = cmd
-			break
-		}
-	}
-	if pushCmd == nil {
-		t.Fatal("server push command not found")
-	}
-
-	flags := pushCmd.Flags()
-	if flags.Lookup("profile") == nil {
-		t.Error("missing --profile flag on server push")
-	}
-	if flags.Lookup("with-config") == nil {
-		t.Error("missing --with-config flag on server push")
-	}
-}
