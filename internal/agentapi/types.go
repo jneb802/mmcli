@@ -101,8 +101,10 @@ type ActionResponse struct {
 
 // ModerationUpdateRequest sets the anticheat classification for a single mod.
 type ModerationUpdateRequest struct {
-	ModName   string `json:"mod_name"`   // Thunderstore name (e.g. "RandyKnapp-EpicLoot")
-	Anticheat string `json:"anticheat"`  // "whitelist", "greylist", "adminonly", "serveronly", ""
+	ModName   string `json:"mod_name"`              // Thunderstore name (e.g. "RandyKnapp-EpicLoot")
+	Anticheat string `json:"anticheat"`             // "whitelist", "greylist", "adminonly", "serveronly", ""
+	GUID      string `json:"guid,omitempty"`        // BepInEx GUID (for mods not on server)
+	Version   string `json:"version,omitempty"`     // mod version (for mods not on server)
 }
 
 // TargetUpdateRequest sets the target for a single mod on the server.

@@ -329,11 +329,13 @@ func updateServerTarget(c *client.AgentClient, modName, target string) tea.Cmd {
 	}
 }
 
-func updateServerModeration(c *client.AgentClient, modName, anticheat string) tea.Cmd {
+func updateServerModerationFull(c *client.AgentClient, modName, anticheat, guid, version string) tea.Cmd {
 	return func() tea.Msg {
 		c.UpdateModeration(agentapi.ModerationUpdateRequest{
 			ModName:   modName,
 			Anticheat: anticheat,
+			GUID:      guid,
+			Version:   version,
 		})
 		// Re-fetch server status so the moderation column updates immediately
 		status, _ := c.Status()

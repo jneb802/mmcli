@@ -208,7 +208,7 @@ func resolveGUID(mod agentapi.ManifestMod, index map[string]enforcerGUIDEntry) (
 // patchEnforcerModeration updates a single mod's classification in the existing Mods.yaml.
 // It resolves the Thunderstore mod name to a BepInEx GUID, removes the mod from all
 // category buckets, then re-adds it to the correct one.
-func patchEnforcerModeration(bepDir string, modName, anticheat string, modAPIPort int) error {
+func patchEnforcerModeration(bepDir string, modName, anticheat, guid, version string, modAPIPort int) error {
 	existing, err := loadEnforcerConfig(bepDir)
 	if err != nil || existing == nil {
 		return fmt.Errorf("enforcer: cannot read Mods.yaml: %w", err)
@@ -226,6 +226,15 @@ func patchEnforcerModeration(bepDir string, modName, anticheat string, modAPIPor
 		mod.Name = modName
 	}
 	entry, found := resolveGUID(mod, index)
+	if !found && guid != "" {
+		// Use provided GUID (e.g. client-only mod not on server)
+		name := mod.Name
+		if name == "" {
+			name = modName
+		}
+		entry = enforcerGUIDEntry{guid: guid, name: name, version: version}
+		found = true
+	}
 	if !found {
 		return fmt.Errorf("enforcer: cannot resolve GUID for %s", modName)
 	}

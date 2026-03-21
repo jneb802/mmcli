@@ -284,6 +284,9 @@ func (m model) viewModsFull() string {
 	if m.mods.filter == filterLocal {
 		hotkeys = append(hotkeys, "p profile")
 	}
+	if m.mods.filter == filterServer {
+		hotkeys = append(hotkeys, "r restart server")
+	}
 	hotkeys = append(hotkeys, "s start", "tab next", "q quit")
 	renderHotkeyBar(&b, hotkeys, m.width)
 
@@ -677,12 +680,21 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.mods.err = fmt.Errorf("no server connection")
 			return m, nil
 		}
-		if row.ServerVersion == "-" {
-			m.mods.err = fmt.Errorf("not on server — push first")
-			return m, nil
-		}
 		newAC := nextAnticheatValue(row.Anticheat, m.anticheatSystem)
-		return m, updateServerModeration(m.server.client, row.Name, newAC)
+		// Optimistic update — show new value immediately
+		for i := range m.mods.auditRows {
+			if m.mods.auditRows[i].Name == row.Name {
+				m.mods.auditRows[i].Anticheat = newAC
+				break
+			}
+		}
+		// Include GUID and version for mods not on server (e.g. client-only)
+		guid, version := "", ""
+		if mod, ok := m.reg.GetMod(m.cfg.ActiveProfile, row.Name); ok {
+			guid = mod.GUID
+			version = mod.Version
+		}
+		return m, updateServerModerationFull(m.server.client, row.Name, newAC, guid, version)
 
 	case "c":
 		// Open config file for selected mod
@@ -697,6 +709,19 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		path := findConfigFile(m.paths, m.cfg.ActiveProfile, mod)
 		return m, openFile(path)
+
+	case "r":
+		// Restart server (server filter only)
+		if m.mods.filter == filterServer && m.server.client != nil && m.server.role == "admin" {
+			m.confirm = confirmModal{
+				Active: true, Prompt: "Restart server?",
+				OnYes: func(m model) (tea.Model, tea.Cmd) {
+					m.server.actionBusy = true
+					m.server.actionMsg = "Restarting server..."
+					return m, serverAction(m.server.client, "restart")
+				},
+			}
+		}
 
 	case "enter":
 		if m.mods.cursor == -1 && len(m.local.updates) > 0 {
@@ -1137,16 +1162,10 @@ func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, a
 			namePad = r.Name + "\033[2m" + strings.Repeat("─", colName-nameWidth-1) + "\033[0m "
 		}
 
-		// Mark server version with * if runtime version differs (e.g. DLL reports different version)
-		serverVer := r.ServerVersion
-		if r.ServerRuntimeVer != "" && r.ServerVersion != "-" && r.ServerRuntimeVer != r.ServerVersion {
-			serverVer = r.ServerVersion + "\033[33m*\033[0m"
-		}
-
 		fmt.Fprintf(b, "  %s%s%s%s%s%s%s\n", cur,
 			namePad,
 			padRight(r.LocalVersion, colLocal),
-			padRight(serverVer, colServer),
+			padRight(r.ServerVersion, colServer),
 			padRight(r.ModpackVersion, colModpack),
 			targetColored,
 			auditModerationColor(r.Anticheat, modLabels[i]),

@@ -394,7 +394,7 @@ func (h *Handlers) HandleModsModeration(w http.ResponseWriter, r *http.Request) 
 	// Update anticheat config (ValheimEnforcer Mods.yaml or AzuAntiCheat)
 	hasAzu, hasEnforcer := detectAnticheatSystems(h.cfg.BepInExDir(), nil)
 	if hasEnforcer {
-		if err := patchEnforcerModeration(h.cfg.BepInExDir(), req.ModName, req.Anticheat, h.cfg.ResolvedModAPIPort()); err != nil {
+		if err := patchEnforcerModeration(h.cfg.BepInExDir(), req.ModName, req.Anticheat, req.GUID, req.Version, h.cfg.ResolvedModAPIPort()); err != nil {
 			log.Printf("Moderation: enforcer patch failed: %v", err)
 		}
 	}
@@ -435,7 +435,7 @@ func (h *Handlers) HandleModsTarget(w http.ResponseWriter, r *http.Request) {
 		if req.Target == "server" {
 			ac = "serveronly"
 		}
-		if err := patchEnforcerModeration(h.cfg.BepInExDir(), req.ModName, ac, h.cfg.ResolvedModAPIPort()); err != nil {
+		if err := patchEnforcerModeration(h.cfg.BepInExDir(), req.ModName, ac, "", "", h.cfg.ResolvedModAPIPort()); err != nil {
 			log.Printf("Target: enforcer patch failed: %v", err)
 		}
 	}
