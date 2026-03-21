@@ -314,16 +314,13 @@ func (m model) viewModsFull() string {
 	b.WriteString("\n")
 	fmt.Fprintf(&b, "  \033[1mMods\033[0m  \033[2m[%s]\033[0m  \033[2m%s\033[0m\n", filterLabel, m.cfg.ActiveProfile)
 
-	// Pending restart indicator (server filter only)
-	if m.mods.filter == filterServer {
-		pendingCount := 0
-		for _, r := range m.mods.auditRows {
-			if r.LocalVersion != "-" && r.ServerVersion != "-" && r.LocalVersion != r.ServerVersion {
-				pendingCount++
-			}
-		}
-		if pendingCount > 0 {
-			fmt.Fprintf(&b, "  \033[33m%d mod(s) pending restart\033[0m\n", pendingCount)
+	// Version mismatch banner (server filter only, selectable)
+	pendingMods := pendingRestartMods(m.mods.auditRows)
+	if m.mods.filter == filterServer && len(pendingMods) > 0 {
+		if m.mods.cursor == -1 {
+			fmt.Fprintf(&b, "  \033[36m>\033[0m \033[33m%d mod(s) out of sync\033[0m    \033[2menter to view\033[0m\n", len(pendingMods))
+		} else {
+			fmt.Fprintf(&b, "  \033[33m%d mod(s) out of sync\033[0m\n", len(pendingMods))
 		}
 	}
 	b.WriteString("\n")
@@ -343,7 +340,7 @@ func (m model) viewModsFull() string {
 	} else if m.mods.statusMsg != "" {
 		fmt.Fprintf(&b, "  \033[32m%s\033[0m\n", m.mods.statusMsg)
 	}
-	hotkeys := []string{"↑/↓ navigate", "f filter", "x remove", "i install", "u update", "t target", "a moderation", "c config"}
+	hotkeys := []string{"↑/↓ navigate", "f filter", "x remove", "i install", "u update", "a moderation", "c config"}
 	if m.mods.filter == filterLocal {
 		hotkeys = append(hotkeys, "p profile")
 	}
@@ -541,13 +538,19 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mods.cursor = n - 1
 	}
 
+	hasBanner := m.mods.filter == filterServer && len(pendingRestartMods(m.mods.auditRows)) > 0
+
 	switch msg.String() {
 	case "up", "k":
 		if m.mods.cursor > 0 {
 			m.mods.cursor--
+		} else if m.mods.cursor == 0 && hasBanner {
+			m.mods.cursor = -1
 		}
 	case "down", "j":
-		if m.mods.cursor < n-1 {
+		if m.mods.cursor == -1 {
+			m.mods.cursor = 0
+		} else if m.mods.cursor < n-1 {
 			m.mods.cursor++
 		}
 
@@ -700,39 +703,6 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, updateMod(m.paths, m.cfg, m.reg, row.Name)
 		}
 
-	case "t":
-		// Cycle target
-		if n == 0 {
-			return m, nil
-		}
-		row := rows[m.mods.cursor]
-		mod, ok := m.getOrRegisterMod(row.Name)
-		if !ok {
-			return m, nil
-		}
-		oldTarget := mod.ResolvedTarget()
-		switch oldTarget {
-		case "both":
-			mod.Target = "client"
-		case "client":
-			mod.Target = "server"
-		case "server":
-			mod.Target = "both"
-		}
-		if mod.Target == "server" && !mod.Disabled {
-			_ = installer.Disable(m.paths, m.cfg, m.reg, mod.FullName())
-		} else if oldTarget == "server" && mod.Target != "server" && mod.Disabled {
-			_ = installer.Enable(m.paths, m.cfg, m.reg, mod.FullName())
-		}
-		m.reg.SetMod(m.cfg.ActiveProfile, mod)
-		config.SaveRegistry(m.paths, *m.reg)
-		m.refreshMods()
-		m.mods.auditRows = m.buildAuditRows()
-		// Immediately update server target
-		if m.server.client != nil && row.ServerVersion != "-" {
-			return m, updateServerTarget(m.server.client, row.Name, mod.Target)
-		}
-
 	case "a":
 		// Cycle anticheat — server is source of truth, send directly
 		if n == 0 {
@@ -796,8 +766,8 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "enter":
-		if m.mods.cursor == -1 && len(m.local.updates) > 0 {
-			m.confirm = buildUpdateAllConfirm(m)
+		if m.mods.cursor == -1 && hasBanner {
+			m.confirm = buildOutOfSyncModal(pendingRestartMods(m.mods.auditRows))
 			return m, nil
 		}
 	}
@@ -1150,6 +1120,29 @@ func buildUpdateAllConfirm(m model) confirmModal {
 	}
 }
 
+// pendingRestartMods returns audit rows where local and server versions differ.
+func pendingRestartMods(rows []auditRow) []auditRow {
+	var out []auditRow
+	for _, r := range rows {
+		if r.LocalVersion != "-" && r.ServerVersion != "-" && r.LocalVersion != r.ServerVersion {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+func buildOutOfSyncModal(mods []auditRow) confirmModal {
+	var body strings.Builder
+	for _, r := range mods {
+		fmt.Fprintf(&body, "    \033[33m%s\033[0m  local %s → server %s\n", r.Name, r.LocalVersion, r.ServerVersion)
+	}
+	return confirmModal{
+		Active: true,
+		Prompt: fmt.Sprintf("%d mod(s) out of sync with server", len(mods)),
+		Body:   body.String(),
+	}
+}
+
 // --- Helpers ---
 
 // filteredAuditRow returns the audit row at the current cursor position in the filtered view.
@@ -1175,6 +1168,9 @@ func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, a
 		modLabels[i] = auditModerationText(r.Anticheat, anticheatSystem)
 	}
 
+	// Hide target column when enforcer handles server-only classification.
+	showTarget := anticheatSystem != "enforcer"
+
 	// Compute column widths.
 	colName, colLocal, colServer, colModpack, colTarget, colMod := len("Name"), len("Local"), len("Server"), len("Modpack"), len("Target"), len("Moderation")
 	for i, r := range rows {
@@ -1190,8 +1186,10 @@ func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, a
 		if w := displayWidth(r.ModpackVersion); w > colModpack {
 			colModpack = w
 		}
-		if w := displayWidth(r.Target); w > colTarget {
-			colTarget = w
+		if showTarget {
+			if w := displayWidth(r.Target); w > colTarget {
+				colTarget = w
+			}
 		}
 		if w := displayWidth(modLabels[i]); w > colMod {
 			colMod = w
@@ -1209,7 +1207,9 @@ func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, a
 	b.WriteString(padRight("Local", colLocal))
 	b.WriteString(padRight("Server", colServer))
 	b.WriteString(padRight("Modpack", colModpack))
-	b.WriteString(padRight("Target", colTarget))
+	if showTarget {
+		b.WriteString(padRight("Target", colTarget))
+	}
 	b.WriteString("Moderation\033[0m\n")
 
 	start, end := listWindow(len(rows), cursor, visible)
@@ -1225,12 +1225,15 @@ func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, a
 			cur = "\033[36m>\033[0m "
 		}
 
-		targetColored := auditTargetColor(r.Target, padRight(r.Target, colTarget))
-
 		namePad := padRight(r.Name, colName)
 		if i == cursor {
 			nameWidth := displayWidth(r.Name)
 			namePad = r.Name + "\033[2m" + strings.Repeat("─", colName-nameWidth-1) + "\033[0m "
+		}
+
+		targetCol := ""
+		if showTarget {
+			targetCol = auditTargetColor(r.Target, padRight(r.Target, colTarget))
 		}
 
 		fmt.Fprintf(b, "  %s%s%s%s%s%s%s\n", cur,
@@ -1238,7 +1241,7 @@ func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, a
 			padRight(r.LocalVersion, colLocal),
 			padRight(r.ServerVersion, colServer),
 			padRight(r.ModpackVersion, colModpack),
-			targetColored,
+			targetCol,
 			auditModerationColor(r.Anticheat, modLabels[i]),
 		)
 	}

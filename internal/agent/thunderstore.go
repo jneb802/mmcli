@@ -8,8 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"mmcli/internal/agentapi"
 )
 
 const thunderstoreDownloadURL = "https://thunderstore.io/package/download/%s/%s/%s/"
@@ -192,114 +190,39 @@ func extractUploadZip(file io.ReaderAt, size int64, bepDir, dirName string) erro
 
 // removeModDirs removes a mod's directories from all BepInEx locations.
 func removeModDirs(bepDir, dirName string) {
+	// Extract the bare name for fallback matching (e.g. "FastLink" from "Azumatt-FastLink")
+	bareName := dirName
+	if idx := strings.Index(dirName, "-"); idx >= 0 {
+		bareName = dirName[idx+1:]
+	}
+	normDirName := normalize(dirName)
+	normBareName := normalize(bareName)
+
 	for _, sub := range []string{"plugins", "patchers", "monomod", "core"} {
-		os.RemoveAll(filepath.Join(bepDir, sub, dirName))
-	}
-}
-
-// setupAnticheatSystems detects installed anticheat mods and dispatches to the
-// appropriate setup routines. AzuAntiCheat folder cleanup is unconditional to
-// prevent orphaned folders when switching anticheat systems.
-func setupAnticheatSystems(bepDir string, mods []agentapi.ManifestMod, modAPIPort int) error {
-	// Always clean stale AzuAntiCheat folders (prevents orphans)
-	os.RemoveAll(filepath.Join(bepDir, "config", "AzuAntiCheat_Whitelist"))
-	os.RemoveAll(filepath.Join(bepDir, "config", "AzuAntiCheat_Greylist"))
-
-	hasAzu, hasEnforcer := detectAnticheatSystems(bepDir, mods)
-
-	if hasAzu {
-		if err := setupAzuAntiCheat(bepDir, mods); err != nil {
-			return fmt.Errorf("azu anticheat: %w", err)
-		}
-	}
-
-	if hasEnforcer {
-		if err := setupValheimEnforcer(bepDir, mods, modAPIPort); err != nil {
-			return fmt.Errorf("valheim enforcer: %w", err)
-		}
-	}
-
-	return nil
-}
-
-// setupAzuAntiCheat rebuilds the AzuAntiCheat whitelist/greylist folders by
-// copying DLLs from the mod plugin directories of classified mods.
-func setupAzuAntiCheat(bepDir string, mods []agentapi.ManifestMod) error {
-	// Clean existing anticheat folders
-	os.RemoveAll(filepath.Join(bepDir, "config", "AzuAntiCheat_Whitelist"))
-	os.RemoveAll(filepath.Join(bepDir, "config", "AzuAntiCheat_Greylist"))
-
-	type classifiedMod struct {
-		dirName string
-		folder  string
-	}
-
-	var classified []classifiedMod
-	for _, mod := range mods {
-		if mod.Anticheat == "" || mod.Anticheat == "adminonly" {
+		// Exact match
+		exact := filepath.Join(bepDir, sub, dirName)
+		if _, err := os.Stat(exact); err == nil {
+			os.RemoveAll(exact)
 			continue
 		}
-		folder := filepath.Join(bepDir, "config", "AzuAntiCheat_Whitelist")
-		if mod.Anticheat == "greylist" {
-			folder = filepath.Join(bepDir, "config", "AzuAntiCheat_Greylist")
+		// Fallback: scan for directory matching by normalized name
+		entries, err := os.ReadDir(filepath.Join(bepDir, sub))
+		if err != nil {
+			continue
 		}
-		classified = append(classified, classifiedMod{
-			dirName: mod.DirName,
-			folder:  folder,
-		})
-	}
-
-	if len(classified) == 0 {
-		return nil
-	}
-
-	// Create directories
-	dirs := map[string]bool{}
-	for _, cm := range classified {
-		dirs[cm.folder] = true
-	}
-	for dir := range dirs {
-		os.MkdirAll(dir, 0755)
-	}
-
-	// Copy DLLs from each classified mod's plugins dir
-	for _, cm := range classified {
-		modDir := filepath.Join(bepDir, "plugins", cm.dirName)
-		err := filepath.Walk(modDir, func(path string, info os.FileInfo, err error) error {
-			if err != nil || info.IsDir() {
-				return nil
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
 			}
-			if !strings.HasSuffix(strings.ToLower(info.Name()), ".dll") {
-				return nil
+			norm := normalize(e.Name())
+			if norm == normDirName || norm == normBareName {
+				os.RemoveAll(filepath.Join(bepDir, sub, e.Name()))
+				break
 			}
-
-			destPath := filepath.Join(cm.folder, info.Name())
-			return copyFile(path, destPath)
-		})
-		if err != nil && !os.IsNotExist(err) {
-			return fmt.Errorf("anticheat: failed to walk %s: %w", cm.dirName, err)
 		}
 	}
-
-	return nil
 }
 
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-
-	_, err = io.Copy(out, in)
-	return err
-}
 
 // agentCacheDir returns the cache directory for the agent.
 func agentCacheDir() string {

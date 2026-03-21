@@ -55,6 +55,7 @@ type ModAPIStatus struct {
 	GameTime      string `json:"game_time"`
 	IsDay         bool   `json:"is_day"`
 	WorldLoaded   bool   `json:"world_loaded"`
+	ServerReady   bool   `json:"server_ready"`
 	SaveCount     int    `json:"save_count"`
 	LastSave      string `json:"last_save,omitempty"`
 }

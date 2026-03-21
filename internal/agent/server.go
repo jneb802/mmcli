@@ -26,7 +26,8 @@ func Run(cfg AgentConfig, cfgPath, addr, version string) error {
 	if pm.TryAdopt() {
 		log.Printf("Re-adopted running Valheim server")
 	}
-	h := NewHandlers(cfg, cfgPath, pm, version)
+	st := NewStateTracker(cfg, pm, DefaultConfigPath())
+	h := NewHandlers(cfg, cfgPath, pm, st, version)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+agentapi.PathStatus, h.HandleStatus)
@@ -40,7 +41,6 @@ func Run(cfg AgentConfig, cfgPath, addr, version string) error {
 	mux.HandleFunc("POST "+agentapi.PathModsSync, adminOnly(h.HandleModsSync))
 	mux.HandleFunc("POST "+agentapi.PathModsSyncSingle, adminOnly(h.HandleModsSyncSingle))
 	mux.HandleFunc("POST "+agentapi.PathModsModeration, adminOnly(h.HandleModsModeration))
-	mux.HandleFunc("POST "+agentapi.PathModsTarget, adminOnly(h.HandleModsTarget))
 	mux.HandleFunc("GET "+agentapi.PathLogs, h.HandleLogs)
 	mux.HandleFunc("GET "+agentapi.PathConfigs, h.HandleConfigList)
 	mux.HandleFunc("GET "+agentapi.PathConfigs+"/", h.HandleConfigGet)
@@ -61,7 +61,6 @@ func Run(cfg AgentConfig, cfgPath, addr, version string) error {
 	handler := authMiddleware(cfg, mux)
 
 	// Start state tracker for Discord webhooks
-	st := NewStateTracker(cfg, pm, DefaultConfigPath())
 	st.Start()
 	defer st.Stop()
 

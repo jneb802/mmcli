@@ -20,6 +20,7 @@ type StateTracker struct {
 
 	prevRunning     bool
 	prevWorldLoaded bool
+	prevServerReady bool
 	prevSaveCount   int
 	prevReachable   bool
 	lastUptime      string
@@ -43,6 +44,49 @@ func (st *StateTracker) Start() {
 
 func (st *StateTracker) Stop() {
 	close(st.stopCh)
+}
+
+// NotifyStopped is called by handlers when the server is explicitly stopped
+// via the API, so the "server_stopped" webhook fires immediately rather than
+// waiting for the next poll (which may miss short stop/start cycles entirely).
+func (st *StateTracker) NotifyStopped() {
+	wcfg := st.cfg.DiscordWebhook
+	if wcfg == nil || wcfg.URL == "" {
+		return
+	}
+	if st.prevRunning {
+		if wcfg.EventEnabled("server_stopped") {
+			go sendDiscordWebhook(wcfg.URL, buildServerStoppedMessage(st.lastUptime))
+		}
+		st.prevReachable = false
+		st.prevWorldLoaded = false
+		st.prevServerReady = false
+		st.prevSaveCount = 0
+		st.lastEventSeq = 0
+		st.prevRunning = false
+		st.updateEmbed(false, nil)
+	}
+}
+
+// NotifyRestarted is called by HandleRestart to fire the "server_restarted"
+// webhook immediately and reset state so the poll correctly detects the next start.
+func (st *StateTracker) NotifyRestarted() {
+	wcfg := st.cfg.DiscordWebhook
+	if wcfg == nil || wcfg.URL == "" {
+		return
+	}
+	if wcfg.EventEnabled("server_restarted") {
+		go sendDiscordWebhook(wcfg.URL, buildServerRestartedMessage(st.lastUptime))
+	}
+	st.prevReachable = false
+	st.prevWorldLoaded = false
+	st.prevServerReady = false
+	st.prevSaveCount = 0
+	st.lastEventSeq = 0
+	// Keep prevRunning true — the server is coming back up, so the poll
+	// should not fire a redundant "server_stopped" for this cycle.
+	st.prevRunning = false
+	st.updateEmbed(false, nil)
 }
 
 func (st *StateTracker) run() {
@@ -82,6 +126,7 @@ func (st *StateTracker) poll(initializing bool) {
 		}
 		st.prevReachable = false
 		st.prevWorldLoaded = false
+		st.prevServerReady = false
 		st.prevSaveCount = 0
 		st.lastEventSeq = 0
 		st.prevRunning = false
@@ -128,6 +173,16 @@ func (st *StateTracker) poll(initializing bool) {
 		}
 	}
 
+	// Server ready: socket opened, players can join
+	if status.ServerReady && !st.prevServerReady {
+		recentStart := uptime < 2*time.Minute
+		if !initializing || recentStart {
+			if wcfg.EventEnabled("server_ready") {
+				go sendDiscordWebhook(wcfg.URL, buildServerReadyMessage(status.World, status.Day))
+			}
+		}
+	}
+
 	// World saved: save_count increased (skip on first poll to set baseline)
 	if status.SaveCount > st.prevSaveCount && st.prevSaveCount > 0 {
 		if wcfg.EventEnabled("world_saved") {
@@ -158,6 +213,7 @@ func (st *StateTracker) poll(initializing bool) {
 	// Update previous state
 	st.prevReachable = true
 	st.prevWorldLoaded = status.WorldLoaded
+	st.prevServerReady = status.ServerReady
 	st.prevSaveCount = status.SaveCount
 
 	st.updateEmbed(true, status)

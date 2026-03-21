@@ -47,6 +47,25 @@ func buildServerStartedMessage(world string, day int) string {
 	return msg
 }
 
+func buildServerReadyMessage(world string, day int) string {
+	msg := "**Server Ready**"
+	if world != "" {
+		msg += fmt.Sprintf(" — %s is ready to join", world)
+	}
+	if day > 0 {
+		msg += fmt.Sprintf(" (Day %d)", day)
+	}
+	return msg
+}
+
+func buildServerRestartedMessage(uptime string) string {
+	msg := "**Server Restarting**"
+	if uptime != "" {
+		msg += fmt.Sprintf(" — uptime was %s", uptime)
+	}
+	return msg
+}
+
 func buildServerStoppedMessage(uptime string) string {
 	msg := "**Server Stopped**"
 	if uptime != "" {

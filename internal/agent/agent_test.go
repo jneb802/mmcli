@@ -966,61 +966,6 @@ func TestRemoveModDirs(t *testing.T) {
 	}
 }
 
-func TestSetupAzuAntiCheat(t *testing.T) {
-	tmp := t.TempDir()
-	bepDir := filepath.Join(tmp, "BepInEx")
-
-	// Create mod with DLLs
-	modDir := filepath.Join(bepDir, "plugins", "Author-WhiteMod")
-	os.MkdirAll(modDir, 0755)
-	os.WriteFile(filepath.Join(modDir, "white.dll"), []byte("dll"), 0644)
-
-	greyDir := filepath.Join(bepDir, "plugins", "Author-GreyMod")
-	os.MkdirAll(greyDir, 0755)
-	os.WriteFile(filepath.Join(greyDir, "grey.dll"), []byte("dll"), 0644)
-
-	mods := []agentapi.ManifestMod{
-		{DirName: "Author-WhiteMod", Anticheat: "whitelist"},
-		{DirName: "Author-GreyMod", Anticheat: "greylist"},
-		{DirName: "Author-AdminMod", Anticheat: "adminonly"}, // should be skipped
-		{DirName: "Author-NoClass", Anticheat: ""},           // should be skipped
-	}
-
-	if err := setupAzuAntiCheat(bepDir, mods); err != nil {
-		t.Fatalf("setupAzuAntiCheat failed: %v", err)
-	}
-
-	// Check whitelist folder
-	whitelistDir := filepath.Join(bepDir, "config", "AzuAntiCheat_Whitelist")
-	if _, err := os.Stat(filepath.Join(whitelistDir, "white.dll")); os.IsNotExist(err) {
-		t.Error("white.dll should be in whitelist folder")
-	}
-
-	// Check greylist folder
-	greylistDir := filepath.Join(bepDir, "config", "AzuAntiCheat_Greylist")
-	if _, err := os.Stat(filepath.Join(greylistDir, "grey.dll")); os.IsNotExist(err) {
-		t.Error("grey.dll should be in greylist folder")
-	}
-}
-
-func TestSetupAzuAntiCheatEmpty(t *testing.T) {
-	tmp := t.TempDir()
-	bepDir := filepath.Join(tmp, "BepInEx")
-
-	// No classified mods — should be a no-op
-	err := setupAzuAntiCheat(bepDir, []agentapi.ManifestMod{
-		{DirName: "Author-Mod", Anticheat: ""},
-	})
-	if err != nil {
-		t.Fatalf("setupAzuAntiCheat failed: %v", err)
-	}
-
-	// Whitelist/greylist dirs should NOT be created
-	if _, err := os.Stat(filepath.Join(bepDir, "config", "AzuAntiCheat_Whitelist")); !os.IsNotExist(err) {
-		t.Error("whitelist dir should not be created when no mods classified")
-	}
-}
-
 // --- process state persistence tests ---
 
 func TestSaveLoadClearState(t *testing.T) {

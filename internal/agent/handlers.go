@@ -22,12 +22,13 @@ type Handlers struct {
 	cfg              AgentConfig
 	cfgPath          string
 	pm               *ProcessManager
+	st               *StateTracker
 	version          string
 	lastAPIPlugins   []ModAPIPlugin // cached last successful mod API response
 }
 
-func NewHandlers(cfg AgentConfig, cfgPath string, pm *ProcessManager, version string) *Handlers {
-	return &Handlers{cfg: cfg, cfgPath: cfgPath, pm: pm, version: version}
+func NewHandlers(cfg AgentConfig, cfgPath string, pm *ProcessManager, st *StateTracker, version string) *Handlers {
+	return &Handlers{cfg: cfg, cfgPath: cfgPath, pm: pm, st: st, version: version}
 }
 
 // reloadConfig re-reads the config from disk to pick up external changes.
@@ -192,6 +193,9 @@ func (h *Handlers) HandleStop(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.lastAPIPlugins = nil // clear cached plugin data
+	if h.st != nil {
+		h.st.NotifyStopped()
+	}
 	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "server stopped"})
 }
 
@@ -200,6 +204,9 @@ func (h *Handlers) HandleRestart(w http.ResponseWriter, r *http.Request) {
 		if err := h.pm.Stop(); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to stop: "+err.Error())
 			return
+		}
+		if h.st != nil {
+			h.st.NotifyRestarted()
 		}
 		// Brief pause between stop and start
 		time.Sleep(2 * time.Second)
@@ -483,7 +490,8 @@ func (h *Handlers) HandleModsModeration(w http.ResponseWriter, r *http.Request) 
 	// Update anticheat config (ValheimEnforcer Mods.yaml or AzuAntiCheat)
 	hasAzu, hasEnforcer := detectAnticheatSystems(h.cfg.BepInExDir(), nil)
 	if hasEnforcer {
-		if err := patchEnforcerModeration(h.cfg.BepInExDir(), req.ModName, req.Anticheat, req.GUID, req.Version, h.cfg.ResolvedModAPIPort()); err != nil {
+		resolvedGUID, err := patchEnforcerModeration(h.cfg.BepInExDir(), req.ModName, req.Anticheat, req.GUID, req.Version, h.cfg.ResolvedModAPIPort())
+		if err != nil {
 			log.Printf("Moderation: enforcer patch failed: %v", err)
 			writeJSON(w, http.StatusOK, agentapi.ActionResponse{
 				OK:      true,
@@ -491,51 +499,30 @@ func (h *Handlers) HandleModsModeration(w http.ResponseWriter, r *http.Request) 
 			})
 			return
 		}
+		// Persist the resolved GUID back to the manifest so future lookups work
+		if resolvedGUID != "" {
+			if data, err := os.ReadFile(manifestPath); err == nil {
+				var manifest agentapi.PushManifest
+				if json.Unmarshal(data, &manifest) == nil {
+					for i := range manifest.Mods {
+						if manifest.Mods[i].DirName == req.ModName || manifest.Mods[i].Name == req.ModName {
+							if manifest.Mods[i].GUID != resolvedGUID {
+								manifest.Mods[i].GUID = resolvedGUID
+								if updated, err := json.MarshalIndent(manifest, "", "  "); err == nil {
+									os.WriteFile(manifestPath, updated, 0644)
+								}
+							}
+							break
+						}
+					}
+				}
+			}
+		}
 	}
 	_ = hasAzu // TODO: AzuAntiCheat patching
 
 	log.Printf("Moderation: %s → %s", req.ModName, req.Anticheat)
 	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "moderation updated"})
-}
-
-func (h *Handlers) HandleModsTarget(w http.ResponseWriter, r *http.Request) {
-	var req agentapi.TargetUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
-		return
-	}
-
-	// Update the push manifest
-	manifestPath := filepath.Join(h.cfg.BepInExDir(), agentapi.ManifestFileName)
-	if data, err := os.ReadFile(manifestPath); err == nil {
-		var manifest agentapi.PushManifest
-		if json.Unmarshal(data, &manifest) == nil {
-			for i := range manifest.Mods {
-				if manifest.Mods[i].DirName == req.ModName || manifest.Mods[i].Name == req.ModName {
-					manifest.Mods[i].Target = req.Target
-					break
-				}
-			}
-			if updated, err := json.MarshalIndent(manifest, "", "  "); err == nil {
-				os.WriteFile(manifestPath, updated, 0644)
-			}
-		}
-	}
-
-	// Update Enforcer Mods.yaml if installed
-	_, hasEnforcer := detectAnticheatSystems(h.cfg.BepInExDir(), nil)
-	if hasEnforcer {
-		ac := ""
-		if req.Target == "server" {
-			ac = "serveronly"
-		}
-		if err := patchEnforcerModeration(h.cfg.BepInExDir(), req.ModName, ac, "", "", h.cfg.ResolvedModAPIPort()); err != nil {
-			log.Printf("Target: enforcer patch failed: %v", err)
-		}
-	}
-
-	log.Printf("Target: %s → %s", req.ModName, req.Target)
-	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "target updated"})
 }
 
 func (h *Handlers) HandleModsSyncSingle(w http.ResponseWriter, r *http.Request) {
@@ -645,11 +632,6 @@ func (h *Handlers) HandleModsSyncSingle(w http.ResponseWriter, r *http.Request) 
 				break
 			}
 		}
-	}
-
-	// Rebuild anticheat configs
-	if err := setupAnticheatSystems(bepDir, manifest.Mods, h.cfg.ResolvedModAPIPort()); err != nil {
-		log.Printf("SyncSingle: anticheat setup error: %v", err)
 	}
 
 	// Write updated manifest
@@ -832,11 +814,6 @@ func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
 				manifest.Mods[i].Anticheat = ac
 			}
 		}
-	}
-
-	// Rebuild anticheat folders
-	if err := setupAnticheatSystems(bepDir, manifest.Mods, h.cfg.ResolvedModAPIPort()); err != nil {
-		log.Printf("Sync: anticheat setup error: %v", err)
 	}
 
 	// Write new manifest

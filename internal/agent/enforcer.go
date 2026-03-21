@@ -208,10 +208,11 @@ func resolveGUID(mod agentapi.ManifestMod, index map[string]enforcerGUIDEntry) (
 // patchEnforcerModeration updates a single mod's classification in the existing Mods.yaml.
 // It resolves the Thunderstore mod name to a BepInEx GUID, removes the mod from all
 // category buckets, then re-adds it to the correct one.
-func patchEnforcerModeration(bepDir string, modName, anticheat, guid, version string, modAPIPort int) error {
+// Returns the resolved GUID so callers can persist it.
+func patchEnforcerModeration(bepDir string, modName, anticheat, guid, version string, modAPIPort int) (string, error) {
 	existing, err := loadEnforcerConfig(bepDir)
 	if err != nil || existing == nil {
-		return fmt.Errorf("enforcer: cannot read Mods.yaml: %w", err)
+		return "", fmt.Errorf("enforcer: cannot read Mods.yaml: %w", err)
 	}
 
 	apiPlugins, _ := QueryModAPI(modAPIPort)
@@ -236,7 +237,7 @@ func patchEnforcerModeration(bepDir string, modName, anticheat, guid, version st
 		found = true
 	}
 	if !found {
-		return fmt.Errorf("enforcer: cannot resolve GUID for %s", modName)
+		return "", fmt.Errorf("enforcer: cannot resolve GUID for %s", modName)
 	}
 
 	modEntry := EnforcerModEntry{
@@ -269,15 +270,15 @@ func patchEnforcerModeration(bepDir string, modName, anticheat, guid, version st
 	// Write back
 	data, err := yaml.Marshal(existing)
 	if err != nil {
-		return fmt.Errorf("enforcer: marshal: %w", err)
+		return "", fmt.Errorf("enforcer: marshal: %w", err)
 	}
 	path := filepath.Join(bepDir, "config", "ValheimEnforcer", "Mods.yaml")
 	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("enforcer: write: %w", err)
+		return "", fmt.Errorf("enforcer: write: %w", err)
 	}
 
 	log.Printf("Enforcer: patched %s (%s) → %s", modName, entry.guid, anticheat)
-	return nil
+	return entry.guid, nil
 }
 
 // readEnforcerClassifications reads Mods.yaml and returns a GUID → anticheat map.
@@ -303,129 +304,3 @@ func readEnforcerClassifications(bepDir string) map[string]string {
 	return result
 }
 
-// setupValheimEnforcer generates the ValheimEnforcer Mods.yaml config from
-// the push manifest and available GUID sources.
-func setupValheimEnforcer(bepDir string, mods []agentapi.ManifestMod, modAPIPort int) error {
-	// Load existing Mods.yaml for GUID data
-	existing, err := loadEnforcerConfig(bepDir)
-	if err != nil {
-		log.Printf("Enforcer: warning reading existing Mods.yaml: %v", err)
-	}
-
-	// Query mod API for fresh GUID data
-	apiPlugins, _ := QueryModAPI(modAPIPort)
-
-	// If neither source is available, we cannot resolve GUIDs
-	if existing == nil && apiPlugins == nil {
-		log.Println("Enforcer: ValheimEnforcer detected but no Mods.yaml found; start the server once to generate the initial config, then push again.")
-		return nil
-	}
-
-	index := buildGUIDIndex(existing, apiPlugins)
-
-	// Build fresh config from manifest
-	cfg := EnforcerModsConfig{
-		ActiveMods:     make(map[string]EnforcerModEntry),
-		RequiredMods:   make(map[string]EnforcerModEntry),
-		OptionalMods:   make(map[string]EnforcerModEntry),
-		AdminOnlyMods:  make(map[string]EnforcerModEntry),
-		ServerOnlyMods: make(map[string]EnforcerModEntry),
-	}
-
-	resolved, unresolved := 0, 0
-	for _, mod := range mods {
-		var entry enforcerGUIDEntry
-		var ok bool
-		// Use persisted GUID if available (skips fuzzy matching)
-		if mod.GUID != "" {
-			entry = enforcerGUIDEntry{guid: mod.GUID, name: mod.Name, version: mod.Version}
-			ok = true
-		} else {
-			entry, ok = resolveGUID(mod, index)
-		}
-		if !ok {
-			unresolved++
-			continue
-		}
-		resolved++
-
-		modEntry := EnforcerModEntry{
-			PluginID: entry.guid,
-			Version:  mod.Version,
-			Name:     entry.name,
-		}
-
-		// Category mapping (evaluated in order of precedence)
-		switch {
-		case mod.Anticheat == "serveronly":
-			cfg.ServerOnlyMods[entry.guid] = modEntry
-			cfg.ActiveMods[entry.guid] = modEntry
-		case mod.Target == "server":
-			cfg.ServerOnlyMods[entry.guid] = modEntry
-			cfg.ActiveMods[entry.guid] = modEntry
-		case mod.Anticheat == "whitelist":
-			cfg.RequiredMods[entry.guid] = modEntry
-			cfg.ActiveMods[entry.guid] = modEntry
-		case mod.Anticheat == "greylist":
-			cfg.OptionalMods[entry.guid] = modEntry
-			cfg.ActiveMods[entry.guid] = modEntry
-		case mod.Anticheat == "adminonly":
-			cfg.AdminOnlyMods[entry.guid] = modEntry
-			cfg.ActiveMods[entry.guid] = modEntry
-		default:
-			cfg.ActiveMods[entry.guid] = modEntry
-		}
-	}
-
-	if unresolved > 0 {
-		log.Printf("Enforcer: resolved %d mod GUIDs, %d unresolved (will appear after next server restart)", resolved, unresolved)
-	} else {
-		log.Printf("Enforcer: resolved all %d mod GUIDs", resolved)
-	}
-
-	// Plugin-only pass: add API-detected plugins not matched to any manifest mod.
-	// These are mods installed on the server outside of mmcli (e.g., EnRoute, framework detectors).
-	if apiPlugins != nil {
-		pluginOnly := 0
-		for _, plugin := range apiPlugins {
-			if strings.HasPrefix(plugin.GUID, "BepInEx.") || plugin.GUID == "BepInEx" {
-				continue
-			}
-			if _, placed := cfg.ActiveMods[plugin.GUID]; placed {
-				continue
-			}
-			pluginOnly++
-			modEntry := EnforcerModEntry{
-				PluginID: plugin.GUID,
-				Version:  plugin.Version,
-				Name:     plugin.Name,
-			}
-			cfg.ActiveMods[plugin.GUID] = modEntry
-			cfg.ServerOnlyMods[plugin.GUID] = modEntry
-		}
-		if pluginOnly > 0 {
-			log.Printf("Enforcer: added %d plugin-only mods as server-only", pluginOnly)
-		}
-	}
-
-	// Write Mods.yaml
-	data, err := yaml.Marshal(&cfg)
-	if err != nil {
-		return fmt.Errorf("enforcer: marshal Mods.yaml: %w", err)
-	}
-
-	configDir := filepath.Join(bepDir, "config", "ValheimEnforcer")
-	if err := os.MkdirAll(configDir, 0755); err != nil {
-		return fmt.Errorf("enforcer: create config dir: %w", err)
-	}
-
-	path := filepath.Join(configDir, "Mods.yaml")
-	if err := os.WriteFile(path, data, 0644); err != nil {
-		return fmt.Errorf("enforcer: write Mods.yaml: %w", err)
-	}
-
-	log.Printf("Enforcer: wrote %s (%d active, %d required, %d optional, %d admin-only, %d server-only)",
-		path, len(cfg.ActiveMods), len(cfg.RequiredMods), len(cfg.OptionalMods), len(cfg.AdminOnlyMods), len(cfg.ServerOnlyMods))
-
-	return nil
-}

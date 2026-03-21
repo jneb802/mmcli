@@ -16,7 +16,6 @@ func TestAllCommandsRegistered(t *testing.T) {
 		"disable",
 		"update",
 		"check-updates",
-		"target",
 		"anticheat",
 		"start",
 		"logs",

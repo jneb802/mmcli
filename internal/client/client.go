@@ -130,14 +130,6 @@ func (c *AgentClient) SyncSingleMod(req agentapi.SingleModSyncRequest, upload io
 	return &result, nil
 }
 
-func (c *AgentClient) UpdateTarget(req agentapi.TargetUpdateRequest) (*agentapi.ActionResponse, error) {
-	var resp agentapi.ActionResponse
-	if err := c.doJSON("POST", agentapi.PathModsTarget, req, &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
 func (c *AgentClient) UpdateModeration(req agentapi.ModerationUpdateRequest) (*agentapi.ActionResponse, error) {
 	var resp agentapi.ActionResponse
 	if err := c.doJSON("POST", agentapi.PathModsModeration, req, &resp); err != nil {

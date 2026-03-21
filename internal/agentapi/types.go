@@ -14,7 +14,6 @@ const (
 	PathMods     = "/api/v1/mods"
 	PathModsSync       = "/api/v1/mods/sync"
 	PathModsModeration = "/api/v1/mods/moderation"
-	PathModsTarget     = "/api/v1/mods/target"
 	PathModsSyncSingle = "/api/v1/mods/sync/single"
 	PathLogs     = "/api/v1/logs"
 	PathSettings = "/api/v1/settings"
@@ -105,12 +104,6 @@ type ModerationUpdateRequest struct {
 	Anticheat string `json:"anticheat"`             // "whitelist", "greylist", "adminonly", "serveronly", ""
 	GUID      string `json:"guid,omitempty"`        // BepInEx GUID (for mods not on server)
 	Version   string `json:"version,omitempty"`     // mod version (for mods not on server)
-}
-
-// TargetUpdateRequest sets the target for a single mod on the server.
-type TargetUpdateRequest struct {
-	ModName string `json:"mod_name"`
-	Target  string `json:"target"` // "client", "server", "both"
 }
 
 // SingleModSyncRequest adds, updates, or removes a single mod on the server.

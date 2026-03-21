@@ -28,7 +28,9 @@ type DiscordWebhookConfig struct {
 	PlayerJoined    bool   `json:"player_joined"`
 	PlayerLeft      bool   `json:"player_left"`
 	PlayerDied      bool   `json:"player_died"`
-	PlayerFirstJoin bool   `json:"player_first_join"`
+	PlayerFirstJoin   bool   `json:"player_first_join"`
+	ServerRestarted   bool   `json:"server_restarted"`
+	ServerReady       bool   `json:"server_ready"`
 	StatusEmbedURL string `json:"status_embed_url,omitempty"`
 
 	// Internal: persisted message ID for editing the status embed
@@ -42,7 +44,7 @@ func (c *DiscordWebhookConfig) EventEnabled(event string) bool {
 		return false
 	}
 	// If no events explicitly enabled, enable all
-	anyEnabled := c.ServerStarted || c.ServerStopped || c.WorldSaved ||
+	anyEnabled := c.ServerStarted || c.ServerStopped || c.ServerRestarted || c.ServerReady || c.WorldSaved ||
 		c.PlayerJoined || c.PlayerLeft || c.PlayerDied || c.PlayerFirstJoin
 	if !anyEnabled {
 		return true
@@ -62,6 +64,10 @@ func (c *DiscordWebhookConfig) EventEnabled(event string) bool {
 		return c.PlayerDied
 	case "player_first_join":
 		return c.PlayerFirstJoin
+	case "server_restarted":
+		return c.ServerRestarted
+	case "server_ready":
+		return c.ServerReady
 	}
 	return false
 }

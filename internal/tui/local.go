@@ -326,23 +326,6 @@ func installModToServer(paths config.Paths, cfg config.Config, reg *config.Regis
 	}
 }
 
-func updateServerTarget(c *client.AgentClient, modName, target string) tea.Cmd {
-	return func() tea.Msg {
-		c.UpdateTarget(agentapi.TargetUpdateRequest{
-			ModName: modName,
-			Target:  target,
-		})
-		// Re-fetch so TUI reflects the change
-		status, _ := c.Status()
-		modsResp, _ := c.ListMods()
-		var mods []agentapi.ModInfo
-		if modsResp != nil {
-			mods = modsResp.Mods
-		}
-		return serverStatusMsg{status: status, mods: mods, modsResp: modsResp}
-	}
-}
-
 func updateServerModerationFull(c *client.AgentClient, modName, anticheat, guid, version string) tea.Cmd {
 	return func() tea.Msg {
 		resp, err := c.UpdateModeration(agentapi.ModerationUpdateRequest{
