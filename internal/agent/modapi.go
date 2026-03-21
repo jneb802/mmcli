@@ -207,14 +207,21 @@ func buildCandidates(modMap map[string]*agentapi.ModInfo, manifestNames map[stri
 }
 
 // findMatch tries to match a plugin's normalized GUID suffix and display name
-// against the candidate list. Returns the matching dirName, whether the match
-// was exact (safe to overwrite version), and whether any match was found.
+// against the candidate list. Uses three tiers: exact, contains, then token-overlap.
+// Returns the matching dirName, whether the match was exact, and whether any match was found.
 func findMatch(normGUID, normDisplay string, candidates []modCandidate) (dirName string, exact bool, found bool) {
+	// Tier 1: Exact match
 	for _, c := range candidates {
 		for _, name := range c.names {
 			if normGUID == name || normDisplay == name {
 				return c.dirName, true, true
 			}
+		}
+	}
+
+	// Tier 2: Contains match
+	for _, c := range candidates {
+		for _, name := range c.names {
 			if strings.Contains(normGUID, name) || strings.Contains(name, normGUID) {
 				return c.dirName, false, true
 			}
@@ -223,5 +230,20 @@ func findMatch(normGUID, normDisplay string, candidates []modCandidate) (dirName
 			}
 		}
 	}
+
+	// Tier 3: Token-overlap match — accept only unambiguous single match
+	var tokenMatches []string
+	for _, c := range candidates {
+		for _, name := range c.names {
+			if tokenMatch(normDisplay, name) {
+				tokenMatches = append(tokenMatches, c.dirName)
+				break
+			}
+		}
+	}
+	if len(tokenMatches) == 1 {
+		return tokenMatches[0], false, true
+	}
+
 	return "", false, false
 }

@@ -143,22 +143,65 @@ func buildGUIDIndex(existing *EnforcerModsConfig, apiPlugins []ModAPIPlugin) map
 }
 
 // resolveGUID tries to match a manifest mod to a BepInEx GUID using the index.
+// Uses three tiers: exact lookup, contains matching, then token-overlap matching.
 // Returns the GUID entry and true on success, or zero value and false on failure.
 func resolveGUID(mod agentapi.ManifestMod, index map[string]enforcerGUIDEntry) (enforcerGUIDEntry, bool) {
-	// Try exact match on mod name
-	if entry, ok := index[normalize(mod.Name)]; ok {
-		return entry, true
+	// Build the set of normalized names to try for this mod
+	modNames := []string{normalize(mod.Name)}
+	if norm := normalize(mod.DirName); norm != modNames[0] {
+		modNames = append(modNames, norm)
 	}
-	// Try DirName (e.g., "RandyKnapp-EpicLoot")
-	if entry, ok := index[normalize(mod.DirName)]; ok {
-		return entry, true
-	}
-	// Try name portion after hyphen in DirName
 	if idx := strings.Index(mod.DirName, "-"); idx >= 0 {
-		if entry, ok := index[normalize(mod.DirName[idx+1:])]; ok {
+		if norm := normalize(mod.DirName[idx+1:]); norm != modNames[0] {
+			modNames = append(modNames, norm)
+		}
+	}
+
+	// Tier 1: Exact map lookups
+	for _, name := range modNames {
+		if entry, ok := index[name]; ok {
 			return entry, true
 		}
 	}
+
+	// Tier 2: Contains matching — iterate index, accept only unambiguous single match
+	candidates := make(map[string]enforcerGUIDEntry) // keyed by GUID for dedup
+	for key, entry := range index {
+		for _, name := range modNames {
+			if strings.Contains(key, name) || strings.Contains(name, key) {
+				candidates[entry.guid] = entry
+				break
+			}
+		}
+	}
+	if len(candidates) == 1 {
+		for _, entry := range candidates {
+			return entry, true
+		}
+	}
+	if len(candidates) > 1 {
+		log.Printf("Enforcer: ambiguous contains match for %s (%d candidates), skipping", mod.DirName, len(candidates))
+	}
+
+	// Tier 3: Token-overlap matching — compare against entry display names
+	candidates = make(map[string]enforcerGUIDEntry)
+	for _, entry := range index {
+		for _, name := range modNames {
+			if tokenMatch(name, entry.name) {
+				candidates[entry.guid] = entry
+				break
+			}
+		}
+	}
+	if len(candidates) == 1 {
+		for _, entry := range candidates {
+			return entry, true
+		}
+	}
+	if len(candidates) > 1 {
+		log.Printf("Enforcer: ambiguous token match for %s (%d candidates), skipping", mod.DirName, len(candidates))
+	}
+
 	return enforcerGUIDEntry{}, false
 }
 
@@ -174,16 +217,15 @@ func patchEnforcerModeration(bepDir string, modName, anticheat string, modAPIPor
 	apiPlugins, _ := QueryModAPI(modAPIPort)
 	index := buildGUIDIndex(existing, apiPlugins)
 
-	// Resolve mod name to GUID — try multiple forms
-	var entry enforcerGUIDEntry
-	var found bool
-	for _, candidate := range []string{modName} {
-		mod := agentapi.ManifestMod{Name: candidate, DirName: candidate}
-		entry, found = resolveGUID(mod, index)
-		if found {
-			break
-		}
+	// Resolve mod name to GUID — parse DirName format (Owner-Name)
+	mod := agentapi.ManifestMod{DirName: modName}
+	if idx := strings.Index(modName, "-"); idx >= 0 {
+		mod.Owner = modName[:idx]
+		mod.Name = modName[idx+1:]
+	} else {
+		mod.Name = modName
 	}
+	entry, found := resolveGUID(mod, index)
 	if !found {
 		return fmt.Errorf("enforcer: cannot resolve GUID for %s", modName)
 	}
@@ -322,6 +364,31 @@ func setupValheimEnforcer(bepDir string, mods []agentapi.ManifestMod, modAPIPort
 		log.Printf("Enforcer: resolved %d mod GUIDs, %d unresolved (will appear after next server restart)", resolved, unresolved)
 	} else {
 		log.Printf("Enforcer: resolved all %d mod GUIDs", resolved)
+	}
+
+	// Plugin-only pass: add API-detected plugins not matched to any manifest mod.
+	// These are mods installed on the server outside of mmcli (e.g., EnRoute, framework detectors).
+	if apiPlugins != nil {
+		pluginOnly := 0
+		for _, plugin := range apiPlugins {
+			if strings.HasPrefix(plugin.GUID, "BepInEx.") || plugin.GUID == "BepInEx" {
+				continue
+			}
+			if _, placed := cfg.ActiveMods[plugin.GUID]; placed {
+				continue
+			}
+			pluginOnly++
+			modEntry := EnforcerModEntry{
+				PluginID: plugin.GUID,
+				Version:  plugin.Version,
+				Name:     plugin.Name,
+			}
+			cfg.ActiveMods[plugin.GUID] = modEntry
+			cfg.ServerOnlyMods[plugin.GUID] = modEntry
+		}
+		if pluginOnly > 0 {
+			log.Printf("Enforcer: added %d plugin-only mods as server-only", pluginOnly)
+		}
 	}
 
 	// Write Mods.yaml
