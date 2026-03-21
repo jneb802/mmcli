@@ -101,16 +101,13 @@ func (m model) buildAuditRows() []auditRow {
 		r := ensure(mod.FullName())
 		r.LocalVersion = syncVersionStr(mod.Version)
 		r.Target = mod.ResolvedTarget()
-		r.Anticheat = mod.Anticheat
 	}
 
-	// Server mods — server anticheat is authoritative when available
+	// Server mods — server is source of truth for anticheat
 	for _, sm := range m.server.mods {
 		r := ensure(sm.Name)
 		r.ServerVersion = syncVersionStr(sm.Version)
-		if sm.Anticheat != "" {
-			r.Anticheat = sm.Anticheat
-		}
+		r.Anticheat = sm.Anticheat
 	}
 
 	// Modpack mods
@@ -281,8 +278,11 @@ func (m model) viewModsFull() string {
 	} else if m.mods.statusMsg != "" {
 		fmt.Fprintf(&b, "  \033[32m%s\033[0m\n", m.mods.statusMsg)
 	}
-	hotkeys := []string{"↑/↓ navigate", "f filter", "x remove", "i install", "u update", "t target", "a moderation", "c config", "p profile", "s start"}
-	hotkeys = append(hotkeys, "tab next", "q quit")
+	hotkeys := []string{"↑/↓ navigate", "f filter", "x remove", "i install", "u update", "t target", "a moderation", "c config"}
+	if m.mods.filter == filterLocal {
+		hotkeys = append(hotkeys, "p profile")
+	}
+	hotkeys = append(hotkeys, "s start", "tab next", "q quit")
 	renderHotkeyBar(&b, hotkeys, m.width)
 
 	return b.String()
@@ -663,30 +663,21 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.mods.auditRows = m.buildAuditRows()
 
 	case "a":
-		// Cycle anticheat classification
+		// Cycle anticheat — server is source of truth, send directly
 		if n == 0 {
 			return m, nil
 		}
 		row := rows[m.mods.cursor]
-		mod, ok := m.getOrRegisterMod(row.Name)
-		if !ok {
+		if m.server.client == nil {
+			m.mods.err = fmt.Errorf("no server connection")
 			return m, nil
 		}
-		mod.Anticheat = nextAnticheatValue(mod.Anticheat, m.anticheatSystem)
-		m.reg.SetMod(m.cfg.ActiveProfile, mod)
-		// Propagate to dependencies
-		for _, dep := range mod.Dependencies {
-			if dm, ok := m.reg.GetMod(m.cfg.ActiveProfile, dep); ok {
-				dm.Anticheat = mod.Anticheat
-				m.reg.SetMod(m.cfg.ActiveProfile, dm)
-			}
+		if row.ServerVersion == "-" {
+			m.mods.err = fmt.Errorf("not on server — push first")
+			return m, nil
 		}
-		config.SaveRegistry(m.paths, *m.reg)
-		m.mods.auditRows = m.buildAuditRows()
-		// Immediately update server moderation (targeted, no full push)
-		if m.server.client != nil {
-			return m, updateServerModeration(m.server.client, row.Name, mod.Anticheat)
-		}
+		newAC := nextAnticheatValue(row.Anticheat, m.anticheatSystem)
+		return m, updateServerModeration(m.server.client, row.Name, newAC)
 
 	case "c":
 		// Open config file for selected mod

@@ -210,8 +210,9 @@ func TestBuildManifest(t *testing.T) {
 		if m.Source != "thunderstore" {
 			t.Errorf("ServerMod source = %q, want %q", m.Source, "thunderstore")
 		}
-		if m.Anticheat != "whitelist" {
-			t.Errorf("ServerMod anticheat = %q, want %q", m.Anticheat, "whitelist")
+		// Anticheat is now server-owned; BuildManifest no longer copies it from registry
+		if m.Anticheat != "" {
+			t.Errorf("ServerMod anticheat = %q, want empty (server-owned)", m.Anticheat)
 		}
 		if m.Target != "server" {
 			t.Errorf("ServerMod target = %q, want %q", m.Target, "server")

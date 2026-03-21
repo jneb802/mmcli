@@ -33,13 +33,14 @@ func BuildManifest(profileName string, reg config.Registry) agentapi.PushManifes
 			source = "upload"
 		}
 		mods = append(mods, agentapi.ManifestMod{
-			DirName:   mod.FullName(),
-			Owner:     mod.Owner,
-			Name:      mod.Name,
-			Version:   mod.Version,
-			Target:    mod.ResolvedTarget(),
-			Anticheat: mod.Anticheat,
-			Source:    source,
+			DirName: mod.FullName(),
+			Owner:   mod.Owner,
+			Name:    mod.Name,
+			Version: mod.Version,
+			Target:  mod.ResolvedTarget(),
+			Source:  source,
+			// Anticheat intentionally omitted — server is source of truth.
+			// Server preserves existing anticheat values in the manifest.
 		})
 	}
 	return agentapi.PushManifest{

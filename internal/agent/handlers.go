@@ -421,14 +421,18 @@ func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load existing manifest to diff
-	oldMods := make(map[string]string) // dirName -> version
+	// Load existing manifest to diff and preserve server-owned fields
+	oldMods := make(map[string]string)         // dirName -> version
+	oldAnticheat := make(map[string]string)    // dirName -> anticheat (server-owned)
 	manifestPath := filepath.Join(bepDir, agentapi.ManifestFileName)
 	if data, err := os.ReadFile(manifestPath); err == nil {
 		var oldManifest agentapi.PushManifest
 		if json.Unmarshal(data, &oldManifest) == nil {
 			for _, m := range oldManifest.Mods {
 				oldMods[m.DirName] = m.Version
+				if m.Anticheat != "" {
+					oldAnticheat[m.DirName] = m.Anticheat
+				}
 			}
 		}
 	}
@@ -550,6 +554,15 @@ func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
 				resp.Results = append(resp.Results, agentapi.SyncModResult{
 					Mod: mod.DirName, Version: mod.Version, Status: "downloaded",
 				})
+			}
+		}
+	}
+
+	// Preserve server-owned anticheat values from old manifest
+	for i := range manifest.Mods {
+		if manifest.Mods[i].Anticheat == "" {
+			if ac, ok := oldAnticheat[manifest.Mods[i].DirName]; ok {
+				manifest.Mods[i].Anticheat = ac
 			}
 		}
 	}
