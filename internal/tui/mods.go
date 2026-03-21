@@ -112,6 +112,15 @@ func (m model) buildAuditRows() []auditRow {
 		r.Anticheat = sm.Anticheat
 	}
 
+	// Server manifest — fill anticheat for mods not in server mod list (e.g. client-only)
+	if m.server.manifest != nil {
+		for _, mm := range m.server.manifest.Mods {
+			if r, ok := seen[mm.DirName]; ok && r.Anticheat == "" && mm.Anticheat != "" {
+				r.Anticheat = mm.Anticheat
+			}
+		}
+	}
+
 	// Modpack mods
 	for _, dep := range m.modpack.deps {
 		key := fmt.Sprintf("%s-%s", dep.Owner, dep.Name)

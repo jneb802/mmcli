@@ -374,16 +374,34 @@ func (h *Handlers) HandleModsModeration(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Update the push manifest
+	// Update the push manifest (add entry if not present, e.g. client-only mods)
 	manifestPath := filepath.Join(h.cfg.BepInExDir(), agentapi.ManifestFileName)
 	if data, err := os.ReadFile(manifestPath); err == nil {
 		var manifest agentapi.PushManifest
 		if json.Unmarshal(data, &manifest) == nil {
+			found := false
 			for i := range manifest.Mods {
 				if manifest.Mods[i].DirName == req.ModName || manifest.Mods[i].Name == req.ModName {
 					manifest.Mods[i].Anticheat = req.Anticheat
+					found = true
 					break
 				}
+			}
+			if !found {
+				// Add new entry for client-only mods not in manifest
+				owner, name := "", req.ModName
+				if idx := strings.Index(req.ModName, "-"); idx >= 0 {
+					owner, name = req.ModName[:idx], req.ModName[idx+1:]
+				}
+				manifest.Mods = append(manifest.Mods, agentapi.ManifestMod{
+					DirName:   req.ModName,
+					Owner:     owner,
+					Name:      name,
+					Version:   req.Version,
+					Target:    "client",
+					Anticheat: req.Anticheat,
+					GUID:      req.GUID,
+				})
 			}
 			if updated, err := json.MarshalIndent(manifest, "", "  "); err == nil {
 				os.WriteFile(manifestPath, updated, 0644)
