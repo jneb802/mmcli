@@ -220,7 +220,7 @@ func checkUpdates(mods []config.ModEntry) tea.Cmd {
 	}
 }
 
-func installMod(paths config.Paths, cfg config.Config, reg *config.Registry, query string) tea.Cmd {
+func installMod(paths config.Paths, cfg config.Config, reg *config.Registry, query string, target string) tea.Cmd {
 	return func() tea.Msg {
 		old := os.Stdout
 		if devnull, err := os.Open(os.DevNull); err == nil {
@@ -229,9 +229,9 @@ func installMod(paths config.Paths, cfg config.Config, reg *config.Registry, que
 			defer func() { os.Stdout = old }()
 		}
 		if installer.IsLocalPath(query) {
-			return installDoneMsg{err: installer.InstallLocal(paths, cfg, reg, query, "both")}
+			return installDoneMsg{err: installer.InstallLocal(paths, cfg, reg, query, target)}
 		}
-		return installDoneMsg{err: installer.Install(paths, cfg, reg, query, "both")}
+		return installDoneMsg{err: installer.Install(paths, cfg, reg, query, target)}
 	}
 }
 
@@ -284,6 +284,23 @@ func installModToServer(paths config.Paths, cfg config.Config, reg *config.Regis
 			}
 		}
 		return installDoneMsg{}
+	}
+}
+
+func updateServerTarget(c *client.AgentClient, modName, target string) tea.Cmd {
+	return func() tea.Msg {
+		c.UpdateTarget(agentapi.TargetUpdateRequest{
+			ModName: modName,
+			Target:  target,
+		})
+		// Re-fetch so TUI reflects the change
+		status, _ := c.Status()
+		modsResp, _ := c.ListMods()
+		var mods []agentapi.ModInfo
+		if modsResp != nil {
+			mods = modsResp.Mods
+		}
+		return serverStatusMsg{status: status, mods: mods, modsResp: modsResp}
 	}
 }
 

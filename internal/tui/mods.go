@@ -661,6 +661,10 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		config.SaveRegistry(m.paths, *m.reg)
 		m.refreshMods()
 		m.mods.auditRows = m.buildAuditRows()
+		// Immediately update server target
+		if m.server.client != nil && row.ServerVersion != "-" {
+			return m, updateServerTarget(m.server.client, row.Name, mod.Target)
+		}
 
 	case "a":
 		// Cycle anticheat — server is source of truth, send directly
@@ -784,7 +788,11 @@ func (m model) handleModsInstallInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.mods.filter == filterServer {
 				return m, installModToServer(m.paths, m.cfg, m.reg, m.mods.installInput, m.server.client)
 			}
-			return m, installMod(m.paths, m.cfg, m.reg, m.mods.installInput)
+			target := "both"
+			if m.mods.filter == filterModpack {
+				target = "modpack"
+			}
+			return m, installMod(m.paths, m.cfg, m.reg, m.mods.installInput, target)
 		}
 	case "backspace":
 		if len(m.mods.installInput) > 0 {

@@ -397,6 +397,46 @@ func (h *Handlers) HandleModsModeration(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "moderation updated"})
 }
 
+func (h *Handlers) HandleModsTarget(w http.ResponseWriter, r *http.Request) {
+	var req agentapi.TargetUpdateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+
+	// Update the push manifest
+	manifestPath := filepath.Join(h.cfg.BepInExDir(), agentapi.ManifestFileName)
+	if data, err := os.ReadFile(manifestPath); err == nil {
+		var manifest agentapi.PushManifest
+		if json.Unmarshal(data, &manifest) == nil {
+			for i := range manifest.Mods {
+				if manifest.Mods[i].DirName == req.ModName || manifest.Mods[i].Name == req.ModName {
+					manifest.Mods[i].Target = req.Target
+					break
+				}
+			}
+			if updated, err := json.MarshalIndent(manifest, "", "  "); err == nil {
+				os.WriteFile(manifestPath, updated, 0644)
+			}
+		}
+	}
+
+	// Update Enforcer Mods.yaml if installed
+	_, hasEnforcer := detectAnticheatSystems(h.cfg.BepInExDir(), nil)
+	if hasEnforcer {
+		ac := ""
+		if req.Target == "server" {
+			ac = "serveronly"
+		}
+		if err := patchEnforcerModeration(h.cfg.BepInExDir(), req.ModName, ac, h.cfg.ResolvedModAPIPort()); err != nil {
+			log.Printf("Target: enforcer patch failed: %v", err)
+		}
+	}
+
+	log.Printf("Target: %s → %s", req.ModName, req.Target)
+	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "target updated"})
+}
+
 func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
 	log.Println("Sync request received, parsing multipart...")
 

@@ -90,6 +90,14 @@ func (c *AgentClient) UpdateWebhookConfig(req agentapi.WebhookConfigUpdate) (*ag
 	return &resp, nil
 }
 
+func (c *AgentClient) UpdateTarget(req agentapi.TargetUpdateRequest) (*agentapi.ActionResponse, error) {
+	var resp agentapi.ActionResponse
+	if err := c.doJSON("POST", agentapi.PathModsTarget, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *AgentClient) UpdateModeration(req agentapi.ModerationUpdateRequest) (*agentapi.ActionResponse, error) {
 	var resp agentapi.ActionResponse
 	if err := c.doJSON("POST", agentapi.PathModsModeration, req, &resp); err != nil {

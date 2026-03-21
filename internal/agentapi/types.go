@@ -14,6 +14,7 @@ const (
 	PathMods     = "/api/v1/mods"
 	PathModsSync       = "/api/v1/mods/sync"
 	PathModsModeration = "/api/v1/mods/moderation"
+	PathModsTarget     = "/api/v1/mods/target"
 	PathLogs     = "/api/v1/logs"
 	PathSettings = "/api/v1/settings"
 	PathUpdate   = "/api/v1/update"
@@ -101,6 +102,12 @@ type ActionResponse struct {
 type ModerationUpdateRequest struct {
 	ModName   string `json:"mod_name"`   // Thunderstore name (e.g. "RandyKnapp-EpicLoot")
 	Anticheat string `json:"anticheat"`  // "whitelist", "greylist", "adminonly", "serveronly", ""
+}
+
+// TargetUpdateRequest sets the target for a single mod on the server.
+type TargetUpdateRequest struct {
+	ModName string `json:"mod_name"`
+	Target  string `json:"target"` // "client", "server", "both"
 }
 
 type ModListResponse struct {
