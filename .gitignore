@@ -12,3 +12,6 @@ mmcli
 
 # Go
 vendor/
+
+# Local docs
+mod-sources.md
