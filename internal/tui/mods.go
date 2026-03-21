@@ -132,10 +132,64 @@ func (m model) buildAuditRows() []auditRow {
 	for i, name := range order {
 		rows[i] = *seen[name]
 	}
+
+	// Reconcile duplicates: merge bare-name rows into Owner-Name counterparts.
+	// E.g. "FastLink" merges into "Azumatt-FastLink".
+	canonical := make(map[string]int) // lowercased suffix after first hyphen → row index
+	for i, r := range rows {
+		if idx := strings.Index(r.Name, "-"); idx >= 0 {
+			suffix := strings.ToLower(r.Name[idx+1:])
+			canonical[suffix] = i
+		}
+	}
+	skip := make(map[int]bool)
+	for i, r := range rows {
+		if skip[i] {
+			continue
+		}
+		if !strings.Contains(r.Name, "-") {
+			if ci, ok := canonical[strings.ToLower(r.Name)]; ok && ci != i {
+				mergeAuditRow(&rows[ci], &r)
+				skip[i] = true
+			}
+		}
+	}
+	if len(skip) > 0 {
+		merged := make([]auditRow, 0, len(rows)-len(skip))
+		for i, r := range rows {
+			if !skip[i] {
+				merged = append(merged, r)
+			}
+		}
+		rows = merged
+	}
+
 	sort.SliceStable(rows, func(i, j int) bool {
 		return rows[i].Name < rows[j].Name
 	})
 	return rows
+}
+
+// mergeAuditRow merges src data into dst, filling in empty/placeholder fields.
+func mergeAuditRow(dst, src *auditRow) {
+	if dst.LocalVersion == "-" && src.LocalVersion != "-" {
+		dst.LocalVersion = src.LocalVersion
+	}
+	if dst.ServerVersion == "-" && src.ServerVersion != "-" {
+		dst.ServerVersion = src.ServerVersion
+	}
+	if dst.ServerRuntimeVer == "" && src.ServerRuntimeVer != "" {
+		dst.ServerRuntimeVer = src.ServerRuntimeVer
+	}
+	if dst.ModpackVersion == "-" && src.ModpackVersion != "-" {
+		dst.ModpackVersion = src.ModpackVersion
+	}
+	if dst.Anticheat == "" && src.Anticheat != "" {
+		dst.Anticheat = src.Anticheat
+	}
+	if dst.Target == "both" && src.Target != "both" {
+		dst.Target = src.Target
+	}
 }
 
 // getOrRegisterMod returns the mod entry from the registry, or if not found,
@@ -702,6 +756,15 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if mod, ok := m.reg.GetMod(m.cfg.ActiveProfile, row.Name); ok {
 			guid = mod.GUID
 			version = mod.Version
+		} else {
+			// Fallback: match by Name field across all registered mods
+			for _, mod := range m.reg.ListMods(m.cfg.ActiveProfile) {
+				if strings.EqualFold(mod.Name, row.Name) {
+					guid = mod.GUID
+					version = mod.Version
+					break
+				}
+			}
 		}
 		return m, updateServerModerationFull(m.server.client, row.Name, newAC, guid, version)
 

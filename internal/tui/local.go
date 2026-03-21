@@ -345,7 +345,7 @@ func updateServerTarget(c *client.AgentClient, modName, target string) tea.Cmd {
 
 func updateServerModerationFull(c *client.AgentClient, modName, anticheat, guid, version string) tea.Cmd {
 	return func() tea.Msg {
-		c.UpdateModeration(agentapi.ModerationUpdateRequest{
+		resp, err := c.UpdateModeration(agentapi.ModerationUpdateRequest{
 			ModName:   modName,
 			Anticheat: anticheat,
 			GUID:      guid,
@@ -358,7 +358,13 @@ func updateServerModerationFull(c *client.AgentClient, modName, anticheat, guid,
 		if modsResp != nil {
 			mods = modsResp.Mods
 		}
-		return serverStatusMsg{status: status, mods: mods, modsResp: modsResp}
+		msg := serverStatusMsg{status: status, mods: mods, modsResp: modsResp}
+		if err != nil {
+			msg.err = fmt.Errorf("moderation update failed: %w", err)
+		} else if resp != nil && strings.Contains(resp.Message, "failed") {
+			msg.err = fmt.Errorf("%s", resp.Message)
+		}
+		return msg
 	}
 }
 

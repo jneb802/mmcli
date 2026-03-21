@@ -144,15 +144,23 @@ func DetectLocalMods(pluginsDir string, registered map[string]ModEntry) []ModEnt
 	}
 
 	knownDirs := make(map[string]bool)
+	knownNames := make(map[string]bool) // bare Name without owner prefix
 	for _, mod := range registered {
 		knownDirs[mod.FullName()] = true
+		if mod.Owner != "" && mod.Name != "" {
+			knownNames[mod.Name] = true
+		}
+	}
+
+	isKnown := func(name string) bool {
+		return knownDirs[name] || knownNames[name]
 	}
 
 	var locals []ModEntry
 	for _, entry := range entries {
 		name := entry.Name()
 
-		if knownDirs[name] {
+		if isKnown(name) {
 			continue
 		}
 
@@ -167,7 +175,7 @@ func DetectLocalMods(pluginsDir string, registered map[string]ModEntry) []ModEnt
 			}
 		} else if strings.HasSuffix(strings.ToLower(name), ".dll.old") {
 			modName := strings.TrimSuffix(name, ".dll.old")
-			if knownDirs[modName] {
+			if isKnown(modName) {
 				continue
 			}
 			locals = append(locals, ModEntry{
@@ -177,7 +185,7 @@ func DetectLocalMods(pluginsDir string, registered map[string]ModEntry) []ModEnt
 			})
 		} else if strings.HasSuffix(strings.ToLower(name), ".dll") {
 			modName := strings.TrimSuffix(name, filepath.Ext(name))
-			if knownDirs[modName] {
+			if isKnown(modName) {
 				continue
 			}
 			locals = append(locals, ModEntry{

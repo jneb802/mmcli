@@ -263,14 +263,52 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 		if json.Unmarshal(data, &manifest) == nil {
 			serverManifest = &manifest
 			manifestTime = manifest.PushedAt
+			// Pass 1: exact DirName match
 			for _, mm := range manifest.Mods {
 				manifestNames[mm.DirName] = mm.Name
 				if info, ok := modMap[mm.DirName]; ok {
+					info.Name = mm.DirName // Canonical Thunderstore name
 					info.Version = mm.Version
 					info.Owner = mm.Owner
-					info.Anticheat = mm.Anticheat
 					info.Target = mm.Target
 				}
+			}
+			// Pass 2: fallback — match unmatched filesystem entries by normalized name.
+			// Collect renames first, then apply, to avoid mutating modMap during iteration.
+			type fsRename struct {
+				fsName string
+				mm     agentapi.ManifestMod
+			}
+			var renames []fsRename
+			for fsName, info := range modMap {
+				if info.Owner != "" {
+					continue // already matched in pass 1
+				}
+				normFS := normalize(fsName)
+				for _, mm := range manifest.Mods {
+					if _, alreadyInMap := modMap[mm.DirName]; alreadyInMap && mm.DirName != fsName {
+						continue // this manifest mod already matched a different fs entry
+					}
+					normName := normalize(mm.Name)
+					normSuffix := ""
+					if idx := strings.Index(mm.DirName, "-"); idx >= 0 {
+						normSuffix = normalize(mm.DirName[idx+1:])
+					}
+					if normFS == normName || (normSuffix != "" && normFS == normSuffix) {
+						renames = append(renames, fsRename{fsName, mm})
+						break
+					}
+				}
+			}
+			for _, r := range renames {
+				info := modMap[r.fsName]
+				info.Name = r.mm.DirName
+				info.Version = r.mm.Version
+				info.Owner = r.mm.Owner
+				info.Target = r.mm.Target
+				manifestNames[r.mm.DirName] = r.mm.Name
+				modMap[r.mm.DirName] = info
+				delete(modMap, r.fsName)
 			}
 		}
 	}
@@ -338,12 +376,45 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Layer 4: Enforcer Mods.yaml overlay (makes manual edits authoritative)
-	if enforcerAC := readEnforcerClassifications(h.cfg.BepInExDir()); enforcerAC != nil && apiMatched != nil {
-		for dirName, m := range apiMatched {
-			if ac, ok := enforcerAC[m.Plugin.GUID]; ok {
-				if info, ok := modMap[dirName]; ok {
-					info.Anticheat = ac
+	// Layer 4: Enforcer Mods.yaml is the exclusive source for moderation
+	enforcerAC := readEnforcerClassifications(h.cfg.BepInExDir())
+	if enforcerAC != nil {
+		// Source 1: API-matched mods (have GUIDs from running plugins)
+		if apiMatched != nil {
+			for dirName, m := range apiMatched {
+				if ac, ok := enforcerAC[m.Plugin.GUID]; ok {
+					if info, ok := modMap[dirName]; ok {
+						info.Anticheat = ac
+					}
+				}
+			}
+		}
+		// Source 2: Manifest mods with persisted GUIDs (covers client-only mods)
+		if serverManifest != nil {
+			for _, mm := range serverManifest.Mods {
+				if mm.GUID != "" {
+					if ac, ok := enforcerAC[mm.GUID]; ok {
+						if info, ok := modMap[mm.DirName]; ok && info.Anticheat == "" {
+							info.Anticheat = ac
+						}
+					}
+				}
+			}
+		}
+		// Overlay enforcer classifications onto returned manifest so
+		// the TUI's client-only fallback also reflects enforcer data.
+		// Mods without GUIDs or not in the enforcer show no classification.
+		if serverManifest != nil {
+			for i := range serverManifest.Mods {
+				mm := &serverManifest.Mods[i]
+				if mm.GUID != "" {
+					if ac, ok := enforcerAC[mm.GUID]; ok {
+						mm.Anticheat = ac
+					} else {
+						mm.Anticheat = ""
+					}
+				} else {
+					mm.Anticheat = "" // no GUID = can't be in enforcer
 				}
 			}
 		}
@@ -414,6 +485,11 @@ func (h *Handlers) HandleModsModeration(w http.ResponseWriter, r *http.Request) 
 	if hasEnforcer {
 		if err := patchEnforcerModeration(h.cfg.BepInExDir(), req.ModName, req.Anticheat, req.GUID, req.Version, h.cfg.ResolvedModAPIPort()); err != nil {
 			log.Printf("Moderation: enforcer patch failed: %v", err)
+			writeJSON(w, http.StatusOK, agentapi.ActionResponse{
+				OK:      true,
+				Message: "manifest updated, but enforcer Mods.yaml failed: " + err.Error(),
+			})
+			return
 		}
 	}
 	_ = hasAzu // TODO: AzuAntiCheat patching

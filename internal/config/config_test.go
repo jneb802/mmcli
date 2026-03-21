@@ -402,3 +402,23 @@ func TestDetectLocalMods(t *testing.T) {
 		t.Error("DisabledLoose should be disabled")
 	}
 }
+
+func TestDetectLocalModsSkipsByBareName(t *testing.T) {
+	tmp := t.TempDir()
+
+	// Create a directory using just the mod name (e.g. "FastLink")
+	os.MkdirAll(filepath.Join(tmp, "FastLink"), 0755)
+	os.WriteFile(filepath.Join(tmp, "FastLink", "FastLink.dll"), []byte("dll"), 0644)
+
+	// Register the mod under Owner-Name format
+	registered := map[string]ModEntry{
+		"Azumatt-FastLink": {Owner: "Azumatt", Name: "FastLink", Version: "1.4.8"},
+	}
+
+	locals := DetectLocalMods(tmp, registered)
+
+	// "FastLink" directory should be skipped because it matches the registered mod's Name
+	if len(locals) != 0 {
+		t.Fatalf("DetectLocalMods returned %d mods, want 0 (FastLink should be skipped). Got: %+v", len(locals), locals)
+	}
+}
