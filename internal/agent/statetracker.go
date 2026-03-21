@@ -291,6 +291,26 @@ func (st *StateTracker) processEvent(wcfg *DiscordWebhookConfig, ev ModAPIEvent)
 		if wcfg.EventEnabled("player_died") {
 			go sendDiscordWebhook(wcfg.URL, buildPlayerDiedMessage(ev.Player))
 		}
+	case "player_shout":
+		if wcfg.EventEnabled("player_shout") {
+			go sendDiscordWebhook(wcfg.URL, buildPlayerShoutMessage(ev.Player, ev.Message))
+		}
+	case "event_start":
+		if wcfg.EventEnabled("event_start") {
+			go sendDiscordWebhook(wcfg.URL, buildEventStartMessage(ev.Message))
+		}
+	case "event_stop":
+		if wcfg.EventEnabled("event_stop") {
+			go sendDiscordWebhook(wcfg.URL, buildEventStopMessage(ev.Message))
+		}
+	case "new_day":
+		if wcfg.EventEnabled("new_day") {
+			go sendDiscordWebhook(wcfg.URL, buildNewDayMessage(ev.Message))
+		}
+	case "cronjob":
+		if wcfg.EventEnabled("cronjob") {
+			go sendDiscordWebhook(wcfg.URL, buildCronjobMessage(ev.Message))
+		}
 	}
 }
 

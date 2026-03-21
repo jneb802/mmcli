@@ -104,6 +104,26 @@ func buildPlayerFirstJoinMessage(player string) string {
 	return fmt.Sprintf("**%s** joined for the first time!", player)
 }
 
+func buildPlayerShoutMessage(player, text string) string {
+	return fmt.Sprintf("**%s** shouted: %s", player, text)
+}
+
+func buildEventStartMessage(message string) string {
+	return fmt.Sprintf("**Raid Started** — %s", message)
+}
+
+func buildEventStopMessage(message string) string {
+	return fmt.Sprintf("**Raid Ended** — %s", message)
+}
+
+func buildNewDayMessage(day string) string {
+	return fmt.Sprintf("**New Day** — Day %s has begun", day)
+}
+
+func buildCronjobMessage(message string) string {
+	return fmt.Sprintf("**Cron Job** — %s", message)
+}
+
 // --- Discord embed types ---
 
 type discordEmbed struct {

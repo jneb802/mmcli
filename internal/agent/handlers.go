@@ -105,6 +105,11 @@ func (h *Handlers) HandleWebhookGet(w http.ResponseWriter, r *http.Request) {
 		resp.PlayerFirstJoin = h.cfg.DiscordWebhook.PlayerFirstJoin
 		resp.ServerRestarted = h.cfg.DiscordWebhook.ServerRestarted
 		resp.ServerReady = h.cfg.DiscordWebhook.ServerReady
+		resp.PlayerShout = h.cfg.DiscordWebhook.PlayerShout
+		resp.EventStart = h.cfg.DiscordWebhook.EventStart
+		resp.EventStop = h.cfg.DiscordWebhook.EventStop
+		resp.NewDay = h.cfg.DiscordWebhook.NewDay
+		resp.CronJob = h.cfg.DiscordWebhook.CronJob
 		resp.StatusEmbedURL = h.cfg.DiscordWebhook.StatusEmbedURL
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -151,6 +156,21 @@ func (h *Handlers) HandleWebhookUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ServerReady != nil {
 		h.cfg.DiscordWebhook.ServerReady = *req.ServerReady
+	}
+	if req.PlayerShout != nil {
+		h.cfg.DiscordWebhook.PlayerShout = *req.PlayerShout
+	}
+	if req.EventStart != nil {
+		h.cfg.DiscordWebhook.EventStart = *req.EventStart
+	}
+	if req.EventStop != nil {
+		h.cfg.DiscordWebhook.EventStop = *req.EventStop
+	}
+	if req.NewDay != nil {
+		h.cfg.DiscordWebhook.NewDay = *req.NewDay
+	}
+	if req.CronJob != nil {
+		h.cfg.DiscordWebhook.CronJob = *req.CronJob
 	}
 	if req.StatusEmbedURL != nil {
 		// If URL changed, clear the old message ID so a new embed is created

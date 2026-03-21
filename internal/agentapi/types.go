@@ -66,6 +66,11 @@ type WebhookConfigResponse struct {
 	PlayerFirstJoin bool   `json:"player_first_join"`
 	ServerRestarted bool   `json:"server_restarted"`
 	ServerReady     bool   `json:"server_ready"`
+	PlayerShout     bool   `json:"player_shout"`
+	EventStart      bool   `json:"event_start"`
+	EventStop       bool   `json:"event_stop"`
+	NewDay          bool   `json:"new_day"`
+	CronJob         bool   `json:"cronjob"`
 	StatusEmbedURL  string `json:"status_embed_url"`
 }
 
@@ -80,6 +85,11 @@ type WebhookConfigUpdate struct {
 	PlayerFirstJoin *bool   `json:"player_first_join,omitempty"`
 	ServerRestarted *bool   `json:"server_restarted,omitempty"`
 	ServerReady     *bool   `json:"server_ready,omitempty"`
+	PlayerShout     *bool   `json:"player_shout,omitempty"`
+	EventStart      *bool   `json:"event_start,omitempty"`
+	EventStop       *bool   `json:"event_stop,omitempty"`
+	NewDay          *bool   `json:"new_day,omitempty"`
+	CronJob         *bool   `json:"cronjob,omitempty"`
 	StatusEmbedURL  *string `json:"status_embed_url,omitempty"`
 }
 

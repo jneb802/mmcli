@@ -269,7 +269,12 @@ func (m model) buildSettingsTabItems() []settingsTabItem {
 			{"Player Joined", "Send notification when a player joins.", "wh-player-joined", wcfg.PlayerJoined},
 			{"Player Left", "Send notification when a player leaves.", "wh-player-left", wcfg.PlayerLeft},
 			{"Player Died", "Send notification when a player dies.", "wh-player-died", wcfg.PlayerDied},
+			{"Player Shout", "Send notification when a player shouts.", "wh-player-shout", wcfg.PlayerShout},
 			{"First Join", "Send notification on a player's first connection.", "wh-player-first-join", wcfg.PlayerFirstJoin},
+			{"Raid Start", "Send notification when a raid event begins.", "wh-event-start", wcfg.EventStart},
+			{"Raid End", "Send notification when a raid event ends.", "wh-event-stop", wcfg.EventStop},
+			{"New Day", "Send notification at the start of each in-game day.", "wh-new-day", wcfg.NewDay},
+			{"Cron Job", "Send notification when a cron job executes.", "wh-cronjob", wcfg.CronJob},
 		} {
 			val := "\033[2moff\033[0m"
 			if toggle.enabled {
@@ -556,7 +561,8 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.settingsTab.embedURLInput = ""
 			}
 		case "wh-server-started", "wh-server-stopped", "wh-server-restarted", "wh-server-ready",
-			"wh-world-saved", "wh-player-joined", "wh-player-left", "wh-player-died", "wh-player-first-join":
+			"wh-world-saved", "wh-player-joined", "wh-player-left", "wh-player-died", "wh-player-shout",
+			"wh-player-first-join", "wh-event-start", "wh-event-stop", "wh-new-day", "wh-cronjob":
 			return m.toggleWebhookEvent(item.action)
 		case "admin-list":
 			if m.server.role == agentapi.RoleAdmin && m.server.settings != nil {
@@ -635,6 +641,26 @@ func (m model) toggleWebhookEvent(action string) (tea.Model, tea.Cmd) {
 		v := !wcfg.ServerReady
 		req.ServerReady = &v
 		wcfg.ServerReady = v
+	case "wh-player-shout":
+		v := !wcfg.PlayerShout
+		req.PlayerShout = &v
+		wcfg.PlayerShout = v
+	case "wh-event-start":
+		v := !wcfg.EventStart
+		req.EventStart = &v
+		wcfg.EventStart = v
+	case "wh-event-stop":
+		v := !wcfg.EventStop
+		req.EventStop = &v
+		wcfg.EventStop = v
+	case "wh-new-day":
+		v := !wcfg.NewDay
+		req.NewDay = &v
+		wcfg.NewDay = v
+	case "wh-cronjob":
+		v := !wcfg.CronJob
+		req.CronJob = &v
+		wcfg.CronJob = v
 	}
 
 	return m, func() tea.Msg {

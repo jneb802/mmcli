@@ -31,6 +31,11 @@ type DiscordWebhookConfig struct {
 	PlayerFirstJoin   bool   `json:"player_first_join"`
 	ServerRestarted   bool   `json:"server_restarted"`
 	ServerReady       bool   `json:"server_ready"`
+	PlayerShout       bool   `json:"player_shout"`
+	EventStart        bool   `json:"event_start"`
+	EventStop         bool   `json:"event_stop"`
+	NewDay            bool   `json:"new_day"`
+	CronJob           bool   `json:"cronjob"`
 	StatusEmbedURL string `json:"status_embed_url,omitempty"`
 
 	// Internal: persisted message ID for editing the status embed
@@ -45,7 +50,8 @@ func (c *DiscordWebhookConfig) EventEnabled(event string) bool {
 	}
 	// If no events explicitly enabled, enable all
 	anyEnabled := c.ServerStarted || c.ServerStopped || c.ServerRestarted || c.ServerReady || c.WorldSaved ||
-		c.PlayerJoined || c.PlayerLeft || c.PlayerDied || c.PlayerFirstJoin
+		c.PlayerJoined || c.PlayerLeft || c.PlayerDied || c.PlayerFirstJoin ||
+		c.PlayerShout || c.EventStart || c.EventStop || c.NewDay || c.CronJob
 	if !anyEnabled {
 		return true
 	}
@@ -68,6 +74,16 @@ func (c *DiscordWebhookConfig) EventEnabled(event string) bool {
 		return c.ServerRestarted
 	case "server_ready":
 		return c.ServerReady
+	case "player_shout":
+		return c.PlayerShout
+	case "event_start":
+		return c.EventStart
+	case "event_stop":
+		return c.EventStop
+	case "new_day":
+		return c.NewDay
+	case "cronjob":
+		return c.CronJob
 	}
 	return false
 }
