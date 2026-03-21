@@ -12,9 +12,8 @@ const (
 	PathStop    = "/api/v1/stop"
 	PathRestart = "/api/v1/restart"
 	PathMods     = "/api/v1/mods"
-	PathModsSync       = "/api/v1/mods/sync"
 	PathModsModeration = "/api/v1/mods/moderation"
-	PathModsSyncSingle = "/api/v1/mods/sync/single"
+	PathModsManage     = "/api/v1/mods/manage"
 	PathLogs     = "/api/v1/logs"
 	PathSettings = "/api/v1/settings"
 	PathUpdate   = "/api/v1/update"
@@ -65,6 +64,8 @@ type WebhookConfigResponse struct {
 	PlayerLeft      bool   `json:"player_left"`
 	PlayerDied      bool   `json:"player_died"`
 	PlayerFirstJoin bool   `json:"player_first_join"`
+	ServerRestarted bool   `json:"server_restarted"`
+	ServerReady     bool   `json:"server_ready"`
 	StatusEmbedURL  string `json:"status_embed_url"`
 }
 
@@ -77,6 +78,8 @@ type WebhookConfigUpdate struct {
 	PlayerLeft      *bool   `json:"player_left,omitempty"`
 	PlayerDied      *bool   `json:"player_died,omitempty"`
 	PlayerFirstJoin *bool   `json:"player_first_join,omitempty"`
+	ServerRestarted *bool   `json:"server_restarted,omitempty"`
+	ServerReady     *bool   `json:"server_ready,omitempty"`
 	StatusEmbedURL  *string `json:"status_embed_url,omitempty"`
 }
 
@@ -106,8 +109,8 @@ type ModerationUpdateRequest struct {
 	Version   string `json:"version,omitempty"`     // mod version (for mods not on server)
 }
 
-// SingleModSyncRequest adds, updates, or removes a single mod on the server.
-type SingleModSyncRequest struct {
+// ModManageRequest adds, updates, or removes a single mod on the server.
+type ModManageRequest struct {
 	Action string      `json:"action"` // "add", "update", "remove"
 	Mod    ManifestMod `json:"mod"`
 }
@@ -242,32 +245,6 @@ type ConfigPushResponse struct {
 	Applied int    `json:"applied"` // .cfg patches applied
 	Written int    `json:"written"` // whole files written
 	Message string `json:"message"`
-}
-
-// Sync types for manifest-based push.
-
-type SyncResponse struct {
-	OK         bool             `json:"ok"`
-	Downloaded int              `json:"downloaded"`          // freshly downloaded from Thunderstore
-	Uploaded   int              `json:"uploaded"`            // installed from client upload
-	Cached     int              `json:"cached"`              // already in server cache, re-extracted
-	Skipped    int              `json:"skipped"`             // already at correct version, untouched
-	Removed    int              `json:"removed"`             // old mods cleaned up
-	Failures   []SyncFailure    `json:"failures,omitempty"`
-	Results    []SyncModResult  `json:"results,omitempty"`   // per-mod sync status
-	Message    string           `json:"message"`
-}
-
-type SyncFailure struct {
-	Mod    string `json:"mod"`    // "Owner-Name"
-	Reason string `json:"reason"` // e.g. "download failed: HTTP 404"
-}
-
-type SyncModResult struct {
-	Mod     string `json:"mod"`              // "Owner-Name"
-	Version string `json:"version,omitempty"`
-	Status  string `json:"status"`           // "downloaded", "cached", "skipped", "removed", "failed"
-	Reason  string `json:"reason,omitempty"` // failure reason
 }
 
 // World management types.

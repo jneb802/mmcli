@@ -103,6 +103,8 @@ func (h *Handlers) HandleWebhookGet(w http.ResponseWriter, r *http.Request) {
 		resp.PlayerLeft = h.cfg.DiscordWebhook.PlayerLeft
 		resp.PlayerDied = h.cfg.DiscordWebhook.PlayerDied
 		resp.PlayerFirstJoin = h.cfg.DiscordWebhook.PlayerFirstJoin
+		resp.ServerRestarted = h.cfg.DiscordWebhook.ServerRestarted
+		resp.ServerReady = h.cfg.DiscordWebhook.ServerReady
 		resp.StatusEmbedURL = h.cfg.DiscordWebhook.StatusEmbedURL
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -143,6 +145,12 @@ func (h *Handlers) HandleWebhookUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.PlayerFirstJoin != nil {
 		h.cfg.DiscordWebhook.PlayerFirstJoin = *req.PlayerFirstJoin
+	}
+	if req.ServerRestarted != nil {
+		h.cfg.DiscordWebhook.ServerRestarted = *req.ServerRestarted
+	}
+	if req.ServerReady != nil {
+		h.cfg.DiscordWebhook.ServerReady = *req.ServerReady
 	}
 	if req.StatusEmbedURL != nil {
 		// If URL changed, clear the old message ID so a new embed is created
@@ -383,6 +391,22 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// GUID dedup: if two modMap entries share a GUID, keep the manifest-matched
+	// one (has Owner) and drop the filesystem-only duplicate.
+	guidOwner := make(map[string]string) // GUID → modMap key of the manifest-matched entry
+	for key, info := range modMap {
+		if info.GUID != "" && info.Owner != "" {
+			guidOwner[info.GUID] = key
+		}
+	}
+	for key, info := range modMap {
+		if info.GUID != "" && info.Owner == "" {
+			if canonical, ok := guidOwner[info.GUID]; ok && canonical != key {
+				delete(modMap, key)
+			}
+		}
+	}
+
 	// Layer 4: Enforcer Mods.yaml is the exclusive source for moderation
 	enforcerAC := readEnforcerClassifications(h.cfg.BepInExDir())
 	if enforcerAC != nil {
@@ -525,89 +549,39 @@ func (h *Handlers) HandleModsModeration(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "moderation updated"})
 }
 
-func (h *Handlers) HandleModsSyncSingle(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseMultipartForm(1 << 30); err != nil {
-		writeError(w, http.StatusBadRequest, "failed to parse multipart: "+err.Error())
-		return
-	}
-
-	reqJSON := r.FormValue("request")
-	if reqJSON == "" {
-		writeError(w, http.StatusBadRequest, "missing 'request' field")
-		return
-	}
-
-	var req agentapi.SingleModSyncRequest
-	if err := json.Unmarshal([]byte(reqJSON), &req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request JSON: "+err.Error())
+func (h *Handlers) HandleModsManage(w http.ResponseWriter, r *http.Request) {
+	var req agentapi.ModManageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
 
 	bepDir := h.cfg.BepInExDir()
 	manifestPath := filepath.Join(bepDir, agentapi.ManifestFileName)
 
-	// Load existing manifest
 	var manifest agentapi.PushManifest
 	if data, err := os.ReadFile(manifestPath); err == nil {
 		json.Unmarshal(data, &manifest)
 	}
 
-	resp := agentapi.SyncResponse{OK: true}
-
 	switch req.Action {
 	case "add", "update":
-		// Download/extract the mod
-		if req.Mod.Source == "upload" {
-			// Extract upload zip from multipart
-			file, header, err := r.FormFile("upload")
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "missing upload file: "+err.Error())
-				return
-			}
-			defer file.Close()
-			tmpFile, err := os.CreateTemp("", "mmcli-upload-*.zip")
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, err.Error())
-				return
-			}
-			tmpPath := tmpFile.Name()
-			defer os.Remove(tmpPath)
-			size, _ := io.Copy(tmpFile, file)
-			tmpFile.Close()
-			f, _ := os.Open(tmpPath)
-			defer f.Close()
-			if err := extractUploadZip(f, size, bepDir, req.Mod.DirName); err != nil {
-				resp.Failures = append(resp.Failures, agentapi.SyncFailure{Mod: req.Mod.DirName, Reason: err.Error()})
-			} else {
-				resp.Uploaded++
-				resp.Results = append(resp.Results, agentapi.SyncModResult{Mod: req.Mod.DirName, Version: req.Mod.Version, Status: "uploaded"})
-			}
-			_ = header
-		} else {
-			// Download from Thunderstore
-			cacheDir := agentCacheDir()
-			zipPath, cached, err := downloadModZip(cacheDir, req.Mod.Owner, req.Mod.Name, req.Mod.Version)
-			if err != nil {
-				resp.Failures = append(resp.Failures, agentapi.SyncFailure{Mod: req.Mod.DirName, Reason: err.Error()})
-			} else {
-				removeModDirs(bepDir, req.Mod.DirName)
-				if err := extractModZip(zipPath, bepDir, req.Mod.Owner, req.Mod.Name); err != nil {
-					resp.Failures = append(resp.Failures, agentapi.SyncFailure{Mod: req.Mod.DirName, Reason: err.Error()})
-				} else if cached {
-					resp.Cached++
-					resp.Results = append(resp.Results, agentapi.SyncModResult{Mod: req.Mod.DirName, Version: req.Mod.Version, Status: "cached"})
-				} else {
-					resp.Downloaded++
-					resp.Results = append(resp.Results, agentapi.SyncModResult{Mod: req.Mod.DirName, Version: req.Mod.Version, Status: "downloaded"})
-				}
-			}
+		cacheDir := agentCacheDir()
+		zipPath, _, err := downloadModZip(cacheDir, req.Mod.Owner, req.Mod.Name, req.Mod.Version)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "download failed: "+err.Error())
+			return
+		}
+		removeModDirs(bepDir, req.Mod.DirName)
+		if err := extractModZip(zipPath, bepDir, req.Mod.Owner, req.Mod.Name); err != nil {
+			writeError(w, http.StatusInternalServerError, "extract failed: "+err.Error())
+			return
 		}
 
-		// Update manifest: replace or add
+		// Update manifest
 		found := false
 		for i := range manifest.Mods {
 			if manifest.Mods[i].DirName == req.Mod.DirName {
-				// Preserve server-owned anticheat
 				if req.Mod.Anticheat == "" {
 					req.Mod.Anticheat = manifest.Mods[i].Anticheat
 				}
@@ -622,212 +596,24 @@ func (h *Handlers) HandleModsSyncSingle(w http.ResponseWriter, r *http.Request) 
 
 	case "remove":
 		removeModDirs(bepDir, req.Mod.DirName)
-		resp.Removed++
-		resp.Results = append(resp.Results, agentapi.SyncModResult{Mod: req.Mod.DirName, Status: "removed"})
-
-		// Remove from manifest
 		for i := range manifest.Mods {
 			if manifest.Mods[i].DirName == req.Mod.DirName {
 				manifest.Mods = append(manifest.Mods[:i], manifest.Mods[i+1:]...)
 				break
 			}
 		}
+
+	default:
+		writeError(w, http.StatusBadRequest, "unknown action: "+req.Action)
+		return
 	}
 
-	// Write updated manifest
 	if data, err := json.MarshalIndent(manifest, "", "  "); err == nil {
 		os.WriteFile(manifestPath, data, 0644)
 	}
 
-	resp.Message = fmt.Sprintf("single mod sync: %s %s", req.Action, req.Mod.DirName)
-	log.Printf("SyncSingle: %s", resp.Message)
-	writeJSON(w, http.StatusOK, resp)
-}
-
-func (h *Handlers) HandleModsSync(w http.ResponseWriter, r *http.Request) {
-	log.Println("Sync request received, parsing multipart...")
-
-	if err := r.ParseMultipartForm(1 << 30); err != nil {
-		writeError(w, http.StatusBadRequest, "failed to parse multipart: "+err.Error())
-		return
-	}
-
-	manifestJSON := r.FormValue("manifest")
-	if manifestJSON == "" {
-		writeError(w, http.StatusBadRequest, "missing 'manifest' field")
-		return
-	}
-
-	var manifest agentapi.PushManifest
-	if err := json.Unmarshal([]byte(manifestJSON), &manifest); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid manifest JSON: "+err.Error())
-		return
-	}
-
-	bepDir := h.cfg.BepInExDir()
-	if _, err := os.Stat(bepDir); os.IsNotExist(err) {
-		writeError(w, http.StatusBadRequest, "BepInEx not installed on server")
-		return
-	}
-
-	// Load existing manifest to diff and preserve server-owned fields
-	oldMods := make(map[string]string)         // dirName -> version
-	oldAnticheat := make(map[string]string)    // dirName -> anticheat (server-owned)
-	manifestPath := filepath.Join(bepDir, agentapi.ManifestFileName)
-	if data, err := os.ReadFile(manifestPath); err == nil {
-		var oldManifest agentapi.PushManifest
-		if json.Unmarshal(data, &oldManifest) == nil {
-			for _, m := range oldManifest.Mods {
-				oldMods[m.DirName] = m.Version
-				if m.Anticheat != "" {
-					oldAnticheat[m.DirName] = m.Anticheat
-				}
-			}
-		}
-	}
-
-	cacheDir := agentCacheDir()
-	var resp agentapi.SyncResponse
-	resp.OK = true
-
-	// Build set of new mod dirNames for removal detection
-	newModSet := make(map[string]bool)
-	for _, mod := range manifest.Mods {
-		newModSet[mod.DirName] = true
-	}
-
-	// Remove mods no longer in manifest
-	for dirName := range oldMods {
-		if !newModSet[dirName] {
-			log.Printf("Sync: removing %s (no longer in manifest)", dirName)
-			removeModDirs(bepDir, dirName)
-			resp.Removed++
-			resp.Results = append(resp.Results, agentapi.SyncModResult{
-				Mod: dirName, Status: "removed",
-			})
-		}
-	}
-
-	// Process each mod by source
-	for _, mod := range manifest.Mods {
-		source := mod.Source
-		if source == "" {
-			source = "thunderstore" // backward compat with old manifests
-		}
-
-		if source == "upload" {
-			// Upload mods are always re-extracted (dev builds)
-			removeModDirs(bepDir, mod.DirName)
-
-			file, fh, err := r.FormFile(mod.DirName)
-			if err != nil {
-				log.Printf("Sync: missing upload for %s: %v", mod.DirName, err)
-				resp.Failures = append(resp.Failures, agentapi.SyncFailure{
-					Mod:    mod.DirName,
-					Reason: "missing upload attachment",
-				})
-				resp.Results = append(resp.Results, agentapi.SyncModResult{
-					Mod: mod.DirName, Version: mod.Version, Status: "failed", Reason: "missing upload attachment",
-				})
-				continue
-			}
-
-			if err := extractUploadZip(file, fh.Size, bepDir, mod.DirName); err != nil {
-				file.Close()
-				log.Printf("Sync: failed to extract upload %s: %v", mod.DirName, err)
-				reason := "extract failed: " + err.Error()
-				resp.Failures = append(resp.Failures, agentapi.SyncFailure{
-					Mod:    mod.DirName,
-					Reason: reason,
-				})
-				resp.Results = append(resp.Results, agentapi.SyncModResult{
-					Mod: mod.DirName, Version: mod.Version, Status: "failed", Reason: reason,
-				})
-				continue
-			}
-			file.Close()
-
-			log.Printf("Sync: extracted upload %s", mod.DirName)
-			resp.Uploaded++
-			resp.Results = append(resp.Results, agentapi.SyncModResult{
-				Mod: mod.DirName, Version: mod.Version, Status: "uploaded",
-			})
-		} else {
-			// Thunderstore mod — skip if unchanged
-			if oldVersion, exists := oldMods[mod.DirName]; exists && oldVersion == mod.Version {
-				resp.Skipped++
-				resp.Results = append(resp.Results, agentapi.SyncModResult{
-					Mod: mod.DirName, Version: mod.Version, Status: "skipped",
-				})
-				continue
-			}
-
-			removeModDirs(bepDir, mod.DirName)
-
-			zipPath, wasCached, err := downloadModZip(cacheDir, mod.Owner, mod.Name, mod.Version)
-			if err != nil {
-				log.Printf("Sync: failed to download %s: %v", mod.DirName, err)
-				resp.Failures = append(resp.Failures, agentapi.SyncFailure{
-					Mod:    mod.DirName,
-					Reason: err.Error(),
-				})
-				resp.Results = append(resp.Results, agentapi.SyncModResult{
-					Mod: mod.DirName, Version: mod.Version, Status: "failed", Reason: err.Error(),
-				})
-				continue
-			}
-
-			if err := extractModZip(zipPath, bepDir, mod.Owner, mod.Name); err != nil {
-				log.Printf("Sync: failed to extract %s: %v", mod.DirName, err)
-				os.Remove(zipPath)
-				reason := "extract failed: " + err.Error()
-				resp.Failures = append(resp.Failures, agentapi.SyncFailure{
-					Mod:    mod.DirName,
-					Reason: reason,
-				})
-				resp.Results = append(resp.Results, agentapi.SyncModResult{
-					Mod: mod.DirName, Version: mod.Version, Status: "failed", Reason: reason,
-				})
-				continue
-			}
-
-			if wasCached {
-				log.Printf("Sync: extracted %s (cached)", mod.DirName)
-				resp.Cached++
-				resp.Results = append(resp.Results, agentapi.SyncModResult{
-					Mod: mod.DirName, Version: mod.Version, Status: "cached",
-				})
-			} else {
-				log.Printf("Sync: downloaded and extracted %s", mod.DirName)
-				resp.Downloaded++
-				resp.Results = append(resp.Results, agentapi.SyncModResult{
-					Mod: mod.DirName, Version: mod.Version, Status: "downloaded",
-				})
-			}
-		}
-	}
-
-	// Preserve server-owned anticheat values from old manifest
-	for i := range manifest.Mods {
-		if manifest.Mods[i].Anticheat == "" {
-			if ac, ok := oldAnticheat[manifest.Mods[i].DirName]; ok {
-				manifest.Mods[i].Anticheat = ac
-			}
-		}
-	}
-
-	// Write new manifest
-	data, err := json.MarshalIndent(manifest, "", "  ")
-	if err == nil {
-		os.WriteFile(manifestPath, data, 0644)
-	}
-
-	total := resp.Downloaded + resp.Uploaded + resp.Cached + resp.Skipped
-	resp.Message = fmt.Sprintf("synced %d mods (%d downloaded, %d uploaded, %d cached, %d unchanged, %d removed, %d failed)",
-		total, resp.Downloaded, resp.Uploaded, resp.Cached, resp.Skipped, resp.Removed, len(resp.Failures))
-	log.Printf("Sync: %s", resp.Message)
-
-	writeJSON(w, http.StatusOK, resp)
+	log.Printf("ModManage: %s %s", req.Action, req.Mod.DirName)
+	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: fmt.Sprintf("%s %s", req.Action, req.Mod.DirName)})
 }
 
 func (h *Handlers) HandleLogs(w http.ResponseWriter, r *http.Request) {

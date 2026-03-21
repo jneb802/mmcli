@@ -263,6 +263,8 @@ func (m model) buildSettingsTabItems() []settingsTabItem {
 		}{
 			{"Server Started", "Send notification when server starts.", "wh-server-started", wcfg.ServerStarted},
 			{"Server Stopped", "Send notification when server stops.", "wh-server-stopped", wcfg.ServerStopped},
+			{"Server Restarted", "Send notification when server is restarted.", "wh-server-restarted", wcfg.ServerRestarted},
+			{"Server Ready", "Send notification when server is ready to join.", "wh-server-ready", wcfg.ServerReady},
 			{"World Saved", "Send notification when world is saved.", "wh-world-saved", wcfg.WorldSaved},
 			{"Player Joined", "Send notification when a player joins.", "wh-player-joined", wcfg.PlayerJoined},
 			{"Player Left", "Send notification when a player leaves.", "wh-player-left", wcfg.PlayerLeft},
@@ -553,8 +555,8 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			} else {
 				m.settingsTab.embedURLInput = ""
 			}
-		case "wh-server-started", "wh-server-stopped", "wh-world-saved",
-			"wh-player-joined", "wh-player-left", "wh-player-died", "wh-player-first-join":
+		case "wh-server-started", "wh-server-stopped", "wh-server-restarted", "wh-server-ready",
+			"wh-world-saved", "wh-player-joined", "wh-player-left", "wh-player-died", "wh-player-first-join":
 			return m.toggleWebhookEvent(item.action)
 		case "admin-list":
 			if m.server.role == agentapi.RoleAdmin && m.server.settings != nil {
@@ -625,6 +627,14 @@ func (m model) toggleWebhookEvent(action string) (tea.Model, tea.Cmd) {
 		v := !wcfg.PlayerFirstJoin
 		req.PlayerFirstJoin = &v
 		wcfg.PlayerFirstJoin = v
+	case "wh-server-restarted":
+		v := !wcfg.ServerRestarted
+		req.ServerRestarted = &v
+		wcfg.ServerRestarted = v
+	case "wh-server-ready":
+		v := !wcfg.ServerReady
+		req.ServerReady = &v
+		wcfg.ServerReady = v
 	}
 
 	return m, func() tea.Msg {
