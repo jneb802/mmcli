@@ -18,6 +18,42 @@ var modpackCmd = &cobra.Command{
 	Short: "Manage the Thunderstore modpack",
 }
 
+var modpackInstallCmd = &cobra.Command{
+	Use:   "install <mod>",
+	Short: "Add a mod to the modpack manifest",
+	Long:  `Look up a mod on Thunderstore and add its dependency string to manifest.json.
+Accepts Owner-Name (e.g., 'RandyKnapp-EpicLoot'), Owner-Name-Version, or a Thunderstore URL.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, cfg, err := loadConfig()
+		if err != nil {
+			return err
+		}
+
+		if err := requireModpackPath(cfg); err != nil {
+			return err
+		}
+
+		pkg, err := thunderstore.FindPackageByQuery(args[0])
+		if err != nil {
+			return err
+		}
+
+		if len(pkg.Versions) == 0 {
+			return fmt.Errorf("package %s has no versions", pkg.FullName)
+		}
+
+		depString := fmt.Sprintf("%s-%s-%s", pkg.Owner, pkg.Name, pkg.Versions[0].VersionNumber)
+
+		if err := modpack.AddDep(cfg.ModpackPath, depString); err != nil {
+			return err
+		}
+
+		fmt.Printf("Added %s to modpack manifest.\n", depString)
+		return nil
+	},
+}
+
 var modpackSyncCmd = &cobra.Command{
 	Use:   "sync",
 	Short: "Sync modpack manifest dependencies to match the current profile",
@@ -137,6 +173,7 @@ func requireModpackPath(cfg config.Config) error {
 func init() {
 	rootCmd.AddCommand(modpackCmd)
 
+	modpackCmd.AddCommand(modpackInstallCmd)
 	modpackCmd.AddCommand(modpackSyncCmd)
 	modpackCmd.AddCommand(modpackPublishCmd)
 

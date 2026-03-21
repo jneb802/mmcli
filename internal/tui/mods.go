@@ -823,11 +823,10 @@ func (m model) handleModsInstallInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.mods.filter == filterServer {
 				return m, installModToServer(m.paths, m.cfg, m.reg, m.mods.installInput, m.server.client)
 			}
-			target := "both"
 			if m.mods.filter == filterModpack {
-				target = "modpack"
+				return m, installModToModpack(m.cfg.ModpackPath, m.mods.installInput)
 			}
-			return m, installMod(m.paths, m.cfg, m.reg, m.mods.installInput, target)
+			return m, installMod(m.paths, m.cfg, m.reg, m.mods.installInput, "both")
 		}
 	case "backspace":
 		if len(m.mods.installInput) > 0 {

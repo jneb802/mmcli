@@ -236,6 +236,20 @@ func installMod(paths config.Paths, cfg config.Config, reg *config.Registry, que
 	}
 }
 
+func installModToModpack(modpackPath, query string) tea.Cmd {
+	return func() tea.Msg {
+		pkg, err := thunderstore.FindPackageByQuery(query)
+		if err != nil {
+			return installDoneMsg{err: err}
+		}
+		if len(pkg.Versions) == 0 {
+			return installDoneMsg{err: fmt.Errorf("package %s has no versions", pkg.FullName)}
+		}
+		depString := fmt.Sprintf("%s-%s-%s", pkg.Owner, pkg.Name, pkg.Versions[0].VersionNumber)
+		return installDoneMsg{err: modpack.AddDep(modpackPath, depString)}
+	}
+}
+
 func installModToServer(paths config.Paths, cfg config.Config, reg *config.Registry, query string, c *client.AgentClient) tea.Cmd {
 	return func() tea.Msg {
 		old := os.Stdout

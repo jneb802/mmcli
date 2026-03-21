@@ -88,6 +88,31 @@ func BuildSyncDiff(reg *config.Registry, profileName string, manifest *Manifest)
 	return diff
 }
 
+// AddDep adds a dependency string to manifest.json. If the mod already exists,
+// it updates the version instead.
+func AddDep(modpackPath, depString string) error {
+	manifest, err := LoadManifest(modpackPath)
+	if err != nil {
+		return err
+	}
+
+	ref := thunderstore.ParseDep(depString)
+	key := fmt.Sprintf("%s-%s", ref.Owner, ref.Name)
+
+	// Check if already present — update version if so
+	for i, dep := range manifest.Dependencies {
+		existing := thunderstore.ParseDep(dep)
+		existingKey := fmt.Sprintf("%s-%s", existing.Owner, existing.Name)
+		if existingKey == key {
+			manifest.Dependencies[i] = depString
+			return saveManifest(modpackPath, manifest)
+		}
+	}
+
+	manifest.Dependencies = append(manifest.Dependencies, depString)
+	return saveManifest(modpackPath, manifest)
+}
+
 // RemoveDep removes a dependency from manifest.json by Owner-Name key.
 func RemoveDep(modpackPath, ownerName string) error {
 	manifest, err := LoadManifest(modpackPath)
