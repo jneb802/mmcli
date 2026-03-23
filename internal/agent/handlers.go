@@ -207,6 +207,17 @@ func (h *Handlers) HandlePlayers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agentapi.PlayersResponse{Players: result})
 }
 
+func (h *Handlers) HandleNetwork(w http.ResponseWriter, r *http.Request) {
+	result, _ := QueryModNetwork(h.cfg.ResolvedModAPIPort())
+	if result == nil {
+		writeJSON(w, http.StatusOK, agentapi.NetworkDiagnosticsResponse{
+			Peers: []agentapi.PeerNetStats{},
+		})
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h *Handlers) HandleStart(w http.ResponseWriter, r *http.Request) {
 	if err := h.pm.Start(); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
@@ -574,6 +585,11 @@ func (h *Handlers) HandleModsManage(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
+	}
+
+	// Auto-populate dir_name from owner + name if missing
+	if req.Mod.DirName == "" && req.Mod.Owner != "" && req.Mod.Name != "" {
+		req.Mod.DirName = req.Mod.Owner + "-" + req.Mod.Name
 	}
 
 	bepDir := h.cfg.BepInExDir()

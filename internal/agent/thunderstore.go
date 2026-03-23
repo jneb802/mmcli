@@ -140,6 +140,9 @@ func extractZipFile(f *zip.File, destPath string) error {
 
 // removeModDirs removes a mod's directories from all BepInEx locations.
 func removeModDirs(bepDir, dirName string) {
+	if dirName == "" {
+		return
+	}
 	// Extract the bare name for fallback matching (e.g. "FastLink" from "Azumatt-FastLink")
 	bareName := dirName
 	if idx := strings.Index(dirName, "-"); idx >= 0 {
