@@ -14,7 +14,10 @@ import (
 var installCmd = &cobra.Command{
 	Use:   "install <mod>",
 	Short: "Install a mod and its dependencies into the active profile",
-	Long:  "Install a mod by Owner-Name (e.g., 'RandyKnapp-EpicLoot'), Thunderstore URL, or local path",
+	Long: `Install a mod by Owner-Name (e.g., 'RandyKnapp-EpicLoot'), Thunderstore URL, or local path.
+
+With --server, the mod is installed directly on the active server via the agent
+(the server downloads from Thunderstore itself). Nothing is installed locally.`,
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		clientFlag, _ := cmd.Flags().GetBool("client")
