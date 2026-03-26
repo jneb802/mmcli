@@ -12,7 +12,7 @@ import (
 
 var removeCmd = &cobra.Command{
 	Use:   "remove <mod>",
-	Short: "Remove a mod and its orphaned dependencies from the active profile",
+	Short: "Remove a mod from the active profile or server (--server)",
 	Long: `Remove a mod and delete its files from the active profile. Any dependencies
 that are no longer required by other mods are also removed. Config files
 are preserved. The mod argument is matched by Owner-Name or just the mod Name.
