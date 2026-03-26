@@ -209,17 +209,6 @@ func (h *Handlers) HandlePlayers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agentapi.PlayersResponse{Players: result})
 }
 
-func (h *Handlers) HandleNetwork(w http.ResponseWriter, r *http.Request) {
-	result, _ := QueryModNetwork(h.cfg.ResolvedModAPIPort())
-	if result == nil {
-		writeJSON(w, http.StatusOK, agentapi.NetworkDiagnosticsResponse{
-			Peers: []agentapi.PeerNetStats{},
-		})
-		return
-	}
-	writeJSON(w, http.StatusOK, result)
-}
-
 func (h *Handlers) HandleStart(w http.ResponseWriter, r *http.Request) {
 	if err := h.pm.Start(); err != nil {
 		writeError(w, http.StatusConflict, err.Error())
