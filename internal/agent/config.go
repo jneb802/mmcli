@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"mmcli/internal/agentapi"
 )
 
 type AgentConfig struct {
@@ -17,6 +19,7 @@ type AgentConfig struct {
 	LogFile            string                `json:"log_file,omitempty"`
 	ModAPIPort         int                   `json:"mod_api_port,omitempty"`
 	ActiveLaunchConfig string                `json:"active_launch_config,omitempty"`
+	ActiveProfile      string                `json:"active_profile,omitempty"`
 	DiscordWebhook     *DiscordWebhookConfig `json:"discord_webhook,omitempty"`
 }
 
@@ -86,6 +89,49 @@ func (c *DiscordWebhookConfig) EventEnabled(event string) bool {
 		return c.CronJob
 	}
 	return false
+}
+
+func (c AgentConfig) ProfilesDir() string {
+	return filepath.Join(c.ValheimDir, "mmcli-profiles")
+}
+
+func (c AgentConfig) ProfileDir(name string) string {
+	return filepath.Join(c.ValheimDir, "mmcli-profiles", name)
+}
+
+func (c AgentConfig) ProfilePluginsDir(name string) string {
+	return filepath.Join(c.ValheimDir, "mmcli-profiles", name, "plugins")
+}
+
+func (c AgentConfig) ProfilePatchersDir(name string) string {
+	return filepath.Join(c.ValheimDir, "mmcli-profiles", name, "patchers")
+}
+
+func (c AgentConfig) ProfileMonomodDir(name string) string {
+	return filepath.Join(c.ValheimDir, "mmcli-profiles", name, "monomod")
+}
+
+func (c AgentConfig) ProfileManifestPath(name string) string {
+	return filepath.Join(c.ValheimDir, "mmcli-profiles", name, agentapi.ManifestFileName)
+}
+
+func (c AgentConfig) ActiveProfileName() string {
+	if c.ActiveProfile != "" {
+		return c.ActiveProfile
+	}
+	return "default"
+}
+
+func (c AgentConfig) ActiveManifestPath() string {
+	return c.ProfileManifestPath(c.ActiveProfileName())
+}
+
+func (c AgentConfig) ProfileSubdirs(name string) []string {
+	return []string{
+		c.ProfilePluginsDir(name),
+		c.ProfilePatchersDir(name),
+		c.ProfileMonomodDir(name),
+	}
 }
 
 func (c AgentConfig) LaunchConfigsDir() string {

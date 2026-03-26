@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -44,12 +45,13 @@ func (h *Handlers) HandleStatus(w http.ResponseWriter, r *http.Request) {
 	_, bepinexErr := os.Stat(h.cfg.BepInExDir())
 
 	resp := agentapi.StatusResponse{
-		Running:  h.pm.IsRunning(),
-		ModCount: len(mods),
-		Mods:     mods,
-		BepInEx:  bepinexErr == nil,
-		Version:  h.version,
-		Role:     RoleFromContext(r),
+		Running:       h.pm.IsRunning(),
+		ModCount:      len(mods),
+		Mods:          mods,
+		BepInEx:       bepinexErr == nil,
+		Version:       h.version,
+		Role:          RoleFromContext(r),
+		ActiveProfile: h.cfg.ActiveProfileName(),
 	}
 
 	if resp.Running {
@@ -303,7 +305,7 @@ func (h *Handlers) HandleModsList(w http.ResponseWriter, r *http.Request) {
 	var manifestTime string
 	var serverManifest *agentapi.PushManifest
 	manifestNames := make(map[string]string) // dirName -> modName (for log matching)
-	manifestPath := filepath.Join(h.cfg.BepInExDir(), agentapi.ManifestFileName)
+	manifestPath := h.cfg.ActiveManifestPath()
 	if data, err := os.ReadFile(manifestPath); err == nil {
 		var manifest agentapi.PushManifest
 		if json.Unmarshal(data, &manifest) == nil {
@@ -508,7 +510,7 @@ func (h *Handlers) HandleModsModeration(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Update the push manifest (add entry if not present, e.g. client-only mods)
-	manifestPath := filepath.Join(h.cfg.BepInExDir(), agentapi.ManifestFileName)
+	manifestPath := h.cfg.ActiveManifestPath()
 	if data, err := os.ReadFile(manifestPath); err == nil {
 		var manifest agentapi.PushManifest
 		if json.Unmarshal(data, &manifest) == nil {
@@ -593,7 +595,7 @@ func (h *Handlers) HandleModsManage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	bepDir := h.cfg.BepInExDir()
-	manifestPath := filepath.Join(bepDir, agentapi.ManifestFileName)
+	manifestPath := h.cfg.ActiveManifestPath()
 
 	var manifest agentapi.PushManifest
 	if data, err := os.ReadFile(manifestPath); err == nil {
@@ -1562,6 +1564,309 @@ func (h *Handlers) rebuildStartScript(settings *agentapi.SettingsResponse) error
 		return err
 	}
 	return os.Rename(tmpName, scriptPath)
+}
+
+// --- Profile management ---
+
+var validProfileName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
+
+// ensureProfiles migrates an existing server to the profile directory layout.
+// Idempotent: returns immediately if mmcli-profiles/ already exists.
+func (h *Handlers) ensureProfiles() error {
+	profilesDir := h.cfg.ProfilesDir()
+	if _, err := os.Stat(profilesDir); err == nil {
+		return nil // already migrated
+	}
+
+	profileName := "default"
+
+	// Create profile subdirectories
+	for _, dir := range h.cfg.ProfileSubdirs(profileName) {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("failed to create profile dir: %w", err)
+		}
+	}
+
+	// Migrate existing BepInEx subdirectories into the default profile
+	bepDir := h.cfg.BepInExDir()
+	migrations := []struct {
+		src string
+		dst string
+	}{
+		{filepath.Join(bepDir, "plugins"), h.cfg.ProfilePluginsDir(profileName)},
+		{filepath.Join(bepDir, "patchers"), h.cfg.ProfilePatchersDir(profileName)},
+		{filepath.Join(bepDir, "monomod"), h.cfg.ProfileMonomodDir(profileName)},
+	}
+
+	for _, m := range migrations {
+		info, err := os.Lstat(m.src)
+		if err != nil {
+			continue // directory doesn't exist, skip
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			continue // already a symlink, skip
+		}
+		if !info.IsDir() {
+			continue
+		}
+		// Move contents into profile dir
+		entries, err := os.ReadDir(m.src)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			srcPath := filepath.Join(m.src, e.Name())
+			dstPath := filepath.Join(m.dst, e.Name())
+			if _, err := os.Stat(dstPath); err == nil {
+				continue // already exists in destination
+			}
+			os.Rename(srcPath, dstPath)
+		}
+		os.RemoveAll(m.src)
+	}
+
+	// Move manifest into profile
+	oldManifest := filepath.Join(bepDir, agentapi.ManifestFileName)
+	newManifest := h.cfg.ProfileManifestPath(profileName)
+	if _, err := os.Stat(oldManifest); err == nil {
+		os.Rename(oldManifest, newManifest)
+	}
+
+	// Create symlinks
+	if err := h.activateProfileSymlinks(profileName); err != nil {
+		return fmt.Errorf("failed to activate profile symlinks: %w", err)
+	}
+
+	// Save config
+	h.cfg.ActiveProfile = profileName
+	SaveConfig(DefaultConfigPath(), h.cfg)
+
+	log.Printf("Migrated to profile system (active: %s)", profileName)
+	return nil
+}
+
+// activateProfileSymlinks creates symlinks from BepInEx subdirs to the given profile's dirs.
+func (h *Handlers) activateProfileSymlinks(name string) error {
+	symlinks := []struct {
+		link   string
+		target string
+	}{
+		{h.cfg.PluginsDir(), h.cfg.ProfilePluginsDir(name)},
+		{h.cfg.PatchersDir(), h.cfg.ProfilePatchersDir(name)},
+		{h.cfg.MonomodDir(), h.cfg.ProfileMonomodDir(name)},
+	}
+
+	for _, s := range symlinks {
+		// Ensure target exists
+		os.MkdirAll(s.target, 0755)
+
+		// Remove existing symlink or directory
+		info, err := os.Lstat(s.link)
+		if err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				os.Remove(s.link)
+			} else if info.IsDir() {
+				os.RemoveAll(s.link)
+			}
+		}
+
+		// Ensure parent exists
+		os.MkdirAll(filepath.Dir(s.link), 0755)
+
+		if err := os.Symlink(s.target, s.link); err != nil {
+			return fmt.Errorf("failed to symlink %s -> %s: %w", s.link, s.target, err)
+		}
+	}
+	return nil
+}
+
+func (h *Handlers) HandleProfilesList(w http.ResponseWriter, r *http.Request) {
+	if err := h.ensureProfiles(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	dir := h.cfg.ProfilesDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	active := h.cfg.ActiveProfileName()
+
+	var profiles []agentapi.ProfileSummary
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		// Count mod directories in plugins/
+		pluginsDir := h.cfg.ProfilePluginsDir(e.Name())
+		modCount := 0
+		if pluginEntries, err := os.ReadDir(pluginsDir); err == nil {
+			for _, pe := range pluginEntries {
+				if pe.IsDir() || strings.HasSuffix(strings.ToLower(pe.Name()), ".dll") {
+					modCount++
+				}
+			}
+		}
+		profiles = append(profiles, agentapi.ProfileSummary{
+			Name:     e.Name(),
+			ModCount: modCount,
+		})
+	}
+
+	sort.Slice(profiles, func(i, j int) bool { return profiles[i].Name < profiles[j].Name })
+	writeJSON(w, http.StatusOK, agentapi.ProfileListResponse{Profiles: profiles, Active: active})
+}
+
+func (h *Handlers) HandleProfileCreate(w http.ResponseWriter, r *http.Request) {
+	if err := h.ensureProfiles(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var req agentapi.ProfileCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+	if !validProfileName.MatchString(req.Name) {
+		writeError(w, http.StatusBadRequest, "invalid profile name (use alphanumeric, hyphens, underscores)")
+		return
+	}
+
+	profileDir := h.cfg.ProfileDir(req.Name)
+	if _, err := os.Stat(profileDir); err == nil {
+		writeError(w, http.StatusConflict, "profile already exists: "+req.Name)
+		return
+	}
+
+	if req.CopyFrom != "" {
+		srcDir := h.cfg.ProfileDir(req.CopyFrom)
+		if _, err := os.Stat(srcDir); os.IsNotExist(err) {
+			writeError(w, http.StatusNotFound, "source profile not found: "+req.CopyFrom)
+			return
+		}
+		if err := copyDir(srcDir, profileDir); err != nil {
+			os.RemoveAll(profileDir) // clean up on failure
+			writeError(w, http.StatusInternalServerError, "failed to copy profile: "+err.Error())
+			return
+		}
+	} else {
+		for _, dir := range h.cfg.ProfileSubdirs(req.Name) {
+			if err := os.MkdirAll(dir, 0755); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to create profile: "+err.Error())
+				return
+			}
+		}
+	}
+
+	log.Printf("Profile created: %s", req.Name)
+	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "profile created"})
+}
+
+func (h *Handlers) HandleProfileDelete(w http.ResponseWriter, r *http.Request) {
+	if err := h.ensureProfiles(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	name := strings.TrimPrefix(r.URL.Path, agentapi.PathProfiles+"/")
+	if name == "" || strings.Contains(name, "/") || strings.Contains(name, "..") {
+		writeError(w, http.StatusBadRequest, "invalid profile name")
+		return
+	}
+
+	if name == h.cfg.ActiveProfileName() {
+		writeError(w, http.StatusConflict, "cannot delete the active profile")
+		return
+	}
+
+	profileDir := h.cfg.ProfileDir(name)
+	if _, err := os.Stat(profileDir); os.IsNotExist(err) {
+		writeError(w, http.StatusNotFound, "profile not found: "+name)
+		return
+	}
+
+	if err := os.RemoveAll(profileDir); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete profile: "+err.Error())
+		return
+	}
+
+	log.Printf("Profile deleted: %s", name)
+	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "profile deleted"})
+}
+
+func (h *Handlers) HandleProfileActivate(w http.ResponseWriter, r *http.Request) {
+	if err := h.ensureProfiles(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	var req agentapi.ProfileActivateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request: "+err.Error())
+		return
+	}
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "name is required")
+		return
+	}
+
+	if _, err := os.Stat(h.cfg.ProfileDir(req.Name)); os.IsNotExist(err) {
+		writeError(w, http.StatusNotFound, "profile not found: "+req.Name)
+		return
+	}
+
+	if req.Name == h.cfg.ActiveProfileName() {
+		writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "profile already active"})
+		return
+	}
+
+	if h.pm.IsRunning() && !req.Force {
+		writeError(w, http.StatusConflict, "server is running — stop it first or set force=true")
+		return
+	}
+
+	if err := h.activateProfileSymlinks(req.Name); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to switch profile: "+err.Error())
+		return
+	}
+
+	h.cfg.ActiveProfile = req.Name
+	SaveConfig(DefaultConfigPath(), h.cfg)
+
+	log.Printf("Profile activated: %s", req.Name)
+	writeJSON(w, http.StatusOK, agentapi.ActionResponse{OK: true, Message: "profile activated, restart server to apply"})
+}
+
+// copyDir recursively copies a directory tree.
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		dstPath := filepath.Join(dst, rel)
+
+		if info.IsDir() {
+			return os.MkdirAll(dstPath, info.Mode())
+		}
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(dstPath, data, info.Mode())
+	})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

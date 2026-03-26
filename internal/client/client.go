@@ -294,6 +294,38 @@ func (c *AgentClient) ActivateLaunchConfig(name string) (*agentapi.ActionRespons
 	return &resp, nil
 }
 
+func (c *AgentClient) ListProfiles() (*agentapi.ProfileListResponse, error) {
+	var resp agentapi.ProfileListResponse
+	if err := c.doJSON("GET", agentapi.PathProfiles, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AgentClient) CreateProfile(req agentapi.ProfileCreateRequest) (*agentapi.ActionResponse, error) {
+	var resp agentapi.ActionResponse
+	if err := c.doJSON("POST", agentapi.PathProfiles, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AgentClient) DeleteProfile(name string) (*agentapi.ActionResponse, error) {
+	var resp agentapi.ActionResponse
+	if err := c.doJSON("DELETE", agentapi.PathProfiles+"/"+name, nil, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (c *AgentClient) ActivateProfile(name string, force bool) (*agentapi.ActionResponse, error) {
+	var resp agentapi.ActionResponse
+	if err := c.doJSON("POST", agentapi.PathProfilesActive, agentapi.ProfileActivateRequest{Name: name, Force: force}, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 func (c *AgentClient) Update() (*agentapi.UpdateResponse, error) {
 	var resp agentapi.UpdateResponse
 	if err := c.doJSON("POST", agentapi.PathUpdate, nil, &resp); err != nil {

@@ -56,8 +56,17 @@ func Run(cfg AgentConfig, cfgPath, addr, version string) error {
 	mux.HandleFunc("PUT "+agentapi.PathLaunchConfigs+"/", adminOnly(h.HandleLaunchConfigUpdate))
 	mux.HandleFunc("DELETE "+agentapi.PathLaunchConfigs+"/", adminOnly(h.HandleLaunchConfigDelete))
 	mux.HandleFunc("POST "+agentapi.PathLaunchConfigsActive, adminOnly(h.HandleLaunchConfigActivate))
+	mux.HandleFunc("GET "+agentapi.PathProfiles, h.HandleProfilesList)
+	mux.HandleFunc("POST "+agentapi.PathProfiles, adminOnly(h.HandleProfileCreate))
+	mux.HandleFunc("DELETE "+agentapi.PathProfiles+"/", adminOnly(h.HandleProfileDelete))
+	mux.HandleFunc("POST "+agentapi.PathProfilesActive, adminOnly(h.HandleProfileActivate))
 
 	handler := authMiddleware(cfg, mux)
+
+	// Migrate to profile system if needed (before serving requests)
+	if err := h.ensureProfiles(); err != nil {
+		log.Printf("Warning: profile migration failed: %v", err)
+	}
 
 	// Start state tracker for Discord webhooks
 	st.Start()

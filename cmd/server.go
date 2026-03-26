@@ -524,6 +524,130 @@ Examples:
 	},
 }
 
+var serverProfileCmd = &cobra.Command{
+	Use:   "profile",
+	Short: "Manage server mod profiles",
+	Long: `Manage mod profiles on the active server. Each profile is an isolated set of mods.
+Only one profile is active at a time; the active profile is what BepInEx loads.`,
+}
+
+var serverProfileListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List server profiles",
+	Long: `List all profiles on the active server with their mod count.
+The active profile is marked with *. Use --json for machine-readable output.`,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, c, err := resolveActiveServer()
+		if err != nil {
+			return err
+		}
+
+		resp, err := c.ListProfiles()
+		if err != nil {
+			return err
+		}
+
+		if jsonOutput {
+			return json.NewEncoder(os.Stdout).Encode(resp)
+		}
+
+		if len(resp.Profiles) == 0 {
+			fmt.Println("No profiles found.")
+			return nil
+		}
+
+		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+		fmt.Fprintln(w, "PROFILE\tMODS\tACTIVE")
+		for _, p := range resp.Profiles {
+			active := ""
+			if p.Name == resp.Active {
+				active = "\033[32m*\033[0m"
+			}
+			fmt.Fprintf(w, "%s\t%d\t%s\n", p.Name, p.ModCount, active)
+		}
+		w.Flush()
+		return nil
+	},
+}
+
+var serverProfileCreateCmd = &cobra.Command{
+	Use:   "create <name>",
+	Short: "Create a new server profile",
+	Long: `Create a new empty mod profile on the server. Use --copy-from to clone
+an existing profile's mods into the new one.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := requireAdmin(); err != nil {
+			return err
+		}
+		_, c, err := resolveActiveServer()
+		if err != nil {
+			return err
+		}
+
+		copyFrom, _ := cmd.Flags().GetString("copy-from")
+		req := agentapi.ProfileCreateRequest{
+			Name:     args[0],
+			CopyFrom: copyFrom,
+		}
+
+		resp, err := c.CreateProfile(req)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("\033[32m%s\033[0m\n", resp.Message)
+		return nil
+	},
+}
+
+var serverProfileSwitchCmd = &cobra.Command{
+	Use:   "switch <name>",
+	Short: "Switch the active server profile",
+	Long: `Switch which mod profile is active on the server. The server should be stopped
+before switching profiles. Use --force to switch while the server is running.`,
+	Args: cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := requireAdmin(); err != nil {
+			return err
+		}
+		_, c, err := resolveActiveServer()
+		if err != nil {
+			return err
+		}
+
+		force, _ := cmd.Flags().GetBool("force")
+		resp, err := c.ActivateProfile(args[0], force)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("\033[32m%s\033[0m\n", resp.Message)
+		return nil
+	},
+}
+
+var serverProfileDeleteCmd = &cobra.Command{
+	Use:   "delete <name>",
+	Short: "Delete a server profile",
+	Long:  `Delete a mod profile from the server. The active profile cannot be deleted.`,
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		if err := requireAdmin(); err != nil {
+			return err
+		}
+		_, c, err := resolveActiveServer()
+		if err != nil {
+			return err
+		}
+
+		resp, err := c.DeleteProfile(args[0])
+		if err != nil {
+			return err
+		}
+		fmt.Printf("\033[32m%s\033[0m\n", resp.Message)
+		return nil
+	},
+}
+
 func init() {
 	rootCmd.AddCommand(serverCmd)
 
@@ -538,7 +662,12 @@ func init() {
 	serverCmd.AddCommand(serverLogsCmd)
 	serverCmd.AddCommand(serverSettingsCmd)
 	serverCmd.AddCommand(serverUpdateCmd)
+	serverCmd.AddCommand(serverProfileCmd)
 	serverSettingsCmd.AddCommand(serverSettingsSetCmd)
+	serverProfileCmd.AddCommand(serverProfileListCmd)
+	serverProfileCmd.AddCommand(serverProfileCreateCmd)
+	serverProfileCmd.AddCommand(serverProfileSwitchCmd)
+	serverProfileCmd.AddCommand(serverProfileDeleteCmd)
 
 	// settings set flags
 	serverSettingsSetCmd.Flags().String("name", "", "server name")
@@ -566,6 +695,9 @@ func init() {
 
 	serverLogsCmd.Flags().Int("lines", 100, "number of log lines to show")
 	serverLogsCmd.Flags().BoolP("follow", "f", false, "stream new log lines")
+
+	serverProfileCreateCmd.Flags().String("copy-from", "", "copy mods from an existing profile")
+	serverProfileSwitchCmd.Flags().Bool("force", false, "switch even if server is running")
 }
 
 // requireAdmin returns an error if the active server's cached role is not admin.
@@ -744,6 +876,9 @@ func printStatus(name string, s *agentapi.StatusResponse, modsResp *agentapi.Mod
 	fmt.Printf("  Role:    %s\n", role)
 	fmt.Printf("  Status:  %s\n", status)
 	fmt.Printf("  BepInEx: %s\n", bepinex)
+	if s.ActiveProfile != "" {
+		fmt.Printf("  Profile: %s\n", s.ActiveProfile)
+	}
 	fmt.Printf("  Mods:    %d\n", s.ModCount)
 
 	// Use enriched mod list if available, otherwise fall back to basic names

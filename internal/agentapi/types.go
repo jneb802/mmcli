@@ -28,6 +28,9 @@ const (
 	PathLaunchConfigs       = "/api/v1/launch-configs"
 	PathLaunchConfigsActive = "/api/v1/launch-configs/active"
 
+	PathProfiles       = "/api/v1/profiles"
+	PathProfilesActive = "/api/v1/profiles/active"
+
 	GitHubRepo      = "jneb802/mmcli"
 	AgentBinaryName = "mmcli-agent-linux-amd64"
 )
@@ -41,6 +44,8 @@ type StatusResponse struct {
 	BepInEx    bool     `json:"bepinex"`
 	Version    string   `json:"version"`
 	Role       string   `json:"role,omitempty"`
+
+	ActiveProfile string `json:"active_profile,omitempty"`
 
 	// Game state from MMCLIServerMod (nil/empty if mod not available)
 	PlayerCount int    `json:"player_count,omitempty"`
@@ -316,6 +321,28 @@ type LaunchConfigCreateRequest struct {
 
 type LaunchConfigActivateRequest struct {
 	Name string `json:"name"`
+}
+
+// Profile types.
+
+type ProfileListResponse struct {
+	Profiles []ProfileSummary `json:"profiles"`
+	Active   string           `json:"active"`
+}
+
+type ProfileSummary struct {
+	Name     string `json:"name"`
+	ModCount int    `json:"mod_count"`
+}
+
+type ProfileCreateRequest struct {
+	Name     string `json:"name"`
+	CopyFrom string `json:"copy_from,omitempty"`
+}
+
+type ProfileActivateRequest struct {
+	Name  string `json:"name"`
+	Force bool   `json:"force,omitempty"`
 }
 
 type UpdateResponse struct {
