@@ -220,3 +220,22 @@ func TestInstallFlags(t *testing.T) {
 	}
 }
 
+// TestRemoveFlags verifies remove command flags.
+func TestRemoveFlags(t *testing.T) {
+	var removeCmd *cobra.Command
+	for _, cmd := range rootCmd.Commands() {
+		if cmd.Name() == "remove" {
+			removeCmd = cmd
+			break
+		}
+	}
+	if removeCmd == nil {
+		t.Fatal("remove command not found")
+	}
+
+	flags := removeCmd.Flags()
+	if flags.Lookup("server") == nil {
+		t.Error("missing --server flag")
+	}
+}
+
