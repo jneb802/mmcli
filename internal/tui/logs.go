@@ -85,7 +85,7 @@ func (m model) handleLogsKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			// No file to open for server logs
 			return m, nil
 		}
-		return m, openFile(m.paths.BepInExLogFile())
+		return m, openFile(m.paths.ProfileLogFile(m.cfg.ActiveProfile))
 	}
 
 	// Scroll controls — operate on the active log viewer

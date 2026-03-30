@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -15,6 +14,7 @@ import (
 	"mmcli/internal/cfgfile"
 	"mmcli/internal/client"
 	"mmcli/internal/config"
+	"mmcli/internal/platform"
 )
 
 var configCmd = &cobra.Command{
@@ -68,7 +68,7 @@ Use --json for machine-readable output.`,
 		if jsonOutput {
 			type configListJSON struct {
 				Source  string   `json:"source"`
-				Profile string  `json:"profile"`
+				Profile string   `json:"profile"`
 				Files   []string `json:"files"`
 			}
 			return json.NewEncoder(os.Stdout).Encode(configListJSON{Source: "local", Profile: cfg.ActiveProfile, Files: files})
@@ -234,7 +234,7 @@ the path instead of opening.`,
 			return nil
 		}
 
-		return exec.Command("open", target).Run()
+		return platform.OpenPath(target)
 	},
 }
 

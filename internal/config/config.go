@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+
+	"mmcli/internal/platform"
 )
 
 type ServerEntry struct {
@@ -15,32 +18,31 @@ type ServerEntry struct {
 }
 
 type Config struct {
-	ActiveProfile   string                 `json:"active_profile"`
-	ValheimPath     string                 `json:"valheim_path"`
-	Initialized     bool                   `json:"initialized"`
-	ActiveServer    string                 `json:"active_server,omitempty"`
-	Servers         map[string]ServerEntry `json:"servers,omitempty"`
-	AnticheatSystem string                 `json:"anticheat_system,omitempty"` // "auto", "azu", "enforcer", "" (= auto)
-	ModpackPath         string                `json:"modpack_path,omitempty"`
-	ThunderstoreToken   string                `json:"thunderstore_token,omitempty"`
-	ThunderstoreAuthor  string                `json:"thunderstore_author,omitempty"` // team/namespace on Thunderstore
+	ActiveProfile      string                 `json:"active_profile"`
+	ValheimPath        string                 `json:"valheim_path"`
+	Initialized        bool                   `json:"initialized"`
+	ActiveServer       string                 `json:"active_server,omitempty"`
+	Servers            map[string]ServerEntry `json:"servers,omitempty"`
+	AnticheatSystem    string                 `json:"anticheat_system,omitempty"` // "auto", "azu", "enforcer", "" (= auto)
+	ModpackPath        string                 `json:"modpack_path,omitempty"`
+	ThunderstoreToken  string                 `json:"thunderstore_token,omitempty"`
+	ThunderstoreAuthor string                 `json:"thunderstore_author,omitempty"` // team/namespace on Thunderstore
 }
 
 type Paths struct {
-	ConfigDir   string
-	ConfigFile  string
+	ConfigDir    string
+	ConfigFile   string
 	RegistryFile string
-	CacheDir    string
-	ProfilesDir string
-	ValheimDir  string
+	CacheDir     string
+	ProfilesDir  string
+	ValheimDir   string
 }
 
 func DefaultPaths() (Paths, error) {
-	home, err := os.UserHomeDir()
+	configDir, err := platform.ConfigDir()
 	if err != nil {
-		return Paths{}, fmt.Errorf("cannot determine home directory: %w", err)
+		return Paths{}, err
 	}
-	configDir := filepath.Join(home, ".config", "mmcli")
 	return Paths{
 		ConfigDir:    configDir,
 		ConfigFile:   filepath.Join(configDir, "config.json"),
@@ -55,11 +57,11 @@ func (p Paths) ProfileDir(name string) string {
 }
 
 func (p Paths) ProfilePluginsDir(name string) string {
-	return filepath.Join(p.ProfilesDir, name, "plugins")
+	return filepath.Join(p.profileBaseDir(name), "plugins")
 }
 
 func (p Paths) ProfileConfigDir(name string) string {
-	return filepath.Join(p.ProfilesDir, name, "config")
+	return filepath.Join(p.profileBaseDir(name), "config")
 }
 
 func (p Paths) BepInExDir() string {
@@ -75,11 +77,11 @@ func (p Paths) BepInExConfigDir() string {
 }
 
 func (p Paths) ProfilePatchersDir(name string) string {
-	return filepath.Join(p.ProfilesDir, name, "patchers")
+	return filepath.Join(p.profileBaseDir(name), "patchers")
 }
 
 func (p Paths) ProfileMonomodDir(name string) string {
-	return filepath.Join(p.ProfilesDir, name, "monomod")
+	return filepath.Join(p.profileBaseDir(name), "monomod")
 }
 
 func (p Paths) BepInExPatchersDir() string {
@@ -98,20 +100,37 @@ func (p Paths) BepInExLogFile() string {
 	return filepath.Join(p.ValheimDir, "BepInEx", "LogOutput.log")
 }
 
+func (p Paths) ProfileCoreDir(name string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(p.ProfileDir(name), "BepInEx", "core")
+	}
+	return p.BepInExCoreDir()
+}
+
+func (p Paths) ProfileLogFile(name string) string {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(p.ProfileDir(name), "BepInEx", "LogOutput.log")
+	}
+	return p.BepInExLogFile()
+}
+
 func (p Paths) RunBepInExScript() string {
+	if runtime.GOOS == "windows" {
+		return ""
+	}
 	return filepath.Join(p.ValheimDir, "run_bepinex.sh")
 }
 
 func DetectValheimPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	return platform.DetectValheimPath()
+}
+
+func (p Paths) profileBaseDir(name string) string {
+	base := p.ProfileDir(name)
+	if runtime.GOOS == "windows" {
+		return filepath.Join(base, "BepInEx")
 	}
-	path := filepath.Join(home, "Library", "Application Support", "Steam", "steamapps", "common", "Valheim")
-	if _, err := os.Stat(path); err != nil {
-		return "", fmt.Errorf("Valheim not found at %s", path)
-	}
-	return path, nil
+	return base
 }
 
 func Load(p Paths) (Config, error) {

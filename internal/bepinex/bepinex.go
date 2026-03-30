@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"mmcli/internal/config"
@@ -126,7 +127,7 @@ func Install(paths config.Paths, zipPath string) error {
 			continue
 		}
 
-		destPath := filepath.Join(paths.ValheimDir, name)
+		destPath := installDestPath(paths, name)
 
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(destPath, 0755)
@@ -148,6 +149,9 @@ func Install(paths config.Paths, zipPath string) error {
 //
 // This function applies the same patches as a known-working macOS install.
 func PatchRunScript(paths config.Paths) error {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
 	scriptPath := paths.RunBepInExScript()
 	data, err := os.ReadFile(scriptPath)
 	if err != nil {
@@ -240,6 +244,9 @@ arch -x86_64 zsh -c "$launch"`
 // Valheim directory. Downloaded files are tagged by macOS Gatekeeper and
 // quarantined dylibs (like libdoorstop.dylib) are silently blocked from loading.
 func RemoveQuarantine(paths config.Paths) error {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
 	// xattr -rd removes the attribute recursively; errors are expected for files
 	// that don't have it, so we only fail on exec errors.
 	cmd := exec.Command("xattr", "-rd", "com.apple.quarantine", paths.ValheimDir)
@@ -252,6 +259,9 @@ func RemoveQuarantine(paths config.Paths) error {
 // which prevents libdoorstop from injecting BepInEx. Steam updates can re-sign
 // the binary, so this should run before every launch.
 func RemoveCodeSignature(paths config.Paths) error {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
 	appPath := filepath.Join(paths.ValheimDir, "valheim.app")
 	if _, err := os.Stat(appPath); os.IsNotExist(err) {
 		return nil // no .app bundle, nothing to do
@@ -273,6 +283,9 @@ func RemoveCodeSignature(paths config.Paths) error {
 
 // MakeExecutable sets executable permissions on required files.
 func MakeExecutable(paths config.Paths) error {
+	if runtime.GOOS != "darwin" {
+		return nil
+	}
 	files := []string{
 		paths.RunBepInExScript(),
 		filepath.Join(paths.ValheimDir, "libdoorstop.dylib"),
@@ -304,6 +317,18 @@ func extractFile(f *zip.File, destPath string) error {
 
 	_, err = io.Copy(out, rc)
 	return err
+}
+
+func installDestPath(paths config.Paths, name string) string {
+	if runtime.GOOS != "windows" {
+		return filepath.Join(paths.ValheimDir, name)
+	}
+
+	trimmed := strings.TrimPrefix(filepath.ToSlash(name), "./")
+	if trimmed == "BepInEx" || strings.HasPrefix(trimmed, "BepInEx/") {
+		return filepath.Join(paths.ProfileDir("default"), filepath.FromSlash(trimmed))
+	}
+	return filepath.Join(paths.ValheimDir, filepath.FromSlash(trimmed))
 }
 
 // removeDanglingSymlinks removes symlinks in a directory that point to non-existent targets.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"mmcli/internal/config"
 )
@@ -28,12 +29,26 @@ func Create(paths config.Paths, name string) error {
 	if err := os.MkdirAll(paths.ProfileMonomodDir(name), 0755); err != nil {
 		return fmt.Errorf("failed to create monomod dir: %w", err)
 	}
+	if runtime.GOOS == "windows" {
+		if err := os.MkdirAll(paths.ProfileCoreDir(name), 0755); err != nil {
+			return fmt.Errorf("failed to create core dir: %w", err)
+		}
+	}
 
-	// Copy BepInEx.cfg from BepInEx/config if it exists (follow symlinks)
 	srcCfg := filepath.Join(paths.BepInExConfigDir(), "BepInEx.cfg")
+	templateProfile, hasTemplate := findTemplateProfile(paths, name)
+	if runtime.GOOS == "windows" {
+		srcCfg = filepath.Join(paths.ProfileConfigDir(templateProfile), "BepInEx.cfg")
+	}
 	if data, err := os.ReadFile(srcCfg); err == nil {
 		dstCfg := filepath.Join(paths.ProfileConfigDir(name), "BepInEx.cfg")
-		os.WriteFile(dstCfg, data, 0644)
+		_ = os.WriteFile(dstCfg, data, 0644)
+	}
+
+	if runtime.GOOS == "windows" && hasTemplate {
+		if err := copyDirContents(paths.ProfileCoreDir(templateProfile), paths.ProfileCoreDir(name)); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to copy core dir: %w", err)
+		}
 	}
 
 	return nil
@@ -57,15 +72,15 @@ func List(paths config.Paths) ([]string, error) {
 	return names, nil
 }
 
-// Switch changes the active profile and re-points symlinks.
+// Switch changes the active profile and activates its BepInEx paths.
 func Switch(paths config.Paths, cfg *config.Config, name string) error {
 	profileDir := paths.ProfileDir(name)
 	if _, err := os.Stat(profileDir); os.IsNotExist(err) {
 		return fmt.Errorf("profile '%s' does not exist", name)
 	}
 
-	if err := ActivateSymlinks(paths, name); err != nil {
-		return fmt.Errorf("failed to activate symlinks: %w", err)
+	if err := Activate(paths, name); err != nil {
+		return fmt.Errorf("failed to activate profile: %w", err)
 	}
 
 	cfg.ActiveProfile = name
@@ -82,6 +97,14 @@ func Delete(paths config.Paths, cfg config.Config, name string) error {
 		return fmt.Errorf("profile '%s' does not exist", name)
 	}
 	return os.RemoveAll(profileDir)
+}
+
+// Activate makes the given profile's directories the active BepInEx targets.
+func Activate(paths config.Paths, name string) error {
+	if runtime.GOOS == "windows" {
+		return writeDoorstopConfig(paths, name)
+	}
+	return ActivateSymlinks(paths, name)
 }
 
 // ActivateSymlinks makes the given profile's directories the active symlink targets.
@@ -161,4 +184,68 @@ func migrateContents(src, dst string) error {
 		}
 	}
 	return nil
+}
+
+func writeDoorstopConfig(paths config.Paths, name string) error {
+	preloader := filepath.Join(paths.ProfileCoreDir(name), "BepInEx.Preloader.dll")
+	if _, err := os.Stat(preloader); err != nil {
+		return fmt.Errorf("BepInEx preloader not found at %s", preloader)
+	}
+
+	content := fmt.Sprintf(`[UnityDoorstop]
+enabled=true
+targetAssembly=%s
+redirectOutputLog=false
+ignoreDisableSwitch=false
+dllSearchPathOverride=unstripped_corlib
+`, preloader)
+
+	return os.WriteFile(filepath.Join(paths.ValheimDir, "doorstop_config.ini"), []byte(content), 0644)
+}
+
+func copyDirContents(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		srcPath := filepath.Join(src, entry.Name())
+		dstPath := filepath.Join(dst, entry.Name())
+		if entry.IsDir() {
+			if err := os.MkdirAll(dstPath, 0755); err != nil {
+				return err
+			}
+			if err := copyDirContents(srcPath, dstPath); err != nil {
+				return err
+			}
+			continue
+		}
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			return err
+		}
+		if err := os.MkdirAll(filepath.Dir(dstPath), 0755); err != nil {
+			return err
+		}
+		if err := os.WriteFile(dstPath, data, 0644); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func findTemplateProfile(paths config.Paths, exclude string) (string, bool) {
+	profiles, err := List(paths)
+	if err != nil {
+		return "", false
+	}
+	for _, name := range profiles {
+		if name == exclude {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(paths.ProfileCoreDir(name), "BepInEx.Preloader.dll")); err == nil {
+			return name, true
+		}
+	}
+	return "", false
 }

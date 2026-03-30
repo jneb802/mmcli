@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
@@ -16,6 +15,7 @@ import (
 
 	"mmcli/internal/config"
 	"mmcli/internal/installer"
+	"mmcli/internal/platform"
 	"mmcli/internal/profile"
 	"mmcli/internal/thunderstore"
 )
@@ -358,7 +358,7 @@ var profileOpenCmd = &cobra.Command{
 
 		profileDir := paths.ProfileDir(cfg.ActiveProfile)
 		fmt.Printf("Opening profile folder for %q: %s\n", cfg.ActiveProfile, profileDir)
-		return exec.Command("open", profileDir).Run()
+		return platform.OpenPath(profileDir)
 	},
 }
 

@@ -3,32 +3,30 @@ package runner
 import (
 	"fmt"
 	"os"
-	"os/exec"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/nxadm/tail"
 
 	"mmcli/internal/bepinex"
 	"mmcli/internal/config"
+	"mmcli/internal/platform"
 	"mmcli/internal/profile"
 )
 
-// Start launches Valheim via run_bepinex.sh and streams BepInEx logs.
+// Start launches Valheim and streams BepInEx logs.
 func Start(paths config.Paths, cfg config.Config) error {
 	// Delete stale log
-	logFile := paths.BepInExLogFile()
+	logFile := paths.ProfileLogFile(cfg.ActiveProfile)
 	os.Remove(logFile)
 
-	// Re-validate symlinks
-	if err := profile.ActivateSymlinks(paths, cfg.ActiveProfile); err != nil {
-		return fmt.Errorf("failed to validate symlinks: %w", err)
+	// Re-validate active profile wiring.
+	if err := profile.Activate(paths, cfg.ActiveProfile); err != nil {
+		return fmt.Errorf("failed to activate profile: %w", err)
 	}
 
-	scriptPath := paths.RunBepInExScript()
-	if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
-		return fmt.Errorf("run_bepinex.sh not found. Run `mmcli init` first")
+	target := platform.GameLaunchTarget(paths.ValheimDir)
+	if _, err := os.Stat(target); os.IsNotExist(err) {
+		return fmt.Errorf("game launch target not found at %s. Run `mmcli init` first", target)
 	}
 
 	// Strip code signature before every launch — Steam updates can re-sign the
@@ -40,18 +38,9 @@ func Start(paths config.Paths, cfg config.Config) error {
 	fmt.Printf("Launching Valheim (profile: %s)...\n", cfg.ActiveProfile)
 
 	// Launch game
-	cmd := exec.Command("/bin/bash", scriptPath)
-	cmd.Dir = paths.ValheimDir
-	cmd.Stderr = os.Stderr
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("failed to start game: %w", err)
-	}
-
-	pgid, err := syscall.Getpgid(cmd.Process.Pid)
+	cmd, pgid, err := platform.StartGameProcess(paths.ValheimDir, target)
 	if err != nil {
-		pgid = cmd.Process.Pid
+		return fmt.Errorf("failed to start game: %w", err)
 	}
 
 	// Start log tailing
@@ -67,7 +56,7 @@ func Start(paths config.Paths, cfg config.Config) error {
 
 	// Handle Ctrl+C
 	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	platform.NotifySignals(sigChan)
 
 	doneChan := make(chan error, 1)
 	go func() {
@@ -86,8 +75,7 @@ func Start(paths config.Paths, cfg config.Config) error {
 	select {
 	case <-sigChan:
 		fmt.Println("\nShutting down Valheim...")
-		// Kill the entire process group
-		syscall.Kill(-pgid, syscall.SIGTERM)
+		_ = platform.GracefulKill(cmd, pgid)
 
 		// Wait up to 5 seconds for graceful shutdown
 		timer := time.NewTimer(5 * time.Second)
@@ -96,7 +84,7 @@ func Start(paths config.Paths, cfg config.Config) error {
 			timer.Stop()
 		case <-timer.C:
 			fmt.Println("Force killing...")
-			syscall.Kill(-pgid, syscall.SIGKILL)
+			_ = platform.ForceKill(cmd, pgid)
 			<-doneChan
 		}
 	case err := <-doneChan:

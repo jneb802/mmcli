@@ -277,7 +277,7 @@ func modDirs(paths config.Paths, profile, modSubdir string) []string {
 		filepath.Join(paths.ProfilePluginsDir(profile), modSubdir),
 		filepath.Join(paths.ProfilePatchersDir(profile), modSubdir),
 		filepath.Join(paths.ProfileMonomodDir(profile), modSubdir),
-		filepath.Join(paths.BepInExCoreDir(), modSubdir),
+		filepath.Join(paths.ProfileCoreDir(profile), modSubdir),
 	}
 }
 
@@ -393,7 +393,7 @@ func extractMod(paths config.Paths, cfg config.Config, owner, name, zipPath stri
 		{"plugins/", filepath.Join(paths.ProfilePluginsDir(profile), modSubdir)},
 		{"patchers/", filepath.Join(paths.ProfilePatchersDir(profile), modSubdir)},
 		{"monomod/", filepath.Join(paths.ProfileMonomodDir(profile), modSubdir)},
-		{"core/", filepath.Join(paths.BepInExCoreDir(), modSubdir)},
+		{"core/", filepath.Join(paths.ProfileCoreDir(profile), modSubdir)},
 		{"config/", paths.ProfileConfigDir(profile)},
 	}
 
@@ -471,7 +471,7 @@ func removeModFilesKeepConfig(paths config.Paths, cfg config.Config, mod config.
 		paths.ProfilePluginsDir(profile),
 		paths.ProfilePatchersDir(profile),
 		paths.ProfileMonomodDir(profile),
-		paths.BepInExCoreDir(),
+		paths.ProfileCoreDir(profile),
 	} {
 		os.RemoveAll(filepath.Join(dir, modSubdir))
 	}
@@ -636,7 +636,7 @@ func removeModFiles(paths config.Paths, cfg config.Config, mod config.ModEntry) 
 		paths.ProfilePluginsDir(profile),
 		paths.ProfilePatchersDir(profile),
 		paths.ProfileMonomodDir(profile),
-		paths.BepInExCoreDir(),
+		paths.ProfileCoreDir(profile),
 	} {
 		os.RemoveAll(filepath.Join(dir, modSubdir))
 	}

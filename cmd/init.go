@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -87,39 +88,10 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("\033[32mdone\033[0m")
 
-	fmt.Print("Installing BepInEx... ")
-	if err := bepinex.Install(paths, zipPath); err != nil {
-		fmt.Println("\033[31mfailed\033[0m")
-		return err
-	}
-	fmt.Println("\033[32mdone\033[0m")
-
-	fmt.Print("Patching run_bepinex.sh for macOS... ")
-	if err := bepinex.PatchRunScript(paths); err != nil {
-		fmt.Println("\033[31mfailed\033[0m")
-		return err
-	}
-	if err := bepinex.MakeExecutable(paths); err != nil {
-		fmt.Println("\033[31mfailed\033[0m")
-		return err
-	}
-	fmt.Println("\033[32mdone\033[0m")
-
-	fmt.Print("Removing macOS quarantine attributes... ")
-	bepinex.RemoveQuarantine(paths)
-	fmt.Println("\033[32mdone\033[0m")
-
-	fmt.Print("Removing Valheim code signature (required for BepInEx injection)... ")
-	if err := bepinex.RemoveCodeSignature(paths); err != nil {
-		fmt.Printf("\033[33mwarning: %s\033[0m\n", err)
-	} else {
-		fmt.Println("\033[32mdone\033[0m")
-	}
-
-	// Create default profile
+	// Create default profile before install so Windows can place its BepInEx tree
+	// into the profile-local directory layout.
 	fmt.Print("Creating default profile... ")
 	if err := profile.Create(paths, "default"); err != nil {
-		// Profile might already exist from previous init
 		if !strings.Contains(err.Error(), "already exists") {
 			fmt.Println("\033[31mfailed\033[0m")
 			return err
@@ -127,9 +99,39 @@ func runInit(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println("\033[32mdone\033[0m")
 
-	// Activate symlinks (migrates existing plugins/config into default profile)
-	fmt.Print("Activating symlinks... ")
-	if err := profile.ActivateSymlinks(paths, "default"); err != nil {
+	fmt.Print("Installing BepInEx... ")
+	if err := bepinex.Install(paths, zipPath); err != nil {
+		fmt.Println("\033[31mfailed\033[0m")
+		return err
+	}
+	fmt.Println("\033[32mdone\033[0m")
+
+	if runtime.GOOS == "darwin" {
+		fmt.Print("Patching run_bepinex.sh for macOS... ")
+		if err := bepinex.PatchRunScript(paths); err != nil {
+			fmt.Println("\033[31mfailed\033[0m")
+			return err
+		}
+		if err := bepinex.MakeExecutable(paths); err != nil {
+			fmt.Println("\033[31mfailed\033[0m")
+			return err
+		}
+		fmt.Println("\033[32mdone\033[0m")
+
+		fmt.Print("Removing macOS quarantine attributes... ")
+		bepinex.RemoveQuarantine(paths)
+		fmt.Println("\033[32mdone\033[0m")
+
+		fmt.Print("Removing Valheim code signature (required for BepInEx injection)... ")
+		if err := bepinex.RemoveCodeSignature(paths); err != nil {
+			fmt.Printf("\033[33mwarning: %s\033[0m\n", err)
+		} else {
+			fmt.Println("\033[32mdone\033[0m")
+		}
+	}
+
+	fmt.Print("Activating default profile... ")
+	if err := profile.Activate(paths, "default"); err != nil {
 		fmt.Println("\033[31mfailed\033[0m")
 		return err
 	}

@@ -3,8 +3,8 @@ package tui
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +16,7 @@ import (
 	"mmcli/internal/config"
 	"mmcli/internal/installer"
 	"mmcli/internal/modpack"
+	"mmcli/internal/platform"
 	"mmcli/internal/profile"
 	"mmcli/internal/thunderstore"
 )
@@ -47,7 +48,7 @@ func (m *model) stopLocalLogStream() {
 
 func (m *model) loadLocalLogs() tea.Cmd {
 	m.stopLocalLogStream()
-	logFile := m.paths.BepInExLogFile()
+	logFile := m.paths.ProfileLogFile(m.cfg.ActiveProfile)
 	lines, size, err := readLogFile(logFile)
 	if err != nil {
 		m.local.err = fmt.Errorf("no log file found")
@@ -61,9 +62,9 @@ func (m *model) loadLocalLogs() tea.Cmd {
 }
 
 type localModel struct {
-	mods    []config.ModEntry
-	cursor  int
-	err     error
+	mods   []config.ModEntry
+	cursor int
+	err    error
 
 	gameRunning bool
 
@@ -73,16 +74,16 @@ type localModel struct {
 	creatingProfile bool
 	newProfileInput string
 
-	installing  bool
+	installing   bool
 	installInput string
-	installBusy bool
+	installBusy  bool
 
 	logs    logViewerState
 	logCh   <-chan []string
 	logStop chan struct{}
 
-	updates          map[string]string
-	checkingUpdates  bool
+	updates           map[string]string
+	checkingUpdates   bool
 	preflightFetching bool
 
 	settingsCursor int
@@ -119,9 +120,9 @@ func (m *model) refreshMods() {
 }
 
 type settingsItem struct {
-	label   string
-	value   string
-	tooltip string
+	label    string
+	value    string
+	tooltip  string
 	editable bool
 }
 
@@ -376,22 +377,22 @@ func streamLocalLogs(path string, lastSize int64) (<-chan []string, chan struct{
 
 func startGame(paths config.Paths, cfg config.Config) tea.Cmd {
 	return func() tea.Msg {
-		os.Remove(paths.BepInExLogFile())
+		os.Remove(paths.ProfileLogFile(cfg.ActiveProfile))
 
-		if err := profile.ActivateSymlinks(paths, cfg.ActiveProfile); err != nil {
-			return gameStartMsg{err: fmt.Errorf("failed to validate symlinks: %w", err)}
+		if err := profile.Activate(paths, cfg.ActiveProfile); err != nil {
+			return gameStartMsg{err: fmt.Errorf("failed to activate profile: %w", err)}
 		}
 
-		scriptPath := paths.RunBepInExScript()
-		if _, err := os.Stat(scriptPath); os.IsNotExist(err) {
-			return gameStartMsg{err: fmt.Errorf("run_bepinex.sh not found — run `mmcli init` first")}
+		target := platform.GameLaunchTarget(paths.ValheimDir)
+		if _, err := os.Stat(target); os.IsNotExist(err) {
+			return gameStartMsg{err: fmt.Errorf("game launch target not found — run `mmcli init` first")}
 		}
 
-		cmd := exec.Command("/bin/bash", scriptPath)
-		cmd.Dir = paths.ValheimDir
-		if err := cmd.Start(); err != nil {
+		cmd, _, err := platform.StartGameProcess(paths.ValheimDir, target)
+		if err != nil {
 			return gameStartMsg{err: fmt.Errorf("failed to start game: %w", err)}
 		}
+		go cmd.Wait()
 
 		return gameStartMsg{}
 	}
@@ -399,8 +400,7 @@ func startGame(paths config.Paths, cfg config.Config) tea.Cmd {
 
 func checkGameRunning() tea.Cmd {
 	return func() tea.Msg {
-		err := exec.Command("pgrep", "-x", "Valheim").Run()
-		return gameStatusMsg{running: err == nil}
+		return gameStatusMsg{running: platform.IsGameRunning()}
 	}
 }
 
@@ -512,7 +512,7 @@ func findConfigFile(paths config.Paths, profileName string, mod config.ModEntry)
 
 func openFile(path string) tea.Cmd {
 	return func() tea.Msg {
-		exec.Command("open", path).Start()
+		_ = platform.OpenPath(path)
 		return nil
 	}
 }
@@ -578,6 +578,11 @@ func detectBepInExVersion(paths config.Paths) string {
 	}
 	if _, err := os.Stat(paths.BepInExDir()); err == nil {
 		return "installed"
+	}
+	if runtime.GOOS == "windows" {
+		if _, err := os.Stat(filepath.Join(paths.ValheimDir, "winhttp.dll")); err == nil {
+			return "installed"
+		}
 	}
 	return ""
 }

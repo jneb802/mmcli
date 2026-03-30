@@ -17,12 +17,12 @@ mod issues after a game session.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		lines, _ := cmd.Flags().GetInt("lines")
 
-		paths, _, err := loadConfig()
+		paths, cfg, err := loadConfig()
 		if err != nil {
 			return err
 		}
 
-		logFile := paths.BepInExLogFile()
+		logFile := paths.ProfileLogFile(cfg.ActiveProfile)
 		data, err := os.ReadFile(logFile)
 		if err != nil {
 			return fmt.Errorf("no BepInEx log file found at %s", logFile)
