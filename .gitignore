@@ -15,3 +15,9 @@ vendor/
 
 # Local docs
 mod-sources.md
+
+# Build output
+dist/
+
+# Claude skills
+.claude/skills/
