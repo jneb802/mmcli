@@ -121,6 +121,12 @@ func Install(paths config.Paths, zipPath string) error {
 			continue
 		}
 
+		// Rename start_game_bepinex.sh to run_bepinex.sh so PatchRunScript
+		// and the macOS launch path can find it under the expected name.
+		if name == "start_game_bepinex.sh" {
+			name = "run_bepinex.sh"
+		}
+
 		// Skip metadata files
 		baseName := filepath.Base(name)
 		if skipFiles[baseName] {
