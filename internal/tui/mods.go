@@ -123,10 +123,12 @@ func (m model) buildAuditRows() []auditRow {
 	}
 
 	// Modpack mods
-	for _, dep := range m.modpack.deps {
-		key := fmt.Sprintf("%s-%s", dep.Owner, dep.Name)
-		r := ensure(key)
-		r.ModpackVersion = syncVersionStr(dep.Version)
+	if m.isModpackMode() {
+		for _, dep := range m.modpack.deps {
+			key := fmt.Sprintf("%s-%s", dep.Owner, dep.Name)
+			r := ensure(key)
+			r.ModpackVersion = syncVersionStr(dep.Version)
+		}
 	}
 
 	rows := make([]auditRow, len(order))
@@ -332,7 +334,7 @@ func (m model) viewModsFull() string {
 	if cursor >= len(rows) {
 		cursor = max(0, len(rows)-1)
 	}
-	renderAuditList(&b, rows, cursor, listVisible(m.height, 12), m.anticheatSystem)
+	renderAuditList(&b, rows, cursor, listVisible(m.height, 12), m.anticheatSystem, m.isModpackMode())
 
 	// Status bar
 	b.WriteString("\n")
@@ -556,14 +558,18 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 
 	case "f":
-		// Cycle filter
+		// Cycle filter — skip disabled modes
 		switch m.mods.filter {
 		case filterAll:
 			m.mods.filter = filterLocal
 		case filterLocal:
 			m.mods.filter = filterServer
 		case filterServer:
-			m.mods.filter = filterModpack
+			if m.isModpackMode() {
+				m.mods.filter = filterModpack
+			} else {
+				m.mods.filter = filterAll
+			}
 		case filterModpack:
 			m.mods.filter = filterAll
 		}
@@ -1157,7 +1163,7 @@ func (m model) filteredAuditRow() *auditRow {
 
 // --- Audit list rendering (moved from sync.go) ---
 
-func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, anticheatSystem string) {
+func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, anticheatSystem string, showModpack bool) {
 	if len(rows) == 0 {
 		b.WriteString("  No mods.\n")
 		return
@@ -1184,8 +1190,10 @@ func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, a
 		if w := displayWidth(r.ServerVersion); w > colServer {
 			colServer = w
 		}
-		if w := displayWidth(r.ModpackVersion); w > colModpack {
-			colModpack = w
+		if showModpack {
+			if w := displayWidth(r.ModpackVersion); w > colModpack {
+				colModpack = w
+			}
 		}
 		if showTarget {
 			if w := displayWidth(r.Target); w > colTarget {
@@ -1207,7 +1215,9 @@ func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, a
 	b.WriteString(padRight("Name", colName))
 	b.WriteString(padRight("Local", colLocal))
 	b.WriteString(padRight("Server", colServer))
-	b.WriteString(padRight("Modpack", colModpack))
+	if showModpack {
+		b.WriteString(padRight("Modpack", colModpack))
+	}
 	if showTarget {
 		b.WriteString(padRight("Target", colTarget))
 	}
@@ -1237,11 +1247,16 @@ func renderAuditList(b *strings.Builder, rows []auditRow, cursor, visible int, a
 			targetCol = auditTargetColor(r.Target, padRight(r.Target, colTarget))
 		}
 
+		modpackCol := ""
+		if showModpack {
+			modpackCol = padRight(r.ModpackVersion, colModpack)
+		}
+
 		fmt.Fprintf(b, "  %s%s%s%s%s%s%s\n", cur,
 			namePad,
 			padRight(r.LocalVersion, colLocal),
 			padRight(r.ServerVersion, colServer),
-			padRight(r.ModpackVersion, colModpack),
+			modpackCol,
 			targetCol,
 			auditModerationColor(r.Anticheat, modLabels[i]),
 		)

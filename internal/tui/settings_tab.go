@@ -155,23 +155,6 @@ func (m model) buildSettingsTabItems() []settingsTabItem {
 	// --- Local section ---
 	items = append(items, settingsTabItem{label: "Local", isSectionHeader: true})
 
-	// Anticheat
-	pref := m.cfg.AnticheatSystem
-	if pref == "" {
-		pref = "auto"
-	}
-	acValue := pref
-	if pref == "auto" {
-		acValue = fmt.Sprintf("%s \033[2m(resolved: %s)\033[0m", pref, m.anticheatSystem)
-	}
-	items = append(items, settingsTabItem{
-		label:    "Anticheat",
-		value:    acValue,
-		tooltip:  "Which anticheat mod to configure on push. Auto detects from installed mods.",
-		editable: true,
-		action:   "anticheat",
-	})
-
 	// Valheim path
 	items = append(items, settingsTabItem{
 		label:    "Valheim Path",
@@ -188,12 +171,57 @@ func (m model) buildSettingsTabItems() []settingsTabItem {
 		tooltip: "Active mod profile. Switch with 'p' on the Mods tab.",
 	})
 
-	if !m.isFullMode() {
-		return items
+	// Server management toggle (only show if a server is configured)
+	if m.cfg.ActiveServer != "" && m.server.client != nil {
+		smVal := "\033[32mon\033[0m"
+		if !m.cfg.ServerManagementEnabled() {
+			smVal = "\033[2moff\033[0m"
+		}
+		items = append(items, settingsTabItem{
+			label:    "Server Mode",
+			value:    smVal,
+			tooltip:  "Toggle server management tools (status, mods push, world settings, webhooks).",
+			editable: true,
+			action:   "server-mode",
+		})
 	}
+
+	// Modpack management toggle (only show if a modpack path is configured)
+	if m.cfg.ModpackPath != "" {
+		mmVal := "\033[32mon\033[0m"
+		if !m.cfg.ModpackManagementEnabled() {
+			mmVal = "\033[2moff\033[0m"
+		}
+		items = append(items, settingsTabItem{
+			label:    "Modpack Mode",
+			value:    mmVal,
+			tooltip:  "Toggle modpack management tools (manifest sync, publish, dependency tracking).",
+			editable: true,
+			action:   "modpack-mode",
+		})
+	}
+
+	if m.isFullMode() {
 
 	// --- Server section ---
 	items = append(items, settingsTabItem{label: "Server", isSectionHeader: true})
+
+	// Anticheat
+	pref := m.cfg.AnticheatSystem
+	if pref == "" {
+		pref = "auto"
+	}
+	acValue := pref
+	if pref == "auto" {
+		acValue = fmt.Sprintf("%s \033[2m(resolved: %s)\033[0m", pref, m.anticheatSystem)
+	}
+	items = append(items, settingsTabItem{
+		label:    "Anticheat",
+		value:    acValue,
+		tooltip:  "Which anticheat mod to configure on push. Auto detects from installed mods.",
+		editable: true,
+		action:   "anticheat",
+	})
 
 	// Server settings editor entry
 	items = append(items, settingsTabItem{
@@ -290,8 +318,10 @@ func (m model) buildSettingsTabItems() []settingsTabItem {
 		}
 	}
 
+	} // end isFullMode
+
 	// --- Modpack section ---
-	if m.cfg.ModpackPath != "" {
+	if m.isModpackMode() {
 		items = append(items, settingsTabItem{label: "Modpack", isSectionHeader: true})
 
 		// Token
@@ -520,6 +550,26 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		item := items[m.settingsTab.cursor]
 		switch item.action {
+		case "server-mode":
+			enabled := !m.cfg.ServerManagementEnabled()
+			m.cfg.ServerManagement = &enabled
+			config.Save(m.paths, m.cfg)
+			if m.isFullMode() {
+				m.mods.auditRows = m.buildAuditRows()
+				// Kick off server polling since Init() won't re-run
+				m.server.fetching = true
+				return m, tea.Batch(fetchServerStatus(m.server.client), serverTick())
+			}
+		case "modpack-mode":
+			enabled := !m.cfg.ModpackManagementEnabled()
+			m.cfg.ModpackManagement = &enabled
+			config.Save(m.paths, m.cfg)
+			if enabled {
+				m.modpack.loadFromDisk(m.cfg.ModpackPath)
+			}
+			if m.isFullMode() {
+				m.mods.auditRows = m.buildAuditRows()
+			}
 		case "anticheat":
 			switch m.cfg.AnticheatSystem {
 			case "", "auto":

@@ -24,9 +24,21 @@ type Config struct {
 	ActiveServer       string                 `json:"active_server,omitempty"`
 	Servers            map[string]ServerEntry `json:"servers,omitempty"`
 	AnticheatSystem    string                 `json:"anticheat_system,omitempty"` // "auto", "azu", "enforcer", "" (= auto)
+	ServerManagement   *bool                  `json:"server_management,omitempty"`  // nil/true = enabled, false = disabled
 	ModpackPath        string                 `json:"modpack_path,omitempty"`
+	ModpackManagement  *bool                  `json:"modpack_management,omitempty"` // nil/true = enabled, false = disabled
 	ThunderstoreToken  string                 `json:"thunderstore_token,omitempty"`
 	ThunderstoreAuthor string                 `json:"thunderstore_author,omitempty"` // team/namespace on Thunderstore
+}
+
+// ServerManagementEnabled returns true if server management is enabled (default: true).
+func (c Config) ServerManagementEnabled() bool {
+	return c.ServerManagement == nil || *c.ServerManagement
+}
+
+// ModpackManagementEnabled returns true if modpack management is enabled (default: true).
+func (c Config) ModpackManagementEnabled() bool {
+	return c.ModpackManagement == nil || *c.ModpackManagement
 }
 
 type Paths struct {

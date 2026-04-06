@@ -40,7 +40,11 @@ func flatTabName(t flatTab) string {
 }
 
 func (m model) isFullMode() bool {
-	return m.server.client != nil
+	return m.server.client != nil && m.cfg.ServerManagementEnabled()
+}
+
+func (m model) isModpackMode() bool {
+	return m.cfg.ModpackPath != "" && m.cfg.ModpackManagementEnabled()
 }
 
 func (m model) availableTabs() []flatTab {
@@ -96,7 +100,7 @@ func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model
 	}
 
 	// Load modpack data at startup (needed by audit rows)
-	if cfg.ModpackPath != "" {
+	if m.isModpackMode() {
 		m.modpack.loadFromDisk(cfg.ModpackPath)
 	}
 
@@ -153,7 +157,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			config.SaveRegistry(m.paths, *m.reg)
 			m.refreshMods()
 			if m.isFullMode() {
-				m.modpack.loadFromDisk(m.cfg.ModpackPath)
+				if m.isModpackMode() {
+					m.modpack.loadFromDisk(m.cfg.ModpackPath)
+				}
 				m.mods.auditRows = m.buildAuditRows()
 			}
 			m.local.checkingUpdates = true
