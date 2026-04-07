@@ -37,8 +37,9 @@ func Start(paths config.Paths, cfg config.Config) error {
 
 	fmt.Printf("Launching Valheim (profile: %s)...\n", cfg.ActiveProfile)
 
-	// Launch game
-	cmd, pgid, err := platform.StartGameProcess(paths.ValheimDir, target)
+	// Launch game — pass empty logPath so output goes to the terminal (no TUI
+	// to corrupt in CLI mode).
+	cmd, pgid, _, err := platform.StartGameProcess(paths.ValheimDir, target, "")
 	if err != nil {
 		return fmt.Errorf("failed to start game: %w", err)
 	}

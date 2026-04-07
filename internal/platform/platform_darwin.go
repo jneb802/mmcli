@@ -45,21 +45,37 @@ func IsGameRunning() bool {
 
 // StartGameProcess launches Valheim via /bin/bash run_bepinex.sh with a
 // dedicated process group so the entire tree can be killed on shutdown.
-func StartGameProcess(workDir, target string) (*exec.Cmd, int, error) {
+// When logPath is non-empty, stdout and stderr are redirected to that file
+// so game output doesn't corrupt a TUI. The caller must close the returned
+// *os.File when the process exits; it may be nil when logPath is empty.
+func StartGameProcess(workDir, target, logPath string) (*exec.Cmd, int, *os.File, error) {
 	cmd := exec.Command("/bin/bash", target)
 	cmd.Dir = workDir
-	cmd.Stderr = os.Stderr
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 
+	var lf *os.File
+	if logPath != "" {
+		f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			return nil, 0, nil, fmt.Errorf("open log file: %w", err)
+		}
+		cmd.Stdout = f
+		cmd.Stderr = f
+		lf = f
+	}
+
 	if err := cmd.Start(); err != nil {
-		return nil, 0, err
+		if lf != nil {
+			lf.Close()
+		}
+		return nil, 0, nil, err
 	}
 
 	pgid, err := syscall.Getpgid(cmd.Process.Pid)
 	if err != nil {
 		pgid = cmd.Process.Pid
 	}
-	return cmd, pgid, nil
+	return cmd, pgid, lf, nil
 }
 
 // GracefulKill sends SIGTERM to the process group.

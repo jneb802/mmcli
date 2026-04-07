@@ -377,7 +377,8 @@ func streamLocalLogs(path string, lastSize int64) (<-chan []string, chan struct{
 
 func startGame(paths config.Paths, cfg config.Config) tea.Cmd {
 	return func() tea.Msg {
-		os.Remove(paths.ProfileLogFile(cfg.ActiveProfile))
+		logPath := paths.ProfileLogFile(cfg.ActiveProfile)
+		os.Remove(logPath)
 
 		if err := profile.Activate(paths, cfg.ActiveProfile); err != nil {
 			return gameStartMsg{err: fmt.Errorf("failed to activate profile: %w", err)}
@@ -388,11 +389,16 @@ func startGame(paths config.Paths, cfg config.Config) tea.Cmd {
 			return gameStartMsg{err: fmt.Errorf("game launch target not found — run `mmcli init` first")}
 		}
 
-		cmd, _, err := platform.StartGameProcess(paths.ValheimDir, target)
+		cmd, _, lf, err := platform.StartGameProcess(paths.ValheimDir, target, logPath)
 		if err != nil {
 			return gameStartMsg{err: fmt.Errorf("failed to start game: %w", err)}
 		}
-		go cmd.Wait()
+		go func() {
+			cmd.Wait()
+			if lf != nil {
+				lf.Close()
+			}
+		}()
 
 		return gameStartMsg{}
 	}
