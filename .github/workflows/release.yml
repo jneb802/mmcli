@@ -95,14 +95,3 @@ jobs:
           git add Formula/mmcli.rb
           git commit -m "Update mmcli to ${{ needs.build-and-upload.outputs.version }}"
           git push
-
-  notify-agent:
-    needs: build-and-upload
-    runs-on: ubuntu-latest
-    steps:
-      - name: Trigger agent self-update
-        run: |
-          curl -sf -X POST \
-            -H "X-API-Key: ${{ secrets.AGENT_ADMIN_SECRET }}" \
-            "${{ secrets.AGENT_URL }}/api/v1/update" \
-            --max-time 30 || echo "Agent update skipped (server may be offline)"
