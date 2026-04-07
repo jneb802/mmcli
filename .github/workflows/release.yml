@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build release binaries
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          GOOS=darwin GOARCH=arm64 go build -o dist/mmcli-darwin-arm64 -ldflags "-X mmcli/cmd.Version=$VERSION" .
+          GOOS=darwin GOARCH=amd64 go build -o dist/mmcli-darwin-amd64 -ldflags "-X mmcli/cmd.Version=$VERSION" .
+          GOOS=linux GOARCH=amd64 go build -o dist/mmcli-agent-linux-amd64 -ldflags "-X main.Version=$VERSION" ./cmd/agent
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" \
+            dist/mmcli-darwin-arm64 \
+            dist/mmcli-darwin-amd64 \
+            dist/mmcli-agent-linux-amd64

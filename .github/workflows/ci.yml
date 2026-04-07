@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build all targets
+        run: |
+          GOOS=darwin GOARCH=arm64 go build -o dist/mmcli-darwin-arm64 -ldflags "-X mmcli/cmd.Version=ci" .
+          GOOS=darwin GOARCH=amd64 go build -o dist/mmcli-darwin-amd64 -ldflags "-X mmcli/cmd.Version=ci" .
+          GOOS=linux GOARCH=amd64 go build -o dist/mmcli-agent-linux-amd64 -ldflags "-X main.Version=ci" ./cmd/agent
+
+      - name: Run tests
+        run: go test ./...
