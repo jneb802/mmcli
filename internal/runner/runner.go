@@ -32,7 +32,7 @@ func Start(paths config.Paths, cfg config.Config) error {
 	// Strip code signature before every launch — Steam updates can re-sign the
 	// binary, and macOS blocks DYLD_INSERT_LIBRARIES for signed apps.
 	if err := bepinex.RemoveCodeSignature(paths); err != nil {
-		fmt.Printf("Warning: could not remove code signature: %v\n", err)
+		return fmt.Errorf("could not remove Valheim code signature (game will crash without this): %w", err)
 	}
 
 	fmt.Printf("Launching Valheim (profile: %s)...\n", cfg.ActiveProfile)
