@@ -279,10 +279,47 @@ func RemoveCodeSignature(paths config.Paths) error {
 		return nil // not signed or codesign not available
 	}
 
-	// Remove the signature so DYLD_INSERT_LIBRARIES works
+	// Try removing the signature from the .app bundle first
 	remove := exec.Command("codesign", "--remove-signature", appPath)
 	if out, err := remove.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to remove code signature: %s", string(out))
+		// Bundle-level removal can fail with "internal error in Code Signing
+		// subsystem" on some machines. Fall back to stripping the inner binary.
+		innerErr := removeInnerBinarySignature(appPath)
+		if innerErr != nil {
+			return fmt.Errorf("failed to remove code signature from bundle (%s) and inner binary (%w)", strings.TrimSpace(string(out)), innerErr)
+		}
+	}
+	return nil
+}
+
+// removeInnerBinarySignature finds the main executable inside a .app bundle
+// and removes its code signature directly.
+func removeInnerBinarySignature(appPath string) error {
+	macosDir := filepath.Join(appPath, "Contents", "MacOS")
+	entries, err := os.ReadDir(macosDir)
+	if err != nil {
+		return fmt.Errorf("cannot read Contents/MacOS: %w", err)
+	}
+
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		binPath := filepath.Join(macosDir, e.Name())
+		info, err := e.Info()
+		if err != nil || info.Mode()&0111 == 0 {
+			continue // skip non-executable files
+		}
+
+		check := exec.Command("codesign", "-d", binPath)
+		if check.Run() != nil {
+			continue // not signed
+		}
+
+		remove := exec.Command("codesign", "--remove-signature", binPath)
+		if out, err := remove.CombinedOutput(); err != nil {
+			return fmt.Errorf("%s: %s", e.Name(), strings.TrimSpace(string(out)))
+		}
 	}
 	return nil
 }
