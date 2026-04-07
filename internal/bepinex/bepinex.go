@@ -171,7 +171,11 @@ func PatchRunScript(paths config.Paths) error {
 
 	// Comment out the arch detection case block — it rejects Apple Silicon binaries.
 	// The block starts with `case "${file_out}" in` and ends with `esac`.
+	// Then hardcode arch="x64" since we force Rosetta (the commented-out block
+	// is where arch was originally set, so without this doorstop_name resolves
+	// to "libdoorstop_.dylib" which doesn't exist).
 	content = commentOutArchCheck(content)
+	content = replaceScriptVar(content, "arch", "x64")
 
 	// Replace the stock `exec "$executable_path" $rest_args` launch with an
 	// `arch -x86_64 zsh` wrapper that re-exports the doorstop env vars and
