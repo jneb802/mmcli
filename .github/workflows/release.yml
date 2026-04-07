@@ -1,51 +1,85 @@
 name: Release
 
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
 
 permissions:
   contents: write
 
 jobs:
-  build-and-upload:
+  release:
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ github.event.release.tag_name }}
+      version: ${{ steps.version.outputs.tag }}
       sha256_arm64: ${{ steps.hashes.outputs.arm64 }}
       sha256_amd64: ${{ steps.hashes.outputs.amd64 }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine next version
+        id: version
+        run: |
+          latest=$(git tag --sort=-v:refname | grep '^v' | head -1)
+          if [ -z "$latest" ]; then
+            next="v0.1.0"
+          else
+            # Bump patch version
+            major=$(echo "$latest" | cut -d. -f1)
+            minor=$(echo "$latest" | cut -d. -f2)
+            patch=$(echo "$latest" | cut -d. -f3)
+            next="${major}.${minor}.$((patch + 1))"
+          fi
+          echo "tag=$next" >> "$GITHUB_OUTPUT"
+          echo "Next version: $next"
+
+      - name: Check if tag already exists
+        id: check
+        run: |
+          if git rev-parse "${{ steps.version.outputs.tag }}" >/dev/null 2>&1; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - uses: actions/setup-go@v5
+        if: steps.check.outputs.skip == 'false'
         with:
           go-version-file: go.mod
 
       - name: Build release binaries
+        if: steps.check.outputs.skip == 'false'
         env:
-          VERSION: ${{ github.event.release.tag_name }}
+          VERSION: ${{ steps.version.outputs.tag }}
         run: |
           GOOS=darwin GOARCH=arm64 go build -o dist/mmcli-darwin-arm64 -ldflags "-X mmcli/cmd.Version=$VERSION" .
           GOOS=darwin GOARCH=amd64 go build -o dist/mmcli-darwin-amd64 -ldflags "-X mmcli/cmd.Version=$VERSION" .
           GOOS=linux GOARCH=amd64 go build -o dist/mmcli-agent-linux-amd64 -ldflags "-X main.Version=$VERSION" ./cmd/agent
 
       - name: Compute SHA256 hashes
+        if: steps.check.outputs.skip == 'false'
         id: hashes
         run: |
           echo "arm64=$(shasum -a 256 dist/mmcli-darwin-arm64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
           echo "amd64=$(shasum -a 256 dist/mmcli-darwin-amd64 | awk '{print $1}')" >> "$GITHUB_OUTPUT"
 
-      - name: Upload release assets
+      - name: Create release
+        if: steps.check.outputs.skip == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release upload "${{ github.event.release.tag_name }}" \
+          gh release create "${{ steps.version.outputs.tag }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --generate-notes \
             dist/mmcli-darwin-arm64 \
             dist/mmcli-darwin-amd64 \
             dist/mmcli-agent-linux-amd64
 
   update-homebrew:
-    needs: build-and-upload
+    needs: release
+    if: needs.release.outputs.version != ''
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -55,9 +89,9 @@ jobs:
 
       - name: Update formula
         env:
-          VERSION: ${{ needs.build-and-upload.outputs.version }}
-          SHA256_ARM64: ${{ needs.build-and-upload.outputs.sha256_arm64 }}
-          SHA256_AMD64: ${{ needs.build-and-upload.outputs.sha256_amd64 }}
+          VERSION: ${{ needs.release.outputs.version }}
+          SHA256_ARM64: ${{ needs.release.outputs.sha256_arm64 }}
+          SHA256_AMD64: ${{ needs.release.outputs.sha256_amd64 }}
         run: |
           cat > Formula/mmcli.rb << FORMULA
           class Mmcli < Formula
@@ -93,5 +127,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/mmcli.rb
-          git commit -m "Update mmcli to ${{ needs.build-and-upload.outputs.version }}"
+          git commit -m "Update mmcli to ${{ needs.release.outputs.version }}"
           git push
