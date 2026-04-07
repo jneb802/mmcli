@@ -12,7 +12,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"mmcli/internal/agentapi"
-	"mmcli/internal/bepinex"
 	"mmcli/internal/client"
 	"mmcli/internal/config"
 	"mmcli/internal/installer"
@@ -388,10 +387,6 @@ func startGame(paths config.Paths, cfg config.Config) tea.Cmd {
 		target := platform.GameLaunchTarget(paths.ValheimDir)
 		if _, err := os.Stat(target); os.IsNotExist(err) {
 			return gameStartMsg{err: fmt.Errorf("game launch target not found — run `mmcli init` first")}
-		}
-
-		if err := bepinex.RemoveCodeSignature(paths); err != nil {
-			return gameStartMsg{err: fmt.Errorf("could not remove Valheim code signature: %w", err)}
 		}
 
 		cmd, _, lf, err := platform.StartGameProcess(paths.ValheimDir, target, logPath)

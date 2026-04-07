@@ -260,37 +260,6 @@ func RemoveQuarantine(paths config.Paths) error {
 	return nil
 }
 
-// RemoveCodeSignature strips the code signature from the Valheim Mach-O binary.
-// macOS refuses to honor DYLD_INSERT_LIBRARIES for code-signed executables,
-// which prevents libdoorstop from injecting BepInEx. Steam updates can re-sign
-// the binary, so this should run before every launch.
-//
-// We target the inner Mach-O binary (Contents/MacOS/Valheim) rather than the
-// .app bundle to avoid "internal error in Code Signing subsystem" failures
-// caused by nested signed bundles (steam_api.bundle, PlayFabPartyMacOS.bundle).
-func RemoveCodeSignature(paths config.Paths) error {
-	if runtime.GOOS != "darwin" {
-		return nil
-	}
-	binaryPath := filepath.Join(paths.ValheimDir, "valheim.app", "Contents", "MacOS", "Valheim")
-	if _, err := os.Stat(binaryPath); os.IsNotExist(err) {
-		return nil // no binary found, nothing to do
-	}
-
-	// Check if the binary is code-signed
-	check := exec.Command("codesign", "-d", binaryPath)
-	if err := check.Run(); err != nil {
-		return nil // not signed or codesign not available
-	}
-
-	// Remove the signature so DYLD_INSERT_LIBRARIES works
-	remove := exec.Command("codesign", "--remove-signature", binaryPath)
-	if out, err := remove.CombinedOutput(); err != nil {
-		return fmt.Errorf("failed to remove code signature: %s", string(out))
-	}
-	return nil
-}
-
 // MakeExecutable sets executable permissions on required files.
 func MakeExecutable(paths config.Paths) error {
 	if runtime.GOOS != "darwin" {
