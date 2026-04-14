@@ -168,7 +168,8 @@ func EnsureInitialized(p Paths) (Config, error) {
 }
 
 // MigrateProfileSettings moves legacy global config fields to per-profile
-// registry settings. Returns whether config and registry were modified.
+// registry settings for all existing profiles. Returns whether config and
+// registry were modified.
 func MigrateProfileSettings(cfg *Config, reg *Registry, activeProfile string) (cfgDirty, regDirty bool) {
 	hasOldFields := cfg.ActiveServer != "" || cfg.ServerManagement != nil ||
 		cfg.ModpackPath != "" || cfg.ModpackManagement != nil ||
@@ -177,24 +178,26 @@ func MigrateProfileSettings(cfg *Config, reg *Registry, activeProfile string) (c
 		return false, false
 	}
 
-	ps := reg.GetSettings(activeProfile)
+	for name := range reg.Profiles {
+		ps := reg.GetSettings(name)
 
-	if ps.Server == "" && cfg.ActiveServer != "" {
-		ps.Server = cfg.ActiveServer
+		if ps.Server == "" && cfg.ActiveServer != "" {
+			ps.Server = cfg.ActiveServer
+		}
+		if ps.ServerManagement == nil && cfg.ServerManagement != nil {
+			ps.ServerManagement = cfg.ServerManagement
+		}
+		if ps.ModpackPath == "" && cfg.ModpackPath != "" {
+			ps.ModpackPath = cfg.ModpackPath
+		}
+		if ps.ModpackManagement == nil && cfg.ModpackManagement != nil {
+			ps.ModpackManagement = cfg.ModpackManagement
+		}
+		if ps.AnticheatSystem == "" && cfg.AnticheatSystem != "" {
+			ps.AnticheatSystem = cfg.AnticheatSystem
+		}
+		reg.SetSettings(name, ps)
 	}
-	if ps.ServerManagement == nil && cfg.ServerManagement != nil {
-		ps.ServerManagement = cfg.ServerManagement
-	}
-	if ps.ModpackPath == "" && cfg.ModpackPath != "" {
-		ps.ModpackPath = cfg.ModpackPath
-	}
-	if ps.ModpackManagement == nil && cfg.ModpackManagement != nil {
-		ps.ModpackManagement = cfg.ModpackManagement
-	}
-	if ps.AnticheatSystem == "" && cfg.AnticheatSystem != "" {
-		ps.AnticheatSystem = cfg.AnticheatSystem
-	}
-	reg.SetSettings(activeProfile, ps)
 
 	cfg.ActiveServer = ""
 	cfg.ServerManagement = nil

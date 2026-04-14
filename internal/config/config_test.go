@@ -506,6 +506,8 @@ func TestMigrateProfileSettings(t *testing.T) {
 		AnticheatSystem:  "enforcer",
 	}
 	reg := NewRegistry()
+	reg.EnsureProfile("default")
+	reg.EnsureProfile("other")
 
 	cfgDirty, regDirty := MigrateProfileSettings(&cfg, &reg, "default")
 	if !cfgDirty || !regDirty {
@@ -526,19 +528,21 @@ func TestMigrateProfileSettings(t *testing.T) {
 		t.Errorf("AnticheatSystem should be empty after migration, got %q", cfg.AnticheatSystem)
 	}
 
-	// Profile settings should have the values
-	ps := reg.GetSettings("default")
-	if ps.Server != "myserver" {
-		t.Errorf("Server = %q, want %q", ps.Server, "myserver")
-	}
-	if ps.ServerManagementEnabled() {
-		t.Error("ServerManagement should be disabled after migration")
-	}
-	if ps.ModpackPath != "/modpack" {
-		t.Errorf("ModpackPath = %q, want %q", ps.ModpackPath, "/modpack")
-	}
-	if ps.AnticheatSystem != "enforcer" {
-		t.Errorf("AnticheatSystem = %q, want %q", ps.AnticheatSystem, "enforcer")
+	// All profiles should have the values
+	for _, name := range []string{"default", "other"} {
+		ps := reg.GetSettings(name)
+		if ps.Server != "myserver" {
+			t.Errorf("%s: Server = %q, want %q", name, ps.Server, "myserver")
+		}
+		if ps.ServerManagementEnabled() {
+			t.Errorf("%s: ServerManagement should be disabled after migration", name)
+		}
+		if ps.ModpackPath != "/modpack" {
+			t.Errorf("%s: ModpackPath = %q, want %q", name, ps.ModpackPath, "/modpack")
+		}
+		if ps.AnticheatSystem != "enforcer" {
+			t.Errorf("%s: AnticheatSystem = %q, want %q", name, ps.AnticheatSystem, "enforcer")
+		}
 	}
 }
 
@@ -559,6 +563,7 @@ func TestMigrateProfileSettingsPreservesExisting(t *testing.T) {
 		ActiveServer:  "newserver",
 	}
 	reg := NewRegistry()
+	reg.EnsureProfile("default")
 	reg.SetSettings("default", ProfileSettings{Server: "existingserver"})
 
 	MigrateProfileSettings(&cfg, &reg, "default")
