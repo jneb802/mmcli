@@ -156,6 +156,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.mods.installing = false
 		m.local.installBusy = false
 		m.local.installing = false
+		// If a single mod was updated successfully, remove it from the update list
+		// so the banner reflects the change immediately before the recheck runs.
+		updatedName := m.mods.updateName
+		m.mods.updateName = ""
+		m.mods.updateFromVer = ""
+		m.mods.updateToVer = ""
 		if msg.err != nil {
 			m.mods.err = msg.err
 			m.local.err = msg.err
@@ -171,7 +177,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.mods.auditRows = m.buildAuditRows()
 			}
-			m.local.updates = make(map[string]string)
+			if updatedName != "" {
+				delete(m.local.updates, updatedName)
+			} else {
+				m.local.updates = make(map[string]string)
+			}
 			m.local.checkingUpdates = true
 			return m, checkUpdates(m.local.mods)
 		}
