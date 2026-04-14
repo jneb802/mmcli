@@ -402,7 +402,6 @@ func (m model) viewModsLocal() string {
 	}
 
 	updateCount := len(m.local.updates)
-	bannerLines := 0
 	if m.local.checkingUpdates {
 		b.WriteString("\n  \033[2mchecking for updates...\033[0m\n")
 	} else if updateCount > 0 {
@@ -411,24 +410,6 @@ func (m model) viewModsLocal() string {
 		} else {
 			fmt.Fprintf(&b, "\n    \033[33m%d update(s) available\033[0m\n", updateCount)
 		}
-		// Sorted list of mods with updates
-		updateNames := make([]string, 0, updateCount)
-		for name := range m.local.updates {
-			updateNames = append(updateNames, name)
-		}
-		sort.Strings(updateNames)
-		for _, name := range updateNames {
-			latest := m.local.updates[name]
-			cur := ""
-			for _, mod := range m.local.mods {
-				if mod.FullName() == name {
-					cur = mod.Version
-					break
-				}
-			}
-			fmt.Fprintf(&b, "    \033[2m%s  %s → %s\033[0m\n", name, cur, latest)
-		}
-		bannerLines = updateCount
 	}
 	b.WriteString("\n")
 
@@ -442,7 +423,7 @@ func (m model) viewModsLocal() string {
 			Update:   m.local.updates[mod.FullName()],
 		}
 	}
-	renderModList(&b, items, m.mods.cursor, listVisible(m.height, 11+bannerLines), false, m.anticheatSystem)
+	renderModList(&b, items, m.mods.cursor, listVisible(m.height, 11), false, m.anticheatSystem)
 
 	// Status bar
 	b.WriteString("\n")

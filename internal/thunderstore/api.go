@@ -12,6 +12,43 @@ const (
 	experimentalAPI = baseURL + "/api/experimental/package/"
 )
 
+// GetPackageVersion fetches a specific version of a package from the experimental API.
+func GetPackageVersion(owner, name, version string) (*Package, error) {
+	url := fmt.Sprintf("%s%s/%s/%s/", experimentalAPI, owner, name, version)
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch package version: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("version %s of %s-%s not found (HTTP %d)", version, owner, name, resp.StatusCode)
+	}
+
+	var ev ExperimentalVersion
+	if err := json.NewDecoder(resp.Body).Decode(&ev); err != nil {
+		return nil, fmt.Errorf("failed to decode version response: %w", err)
+	}
+
+	pkg := &Package{
+		Owner:    owner,
+		Name:     name,
+		FullName: fmt.Sprintf("%s-%s", owner, name),
+		Versions: []Version{
+			{
+				Name:          name,
+				FullName:      fmt.Sprintf("%s-%s-%s", owner, name, ev.VersionNumber),
+				VersionNumber: ev.VersionNumber,
+				DownloadURL:   ev.DownloadURL,
+				Dependencies:  ev.Dependencies,
+				Description:   ev.Description,
+				FileSize:      ev.FileSize,
+			},
+		},
+	}
+	return pkg, nil
+}
+
 // GetPackage fetches a single package from the experimental API.
 func GetPackage(owner, name string) (*Package, error) {
 	url := fmt.Sprintf("%s%s/%s/", experimentalAPI, owner, name)
