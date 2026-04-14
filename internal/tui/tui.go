@@ -171,6 +171,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.mods.auditRows = m.buildAuditRows()
 			}
+			m.local.updates = make(map[string]string)
 			m.local.checkingUpdates = true
 			return m, checkUpdates(m.local.mods)
 		}
