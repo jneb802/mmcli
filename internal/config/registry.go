@@ -36,13 +36,34 @@ func (m ModEntry) FullName() string {
 	return fmt.Sprintf("%s-%s", m.Owner, m.Name)
 }
 
+// ProfileSettings stores per-profile configuration (server, modpack, anticheat).
+type ProfileSettings struct {
+	Server            string `json:"server,omitempty"`              // key into Config.Servers
+	ServerManagement  *bool  `json:"server_management,omitempty"`   // nil = enabled
+	ModpackPath       string `json:"modpack_path,omitempty"`
+	ModpackManagement *bool  `json:"modpack_management,omitempty"`  // nil = enabled
+	AnticheatSystem   string `json:"anticheat_system,omitempty"`    // "auto", "azu", "enforcer", ""
+}
+
+// ServerManagementEnabled returns true if server management is enabled (default: true).
+func (ps ProfileSettings) ServerManagementEnabled() bool {
+	return ps.ServerManagement == nil || *ps.ServerManagement
+}
+
+// ModpackManagementEnabled returns true if modpack management is enabled (default: true).
+func (ps ProfileSettings) ModpackManagementEnabled() bool {
+	return ps.ModpackManagement == nil || *ps.ModpackManagement
+}
+
 type Registry struct {
 	Profiles map[string]map[string]ModEntry `json:"profiles"`
+	Settings map[string]ProfileSettings     `json:"settings,omitempty"`
 }
 
 func NewRegistry() Registry {
 	return Registry{
 		Profiles: make(map[string]map[string]ModEntry),
+		Settings: make(map[string]ProfileSettings),
 	}
 }
 
@@ -61,6 +82,9 @@ func LoadRegistry(p Paths) (Registry, error) {
 	if reg.Profiles == nil {
 		reg.Profiles = make(map[string]map[string]ModEntry)
 	}
+	if reg.Settings == nil {
+		reg.Settings = make(map[string]ProfileSettings)
+	}
 	return reg, nil
 }
 
@@ -76,6 +100,19 @@ func (r *Registry) EnsureProfile(name string) {
 	if r.Profiles[name] == nil {
 		r.Profiles[name] = make(map[string]ModEntry)
 	}
+	if _, ok := r.Settings[name]; !ok {
+		r.Settings[name] = ProfileSettings{}
+	}
+}
+
+// GetSettings returns the profile settings for the given profile.
+func (r *Registry) GetSettings(profile string) ProfileSettings {
+	return r.Settings[profile]
+}
+
+// SetSettings stores the profile settings for the given profile.
+func (r *Registry) SetSettings(profile string, ps ProfileSettings) {
+	r.Settings[profile] = ps
 }
 
 func (r *Registry) GetMod(profile, fullName string) (ModEntry, bool) {

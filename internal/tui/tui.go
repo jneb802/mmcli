@@ -39,12 +39,28 @@ func flatTabName(t flatTab) string {
 	}
 }
 
+// connectServer resets the server model and connects to the profile's server if configured.
+func (m *model) connectServer() {
+	m.stopServerLogStream()
+	m.server = serverModel{}
+	if m.profileSettings.Server != "" {
+		if srv, ok := m.cfg.Servers[m.profileSettings.Server]; ok {
+			m.server.client = client.New(srv.Host, srv.Port, srv.Secret)
+			m.server.serverName = m.profileSettings.Server
+			m.server.role = srv.Role
+			if m.server.role == "" {
+				m.server.role = "admin"
+			}
+		}
+	}
+}
+
 func (m model) isFullMode() bool {
-	return m.server.client != nil && m.cfg.ServerManagementEnabled()
+	return m.server.client != nil && m.profileSettings.ServerManagementEnabled()
 }
 
 func (m model) isModpackMode() bool {
-	return m.cfg.ModpackPath != "" && m.cfg.ModpackManagementEnabled()
+	return m.profileSettings.ModpackPath != "" && m.profileSettings.ModpackManagementEnabled()
 }
 
 func (m model) availableTabs() []flatTab {
@@ -60,6 +76,7 @@ type model struct {
 	paths           config.Paths
 	cfg             config.Config
 	reg             *config.Registry
+	profileSettings config.ProfileSettings
 	mods            modsState
 	logs            logsState
 	status          statusState
@@ -74,34 +91,26 @@ type model struct {
 }
 
 func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model {
+	ps := reg.GetSettings(cfg.ActiveProfile)
 	m := model{
-		paths:       paths,
-		cfg:         cfg,
-		reg:         reg,
-		status:      statusState{cursor: 1},                        // skip "Local" section header
-		settingsTab: settingsTabState{cursor: 1, editingField: -1}, // skip "Local" section header
+		paths:           paths,
+		cfg:             cfg,
+		reg:             reg,
+		profileSettings: ps,
+		status:          statusState{cursor: 1},                        // skip "Local" section header
+		settingsTab:     settingsTabState{cursor: 1, editingField: -1}, // skip "Local" section header
 		local: localModel{
 			updates: make(map[string]string),
 		},
 	}
 	m.refreshMods()
-	m.anticheatSystem = resolveAnticheatSystem(cfg, m.local.mods)
+	m.anticheatSystem = resolveAnticheatSystem(ps.AnticheatSystem, m.local.mods)
 
-	// Set up server client if configured
-	if cfg.ActiveServer != "" {
-		if srv, ok := cfg.Servers[cfg.ActiveServer]; ok {
-			m.server.client = client.New(srv.Host, srv.Port, srv.Secret)
-			m.server.serverName = cfg.ActiveServer
-			m.server.role = srv.Role
-			if m.server.role == "" {
-				m.server.role = "admin"
-			}
-		}
-	}
+	m.connectServer()
 
 	// Load modpack data at startup (needed by audit rows)
 	if m.isModpackMode() {
-		m.modpack.loadFromDisk(cfg.ModpackPath)
+		m.modpack.loadFromDisk(ps.ModpackPath)
 	}
 
 	// Build initial audit rows for full mode
@@ -112,8 +121,8 @@ func newModel(paths config.Paths, cfg config.Config, reg *config.Registry) model
 	return m
 }
 
-func resolveAnticheatSystem(cfg config.Config, mods []config.ModEntry) string {
-	pref := cfg.AnticheatSystem
+func resolveAnticheatSystem(anticheatPref string, mods []config.ModEntry) string {
+	pref := anticheatPref
 	if pref == "azu" || pref == "enforcer" {
 		return pref
 	}
@@ -158,7 +167,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.refreshMods()
 			if m.isFullMode() {
 				if m.isModpackMode() {
-					m.modpack.loadFromDisk(m.cfg.ModpackPath)
+					m.modpack.loadFromDisk(m.profileSettings.ModpackPath)
 				}
 				m.mods.auditRows = m.buildAuditRows()
 			}
@@ -466,7 +475,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.modpack.statusMsg = msg.err.Error()
 		} else {
-			m.modpack.loadFromDisk(m.cfg.ModpackPath)
+			m.modpack.loadFromDisk(m.profileSettings.ModpackPath)
 			m.modpack.statusMsg = "dependency updated"
 		}
 		return m, nil

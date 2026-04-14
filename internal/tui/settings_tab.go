@@ -172,9 +172,9 @@ func (m model) buildSettingsTabItems() []settingsTabItem {
 	})
 
 	// Server management toggle (only show if a server is configured)
-	if m.cfg.ActiveServer != "" && m.server.client != nil {
+	if m.profileSettings.Server != "" && m.server.client != nil {
 		smVal := "\033[32mon\033[0m"
-		if !m.cfg.ServerManagementEnabled() {
+		if !m.profileSettings.ServerManagementEnabled() {
 			smVal = "\033[2moff\033[0m"
 		}
 		items = append(items, settingsTabItem{
@@ -187,9 +187,9 @@ func (m model) buildSettingsTabItems() []settingsTabItem {
 	}
 
 	// Modpack management toggle (only show if a modpack path is configured)
-	if m.cfg.ModpackPath != "" {
+	if m.profileSettings.ModpackPath != "" {
 		mmVal := "\033[32mon\033[0m"
-		if !m.cfg.ModpackManagementEnabled() {
+		if !m.profileSettings.ModpackManagementEnabled() {
 			mmVal = "\033[2moff\033[0m"
 		}
 		items = append(items, settingsTabItem{
@@ -207,7 +207,7 @@ func (m model) buildSettingsTabItems() []settingsTabItem {
 	items = append(items, settingsTabItem{label: "Server", isSectionHeader: true})
 
 	// Anticheat
-	pref := m.cfg.AnticheatSystem
+	pref := m.profileSettings.AnticheatSystem
 	if pref == "" {
 		pref = "auto"
 	}
@@ -355,7 +355,7 @@ func (m model) buildSettingsTabItems() []settingsTabItem {
 		// Modpack path
 		items = append(items, settingsTabItem{
 			label:    "Modpack Path",
-			value:    m.cfg.ModpackPath,
+			value:    m.profileSettings.ModpackPath,
 			tooltip:  "Local directory containing modpack files (manifest.json, README.md, icon.png).",
 			editable: true,
 			action:   "modpack-field-2",
@@ -443,10 +443,15 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			case 1:
 				m.cfg.ThunderstoreAuthor = m.settingsTab.fieldInput
 			case 2:
-				m.cfg.ModpackPath = m.settingsTab.fieldInput
+				m.profileSettings.ModpackPath = m.settingsTab.fieldInput
+				m.reg.SetSettings(m.cfg.ActiveProfile, m.profileSettings)
 				m.modpack.loadFromDisk(m.settingsTab.fieldInput)
 			}
-			config.Save(m.paths, m.cfg)
+			if m.settingsTab.editingField == 2 {
+				config.SaveRegistry(m.paths, *m.reg)
+			} else {
+				config.Save(m.paths, m.cfg)
+			}
 			m.settingsTab.editingField = -1
 		case "backspace":
 			if len(m.settingsTab.fieldInput) > 0 {
@@ -551,9 +556,10 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		item := items[m.settingsTab.cursor]
 		switch item.action {
 		case "server-mode":
-			enabled := !m.cfg.ServerManagementEnabled()
-			m.cfg.ServerManagement = &enabled
-			config.Save(m.paths, m.cfg)
+			enabled := !m.profileSettings.ServerManagementEnabled()
+			m.profileSettings.ServerManagement = &enabled
+			m.reg.SetSettings(m.cfg.ActiveProfile, m.profileSettings)
+			config.SaveRegistry(m.paths, *m.reg)
 			if m.isFullMode() {
 				m.mods.auditRows = m.buildAuditRows()
 				// Kick off server polling since Init() won't re-run
@@ -561,26 +567,28 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, tea.Batch(fetchServerStatus(m.server.client), serverTick())
 			}
 		case "modpack-mode":
-			enabled := !m.cfg.ModpackManagementEnabled()
-			m.cfg.ModpackManagement = &enabled
-			config.Save(m.paths, m.cfg)
+			enabled := !m.profileSettings.ModpackManagementEnabled()
+			m.profileSettings.ModpackManagement = &enabled
+			m.reg.SetSettings(m.cfg.ActiveProfile, m.profileSettings)
+			config.SaveRegistry(m.paths, *m.reg)
 			if enabled {
-				m.modpack.loadFromDisk(m.cfg.ModpackPath)
+				m.modpack.loadFromDisk(m.profileSettings.ModpackPath)
 			}
 			if m.isFullMode() {
 				m.mods.auditRows = m.buildAuditRows()
 			}
 		case "anticheat":
-			switch m.cfg.AnticheatSystem {
+			switch m.profileSettings.AnticheatSystem {
 			case "", "auto":
-				m.cfg.AnticheatSystem = "azu"
+				m.profileSettings.AnticheatSystem = "azu"
 			case "azu":
-				m.cfg.AnticheatSystem = "enforcer"
+				m.profileSettings.AnticheatSystem = "enforcer"
 			case "enforcer":
-				m.cfg.AnticheatSystem = "auto"
+				m.profileSettings.AnticheatSystem = "auto"
 			}
-			config.Save(m.paths, m.cfg)
-			m.anticheatSystem = resolveAnticheatSystem(m.cfg, m.local.mods)
+			m.reg.SetSettings(m.cfg.ActiveProfile, m.profileSettings)
+			config.SaveRegistry(m.paths, *m.reg)
+			m.anticheatSystem = resolveAnticheatSystem(m.profileSettings.AnticheatSystem, m.local.mods)
 		case "path":
 			m.settingsTab.editingPath = true
 			m.settingsTab.pathInput = m.cfg.ValheimPath
@@ -631,14 +639,14 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.settingsTab.fieldInput = m.cfg.ThunderstoreAuthor
 		case "modpack-field-2":
 			m.settingsTab.editingField = 2
-			m.settingsTab.fieldInput = m.cfg.ModpackPath
+			m.settingsTab.fieldInput = m.profileSettings.ModpackPath
 		case "open-readme":
-			if m.cfg.ModpackPath != "" {
-				return m, openFile(filepath.Join(m.cfg.ModpackPath, "README.md"))
+			if m.profileSettings.ModpackPath != "" {
+				return m, openFile(filepath.Join(m.profileSettings.ModpackPath, "README.md"))
 			}
 		case "open-manifest":
-			if m.cfg.ModpackPath != "" {
-				return m, openFile(filepath.Join(m.cfg.ModpackPath, "manifest.json"))
+			if m.profileSettings.ModpackPath != "" {
+				return m, openFile(filepath.Join(m.profileSettings.ModpackPath, "manifest.json"))
 			}
 		}
 	}

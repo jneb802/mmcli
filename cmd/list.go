@@ -99,7 +99,8 @@ Use --json for machine-readable output.`,
 			return nil
 		}
 
-		showServer := cfg.ActiveServer != ""
+		ps := reg.GetSettings(cfg.ActiveProfile)
+		showServer := ps.Server != ""
 
 		fmt.Printf("Mods in profile '\033[36m%s\033[0m':\n\n", cfg.ActiveProfile)
 

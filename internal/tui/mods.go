@@ -614,11 +614,11 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				Active: true,
 				Prompt: fmt.Sprintf("Remove %s from modpack?", modName),
 				OnYes: func(m model) (tea.Model, tea.Cmd) {
-					if m.cfg.ModpackPath != "" {
-						if err := modpack.RemoveDep(m.cfg.ModpackPath, modName); err != nil {
+					if m.profileSettings.ModpackPath != "" {
+						if err := modpack.RemoveDep(m.profileSettings.ModpackPath, modName); err != nil {
 							m.mods.err = err
 						} else {
-							m.modpack.loadFromDisk(m.cfg.ModpackPath)
+							m.modpack.loadFromDisk(m.profileSettings.ModpackPath)
 							m.mods.auditRows = m.buildAuditRows()
 						}
 					}
@@ -695,13 +695,13 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.mods.err = fmt.Errorf("modpack already up to date")
 				return m, nil
 			}
-			if m.cfg.ModpackPath == "" {
+			if m.profileSettings.ModpackPath == "" {
 				m.mods.err = fmt.Errorf("no modpack configured")
 				return m, nil
 			}
 			m.mods.installBusy = true
 			m.mods.err = nil
-			return m, updateModpackDep(m.cfg.ModpackPath, row.Name, mod.Version)
+			return m, updateModpackDep(m.profileSettings.ModpackPath, row.Name, mod.Version)
 		}
 		// Default: update locally
 		if _, ok := m.local.updates[row.Name]; ok {
@@ -864,7 +864,7 @@ func (m model) handleModsInstallInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, installModToServer(m.mods.installInput, m.server.client)
 			}
 			if m.mods.filter == filterModpack {
-				return m, installModToModpack(m.cfg.ModpackPath, m.mods.installInput)
+				return m, installModToModpack(m.profileSettings.ModpackPath, m.mods.installInput)
 			}
 			return m, installMod(m.paths, m.cfg, m.reg, m.mods.installInput, "both")
 		}
@@ -898,16 +898,19 @@ func (m model) handleModsProfilePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						m.mods.err = err
 					} else {
 						config.Save(m.paths, m.cfg)
+
+						// New profile starts with empty settings — disconnect server
+						m.profileSettings = m.reg.GetSettings(m.mods.newProfileInput)
+						m.connectServer()
+						m.modpack = modpackModel{}
+
 						m.mods.cursor = 0
 						m.refreshMods()
-						m.anticheatSystem = resolveAnticheatSystem(m.cfg, m.local.mods)
+						m.anticheatSystem = resolveAnticheatSystem(m.profileSettings.AnticheatSystem, m.local.mods)
 						m.local.updates = make(map[string]string)
 						m.mods.err = nil
 						m.mods.pickProfile = false
 						m.mods.creatingProfile = false
-						if m.isFullMode() {
-							m.mods.auditRows = m.buildAuditRows()
-						}
 						return m, nil
 					}
 				}
@@ -945,17 +948,32 @@ func (m model) handleModsProfilePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.mods.err = err
 			} else {
 				config.Save(m.paths, m.cfg)
+
+				// Load new profile's settings and reconnect server
+				m.profileSettings = m.reg.GetSettings(name)
+				m.connectServer()
+
+				// Reload modpack for new profile
+				if m.profileSettings.ModpackPath != "" {
+					m.modpack.loadFromDisk(m.profileSettings.ModpackPath)
+				} else {
+					m.modpack = modpackModel{}
+				}
+
 				m.mods.cursor = 0
 				m.refreshMods()
-				m.anticheatSystem = resolveAnticheatSystem(m.cfg, m.local.mods)
+				m.anticheatSystem = resolveAnticheatSystem(m.profileSettings.AnticheatSystem, m.local.mods)
 				m.local.updates = make(map[string]string)
 				m.local.checkingUpdates = true
 				m.mods.err = nil
 				m.mods.pickProfile = false
+
+				cmds := []tea.Cmd{checkUpdates(m.local.mods)}
 				if m.isFullMode() {
 					m.mods.auditRows = m.buildAuditRows()
+					cmds = append(cmds, fetchServerStatus(m.server.client), serverTick())
 				}
-				return m, checkUpdates(m.local.mods)
+				return m, tea.Batch(cmds...)
 			}
 		}
 		m.mods.pickProfile = false
@@ -1046,7 +1064,7 @@ func (m model) modsStartGame() (tea.Model, tea.Cmd) {
 	if m.local.gameRunning {
 		return m, nil
 	}
-	if m.server.client != nil {
+	if m.isFullMode() {
 		if len(m.server.mods) == 0 {
 			m.mods.preflightFetching = true
 			return m, fetchServerStatus(m.server.client)

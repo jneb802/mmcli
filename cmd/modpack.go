@@ -25,13 +25,19 @@ var modpackInstallCmd = &cobra.Command{
 Accepts Owner-Name (e.g., 'RandyKnapp-EpicLoot'), Owner-Name-Version, or a Thunderstore URL.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, cfg, err := loadConfig()
+		paths, cfg, err := loadConfig()
 		if err != nil {
 			return err
 		}
 
-		if err := requireModpackPath(cfg); err != nil {
+		reg, err := config.LoadRegistry(paths)
+		if err != nil {
 			return err
+		}
+		ps := reg.GetSettings(cfg.ActiveProfile)
+
+		if ps.ModpackPath == "" {
+			return fmt.Errorf("no modpack path configured for profile '%s'", cfg.ActiveProfile)
 		}
 
 		pkg, err := thunderstore.FindPackageByQuery(args[0])
@@ -45,7 +51,7 @@ Accepts Owner-Name (e.g., 'RandyKnapp-EpicLoot'), Owner-Name-Version, or a Thund
 
 		depString := fmt.Sprintf("%s-%s-%s", pkg.Owner, pkg.Name, pkg.Versions[0].VersionNumber)
 
-		if err := modpack.AddDep(cfg.ModpackPath, depString); err != nil {
+		if err := modpack.AddDep(ps.ModpackPath, depString); err != nil {
 			return err
 		}
 
@@ -65,16 +71,17 @@ mods installed in the active profile. Shows a diff of changes before writing.`,
 			return err
 		}
 
-		if err := requireModpackPath(cfg); err != nil {
-			return err
-		}
-
 		reg, err := config.LoadRegistry(paths)
 		if err != nil {
 			return err
 		}
+		ps := reg.GetSettings(cfg.ActiveProfile)
 
-		manifest, err := modpack.LoadManifest(cfg.ModpackPath)
+		if ps.ModpackPath == "" {
+			return fmt.Errorf("no modpack path configured for profile '%s'", cfg.ActiveProfile)
+		}
+
+		manifest, err := modpack.LoadManifest(ps.ModpackPath)
 		if err != nil {
 			return err
 		}
@@ -100,7 +107,7 @@ mods installed in the active profile. Shows a diff of changes before writing.`,
 			}
 		}
 
-		if err := modpack.SyncManifestDeps(cfg.ModpackPath, &reg, cfg.ActiveProfile); err != nil {
+		if err := modpack.SyncManifestDeps(ps.ModpackPath, &reg, cfg.ActiveProfile); err != nil {
 			return err
 		}
 		fmt.Println("Dependencies synced.")
@@ -116,13 +123,19 @@ Requires thunderstore_token and thunderstore_author in config.json
 (or THUNDERSTORE_TOKEN environment variable for the token).
 The modpack directory must contain manifest.json, README.md, and icon.png.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, cfg, err := loadConfig()
+		paths, cfg, err := loadConfig()
 		if err != nil {
 			return err
 		}
 
-		if err := requireModpackPath(cfg); err != nil {
+		reg, err := config.LoadRegistry(paths)
+		if err != nil {
 			return err
+		}
+		ps := reg.GetSettings(cfg.ActiveProfile)
+
+		if ps.ModpackPath == "" {
+			return fmt.Errorf("no modpack path configured for profile '%s'", cfg.ActiveProfile)
 		}
 
 		token := os.Getenv("THUNDERSTORE_TOKEN")
@@ -137,11 +150,11 @@ The modpack directory must contain manifest.json, README.md, and icon.png.`,
 			return fmt.Errorf("no Thunderstore author — set thunderstore_author in config.json")
 		}
 
-		if _, err := os.Stat(filepath.Join(cfg.ModpackPath, "icon.png")); err != nil {
+		if _, err := os.Stat(filepath.Join(ps.ModpackPath, "icon.png")); err != nil {
 			return fmt.Errorf("icon.png is required to publish")
 		}
 
-		manifest, err := modpack.LoadManifest(cfg.ModpackPath)
+		manifest, err := modpack.LoadManifest(ps.ModpackPath)
 		if err != nil {
 			return err
 		}
@@ -154,20 +167,13 @@ The modpack directory must contain manifest.json, README.md, and icon.png.`,
 			}
 		}
 
-		if err := thunderstore.Publish(token, cfg.ThunderstoreAuthor, cfg.ModpackPath); err != nil {
+		if err := thunderstore.Publish(token, cfg.ThunderstoreAuthor, ps.ModpackPath); err != nil {
 			return err
 		}
 
 		fmt.Printf("Published %s v%s.\n", manifest.Name, manifest.VersionNumber)
 		return nil
 	},
-}
-
-func requireModpackPath(cfg config.Config) error {
-	if cfg.ModpackPath == "" {
-		return fmt.Errorf("no modpack path configured — set modpack_path in config.json")
-	}
-	return nil
 }
 
 func init() {

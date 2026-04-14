@@ -73,10 +73,21 @@ Requires --host and --secret flags. Validates connectivity before saving.`,
 			Secret: secret,
 			Role:   role,
 		}
-		cfg.ActiveServer = name
 
 		if err := config.Save(paths, cfg); err != nil {
 			return fmt.Errorf("failed to save config: %w", err)
+		}
+
+		// Set as active server for current profile
+		reg, err := config.LoadRegistry(paths)
+		if err != nil {
+			return fmt.Errorf("failed to load registry: %w", err)
+		}
+		ps := reg.GetSettings(cfg.ActiveProfile)
+		ps.Server = name
+		reg.SetSettings(cfg.ActiveProfile, ps)
+		if err := config.SaveRegistry(paths, reg); err != nil {
+			return fmt.Errorf("failed to save registry: %w", err)
 		}
 
 		fmt.Printf("\033[32mServer '%s' added as %s and set as active.\033[0m\n", name, role)
@@ -91,7 +102,7 @@ var serverListCmd = &cobra.Command{
 	Long: `List all registered servers with their host, port, and active status.
 Use --json for machine-readable output.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, cfg, err := loadServerConfig()
+		paths, cfg, err := loadServerConfig()
 		if err != nil {
 			return err
 		}
@@ -104,6 +115,9 @@ Use --json for machine-readable output.`,
 			}
 			return nil
 		}
+
+		reg, _ := config.LoadRegistry(paths)
+		ps := reg.GetSettings(cfg.ActiveProfile)
 
 		if jsonOutput {
 			type serverJSON struct {
@@ -124,7 +138,7 @@ Use --json for machine-readable output.`,
 					Host:   srv.Host,
 					Port:   srv.Port,
 					Role:   role,
-					Active: name == cfg.ActiveServer,
+					Active: name == ps.Server,
 				})
 			}
 			return json.NewEncoder(os.Stdout).Encode(items)
@@ -134,7 +148,7 @@ Use --json for machine-readable output.`,
 		fmt.Fprintln(w, "NAME\tHOST\tPORT\tROLE\tACTIVE")
 		for name, srv := range cfg.Servers {
 			active := ""
-			if name == cfg.ActiveServer {
+			if name == ps.Server {
 				active = "\033[32m*\033[0m"
 			}
 			role := srv.Role
@@ -164,9 +178,15 @@ var serverSwitchCmd = &cobra.Command{
 			return fmt.Errorf("server '%s' not found", name)
 		}
 
-		cfg.ActiveServer = name
-		if err := config.Save(paths, cfg); err != nil {
-			return fmt.Errorf("failed to save config: %w", err)
+		reg, err := config.LoadRegistry(paths)
+		if err != nil {
+			return fmt.Errorf("failed to load registry: %w", err)
+		}
+		ps := reg.GetSettings(cfg.ActiveProfile)
+		ps.Server = name
+		reg.SetSettings(cfg.ActiveProfile, ps)
+		if err := config.SaveRegistry(paths, reg); err != nil {
+			return fmt.Errorf("failed to save registry: %w", err)
 		}
 
 		fmt.Printf("\033[32mSwitched to server '%s'.\033[0m\n", name)
@@ -191,13 +211,21 @@ var serverRemoveCmd = &cobra.Command{
 		}
 
 		delete(cfg.Servers, name)
-		if cfg.ActiveServer == name {
-			cfg.ActiveServer = ""
-			// Pick another server as active if available
+
+		// Update profile settings if removed server was active for this profile
+		reg, err := config.LoadRegistry(paths)
+		if err != nil {
+			return fmt.Errorf("failed to load registry: %w", err)
+		}
+		ps := reg.GetSettings(cfg.ActiveProfile)
+		if ps.Server == name {
+			ps.Server = ""
 			for k := range cfg.Servers {
-				cfg.ActiveServer = k
+				ps.Server = k
 				break
 			}
+			reg.SetSettings(cfg.ActiveProfile, ps)
+			config.SaveRegistry(paths, reg)
 		}
 
 		if err := config.Save(paths, cfg); err != nil {
@@ -702,14 +730,16 @@ func init() {
 
 // requireAdmin returns an error if the active server's cached role is not admin.
 func requireAdmin() error {
-	_, cfg, err := loadServerConfig()
+	paths, cfg, err := loadServerConfig()
 	if err != nil {
 		return err
 	}
-	if cfg.ActiveServer == "" {
+	reg, _ := config.LoadRegistry(paths)
+	ps := reg.GetSettings(cfg.ActiveProfile)
+	if ps.Server == "" {
 		return nil // resolveActiveServer will handle this
 	}
-	if srv, ok := cfg.Servers[cfg.ActiveServer]; ok && srv.Role == agentapi.RolePlayer {
+	if srv, ok := cfg.Servers[ps.Server]; ok && srv.Role == agentapi.RolePlayer {
 		return fmt.Errorf("this action requires admin access (your key has player role)")
 	}
 	return nil
@@ -717,21 +747,27 @@ func requireAdmin() error {
 
 // resolveActiveServer loads config and returns a client for the active server.
 func resolveActiveServer() (string, *client.AgentClient, error) {
-	_, cfg, err := loadServerConfig()
+	paths, cfg, err := loadServerConfig()
 	if err != nil {
 		return "", nil, err
 	}
 
-	if cfg.ActiveServer == "" {
-		return "", nil, fmt.Errorf("no active server. Run `mmcli server add` to register one")
+	reg, err := config.LoadRegistry(paths)
+	if err != nil {
+		return "", nil, err
+	}
+	ps := reg.GetSettings(cfg.ActiveProfile)
+
+	if ps.Server == "" {
+		return "", nil, fmt.Errorf("no active server for profile '%s'. Run `mmcli server add` to register one", cfg.ActiveProfile)
 	}
 
-	srv, ok := cfg.Servers[cfg.ActiveServer]
+	srv, ok := cfg.Servers[ps.Server]
 	if !ok {
-		return "", nil, fmt.Errorf("active server '%s' not found in config", cfg.ActiveServer)
+		return "", nil, fmt.Errorf("active server '%s' not found in config", ps.Server)
 	}
 
-	return cfg.ActiveServer, client.New(srv.Host, srv.Port, srv.Secret), nil
+	return ps.Server, client.New(srv.Host, srv.Port, srv.Secret), nil
 }
 
 // loadServerConfig loads paths and config without requiring mmcli init.

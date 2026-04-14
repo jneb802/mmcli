@@ -127,7 +127,7 @@ type settingsItem struct {
 }
 
 func (m model) buildSettingsItems() []settingsItem {
-	pref := m.cfg.AnticheatSystem
+	pref := m.profileSettings.AnticheatSystem
 	if pref == "" {
 		pref = "auto"
 	}
@@ -156,13 +156,13 @@ func (m model) buildSettingsItems() []settingsItem {
 		},
 	}
 
-	if m.cfg.ActiveServer != "" {
+	if m.profileSettings.Server != "" {
 		items = append(items, settingsItem{
 			label:   "Linked Server",
-			value:   m.cfg.ActiveServer,
+			value:   m.profileSettings.Server,
 			tooltip: "Remote server managed by mmcli. Set with 'mmcli server add'.",
 		})
-		if srv, ok := m.cfg.Servers[m.cfg.ActiveServer]; ok {
+		if srv, ok := m.cfg.Servers[m.profileSettings.Server]; ok {
 			items = append(items, settingsItem{
 				label:   "Server Host",
 				value:   fmt.Sprintf("%s:%d", srv.Host, srv.Port),
