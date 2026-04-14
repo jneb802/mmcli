@@ -49,9 +49,14 @@ type modsState struct {
 	auditRows []auditRow
 
 	// --- Migrated modal states from localModel ---
-	installing  bool
+	installing   bool
 	installInput string
 	installBusy  bool
+
+	// Track which mod is being updated and the version transition.
+	updateName    string // e.g. "Author-ModName"
+	updateFromVer string
+	updateToVer   string
 
 	pickProfile     bool
 	profiles        []string
@@ -292,18 +297,22 @@ func (m model) viewModsFull() string {
 
 	// Installing/updating busy
 	if m.mods.installBusy {
-		query := m.mods.installInput
-		if query == "" {
-			query = "mod"
+		if m.mods.updateName != "" {
+			fmt.Fprintf(&b, "\n  \033[33mUpdating %s  %s → %s...\033[0m\n\n", m.mods.updateName, m.mods.updateFromVer, m.mods.updateToVer)
+		} else {
+			query := m.mods.installInput
+			if query == "" {
+				query = "mod"
+			}
+			target := "locally"
+			switch m.mods.filter {
+			case filterServer:
+				target = "to server"
+			case filterModpack:
+				target = "in modpack"
+			}
+			fmt.Fprintf(&b, "\n  \033[33mUpdating %s %s...\033[0m\n\n", query, target)
 		}
-		target := "locally"
-		switch m.mods.filter {
-		case filterServer:
-			target = "to server"
-		case filterModpack:
-			target = "in modpack"
-		}
-		fmt.Fprintf(&b, "\n  \033[33mUpdating %s %s...\033[0m\n\n", query, target)
 		return b.String()
 	}
 
@@ -378,13 +387,17 @@ func (m model) viewModsLocal() string {
 		return b.String()
 	}
 
-	// Installing busy
+	// Installing/updating busy
 	if m.mods.installBusy {
-		query := m.mods.installInput
-		if query == "" {
-			query = "mod"
+		if m.mods.updateName != "" {
+			fmt.Fprintf(&b, "\n  \033[33mUpdating %s  %s → %s...\033[0m\n\n", m.mods.updateName, m.mods.updateFromVer, m.mods.updateToVer)
+		} else {
+			query := m.mods.installInput
+			if query == "" {
+				query = "mod"
+			}
+			fmt.Fprintf(&b, "\n  \033[33mInstalling %s...\033[0m\n\n", query)
 		}
-		fmt.Fprintf(&b, "\n  \033[33mInstalling %s...\033[0m\n\n", query)
 		return b.String()
 	}
 
@@ -673,15 +686,22 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if row.ServerVersion != "-" && row.LocalVersion != "-" && row.ServerVersion != row.LocalVersion {
 				m.mods.installBusy = true
 				m.mods.err = nil
+				m.mods.updateName = row.Name
+				m.mods.updateFromVer = row.ServerVersion
+				m.mods.updateToVer = row.LocalVersion
 				return m, updateModToServer(m.paths, m.cfg, m.reg, row.Name, m.server.client)
 			}
 			// Otherwise check for Thunderstore update
-			if _, ok := m.local.updates[row.Name]; !ok {
+			latest, ok := m.local.updates[row.Name]
+			if !ok {
 				m.mods.err = fmt.Errorf("no update available")
 				return m, nil
 			}
 			m.mods.installBusy = true
 			m.mods.err = nil
+			m.mods.updateName = row.Name
+			m.mods.updateFromVer = row.LocalVersion
+			m.mods.updateToVer = latest
 			return m, updateModToServer(m.paths, m.cfg, m.reg, row.Name, m.server.client)
 		}
 		if m.mods.filter == filterModpack {
@@ -704,9 +724,12 @@ func (m model) handleModsKeysFull(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, updateModpackDep(m.profileSettings.ModpackPath, row.Name, mod.Version)
 		}
 		// Default: update locally
-		if _, ok := m.local.updates[row.Name]; ok {
+		if latest, ok := m.local.updates[row.Name]; ok {
 			m.mods.installBusy = true
 			m.mods.err = nil
+			m.mods.updateName = row.Name
+			m.mods.updateFromVer = row.LocalVersion
+			m.mods.updateToVer = latest
 			return m, updateMod(m.paths, m.cfg, m.reg, row.Name)
 		}
 
@@ -835,11 +858,15 @@ func (m model) handleModsKeysLocal(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "u":
 		if len(m.local.mods) > 0 && m.mods.cursor >= 0 {
 			mod := m.local.mods[m.mods.cursor]
-			if _, ok := m.local.updates[mod.FullName()]; ok {
+			if latest, ok := m.local.updates[mod.FullName()]; ok {
 				m.mods.installBusy = true
 				m.mods.err = nil
+				m.mods.updateName = mod.FullName()
+				m.mods.updateFromVer = mod.Version
+				m.mods.updateToVer = latest
 				return m, updateMod(m.paths, m.cfg, m.reg, mod.FullName())
 			}
+			m.mods.err = fmt.Errorf("no update available")
 		}
 	case "c":
 		if len(m.local.mods) > 0 && m.mods.cursor >= 0 {

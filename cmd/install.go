@@ -15,6 +15,7 @@ var installCmd = &cobra.Command{
 	Use:   "install <mod>",
 	Short: "Install a mod and its dependencies into the active profile",
 	Long: `Install a mod by Owner-Name (e.g., 'RandyKnapp-EpicLoot'), Thunderstore URL, or local path.
+Use --version to install a specific version (e.g., --version 1.78.0).
 
 With --server, the mod is installed directly on the active server via the agent
 (the server downloads from Thunderstore itself). Nothing is installed locally.`,
@@ -84,7 +85,8 @@ With --server, the mod is installed directly on the active server via the agent
 			return config.SaveRegistry(paths, reg)
 		}
 
-		if err := installer.Install(paths, cfg, &reg, args[0], target); err != nil {
+		version, _ := cmd.Flags().GetString("version")
+		if err := installer.InstallVersion(paths, cfg, &reg, args[0], target, version); err != nil {
 			return err
 		}
 
@@ -96,4 +98,5 @@ func init() {
 	rootCmd.AddCommand(installCmd)
 	installCmd.Flags().Bool("client", false, "mark as client-only; mod stays local and won't be pushed to the server")
 	installCmd.Flags().Bool("server", false, "install directly on the active server via the agent (mod is not installed locally)")
+	installCmd.Flags().String("version", "", "install a specific version (e.g., 1.78.0)")
 }

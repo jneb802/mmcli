@@ -17,13 +17,35 @@ import (
 // target is "client", "server", or "both" (empty string defaults to "both").
 // Dependencies always get target "both".
 func Install(paths config.Paths, cfg config.Config, reg *config.Registry, query string, target string) error {
+	return InstallVersion(paths, cfg, reg, query, target, "")
+}
+
+// InstallVersion works like Install but pins the main mod to a specific version.
+// When version is empty it behaves identically to Install (fetches latest).
+func InstallVersion(paths config.Paths, cfg config.Config, reg *config.Registry, query string, target string, version string) error {
 	if target == "" {
 		target = "both"
 	}
-	fmt.Printf("Resolving package '%s'...\n", query)
-	pkg, err := thunderstore.FindPackageByQuery(query)
-	if err != nil {
-		return err
+
+	var pkg *thunderstore.Package
+	var err error
+	if version != "" {
+		// Resolve owner/name from query, then fetch the pinned version.
+		pkg, err = thunderstore.FindPackageByQuery(query)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("Resolving %s-%s v%s...\n", pkg.Owner, pkg.Name, version)
+		pkg, err = thunderstore.GetPackageVersion(pkg.Owner, pkg.Name, version)
+		if err != nil {
+			return err
+		}
+	} else {
+		fmt.Printf("Resolving package '%s'...\n", query)
+		pkg, err = thunderstore.FindPackageByQuery(query)
+		if err != nil {
+			return err
+		}
 	}
 
 	fullName := fmt.Sprintf("%s-%s", pkg.Owner, pkg.Name)
@@ -87,10 +109,10 @@ func Install(paths config.Paths, cfg config.Config, reg *config.Registry, query 
 		return fmt.Errorf("failed to install %s: %w", fullName, err)
 	}
 
-	version := ""
+	installedVersion := ""
 	depNames := []string{}
 	if len(pkg.Versions) > 0 {
-		version = pkg.Versions[0].VersionNumber
+		installedVersion = pkg.Versions[0].VersionNumber
 		for _, d := range deps {
 			depNames = append(depNames, fmt.Sprintf("%s-%s", d.Owner, d.Name))
 		}
@@ -99,7 +121,7 @@ func Install(paths config.Paths, cfg config.Config, reg *config.Registry, query 
 	reg.SetMod(profile, config.ModEntry{
 		Owner:        pkg.Owner,
 		Name:         pkg.Name,
-		Version:      version,
+		Version:      installedVersion,
 		IsDependency: false,
 		Files:        files,
 		Dependencies: depNames,
@@ -115,9 +137,9 @@ func Install(paths config.Paths, cfg config.Config, reg *config.Registry, query 
 		mod, _ := reg.GetMod(profile, fullName)
 		mod.Disabled = true
 		reg.SetMod(profile, mod)
-		fmt.Printf("Successfully installed %s v%s (target: server, disabled locally)\n", fullName, version)
+		fmt.Printf("Successfully installed %s v%s (target: server, disabled locally)\n", fullName, installedVersion)
 	} else {
-		fmt.Printf("Successfully installed %s v%s\n", fullName, version)
+		fmt.Printf("Successfully installed %s v%s\n", fullName, installedVersion)
 	}
 	return nil
 }
