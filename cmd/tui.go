@@ -3,7 +3,6 @@ package cmd
 import (
 	"github.com/spf13/cobra"
 
-	"mmcli/internal/config"
 	"mmcli/internal/tui"
 )
 
@@ -11,18 +10,13 @@ var tuiCmd = &cobra.Command{
 	Use:   "tui",
 	Short: "Interactive mod manager",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		paths, cfg, err := loadConfig()
-		if err != nil {
-			return err
-		}
-
-		reg, err := config.LoadRegistry(paths)
+		paths, cfg, reg, err := loadConfigWithRegistry()
 		if err != nil {
 			return err
 		}
 
 		tui.Version = Version
-		return tui.Run(paths, cfg, &reg)
+		return tui.Run(paths, cfg, reg)
 	},
 }
 

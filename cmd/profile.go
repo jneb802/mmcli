@@ -175,6 +175,7 @@ be deleted; switch to a different profile first.`,
 			return err
 		}
 		delete(reg.Profiles, name)
+		delete(reg.Settings, name)
 		if err := config.SaveRegistry(paths, reg); err != nil {
 			return err
 		}
@@ -424,4 +425,24 @@ func loadConfig() (config.Paths, config.Config, error) {
 
 	paths.ValheimDir = cfg.ValheimPath
 	return paths, cfg, nil
+}
+
+// loadConfigWithRegistry loads config, registry, and runs the per-profile settings migration.
+func loadConfigWithRegistry() (config.Paths, config.Config, *config.Registry, error) {
+	paths, cfg, err := loadConfig()
+	if err != nil {
+		return config.Paths{}, config.Config{}, nil, err
+	}
+	reg, err := config.LoadRegistry(paths)
+	if err != nil {
+		return config.Paths{}, config.Config{}, nil, err
+	}
+	cfgDirty, regDirty := config.MigrateProfileSettings(&cfg, &reg, cfg.ActiveProfile)
+	if cfgDirty {
+		config.Save(paths, cfg)
+	}
+	if regDirty {
+		config.SaveRegistry(paths, reg)
+	}
+	return paths, cfg, &reg, nil
 }

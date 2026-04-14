@@ -32,13 +32,19 @@ func loadTestClient(t *testing.T) *AgentClient {
 		t.Skipf("cannot load config: %v", err)
 	}
 
-	if cfg.ActiveServer == "" {
-		t.Skip("no active server configured")
+	reg, err := config.LoadRegistry(paths)
+	if err != nil {
+		t.Skipf("cannot load registry: %v", err)
+	}
+	ps := reg.GetSettings(cfg.ActiveProfile)
+
+	if ps.Server == "" {
+		t.Skip("no active server configured for profile")
 	}
 
-	srv, ok := cfg.Servers[cfg.ActiveServer]
+	srv, ok := cfg.Servers[ps.Server]
 	if !ok {
-		t.Skipf("server %q not found in config", cfg.ActiveServer)
+		t.Skipf("server %q not found in config", ps.Server)
 	}
 
 	return New(srv.Host, srv.Port, srv.Secret)

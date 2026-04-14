@@ -31,16 +31,6 @@ type Config struct {
 	ThunderstoreAuthor string                 `json:"thunderstore_author,omitempty"` // team/namespace on Thunderstore
 }
 
-// ServerManagementEnabled returns true if server management is enabled (default: true).
-func (c Config) ServerManagementEnabled() bool {
-	return c.ServerManagement == nil || *c.ServerManagement
-}
-
-// ModpackManagementEnabled returns true if modpack management is enabled (default: true).
-func (c Config) ModpackManagementEnabled() bool {
-	return c.ModpackManagement == nil || *c.ModpackManagement
-}
-
 type Paths struct {
 	ConfigDir    string
 	ConfigFile   string
@@ -175,4 +165,45 @@ func EnsureInitialized(p Paths) (Config, error) {
 	}
 	p.ValheimDir = cfg.ValheimPath
 	return cfg, nil
+}
+
+// MigrateProfileSettings moves legacy global config fields to per-profile
+// registry settings for all existing profiles. Returns whether config and
+// registry were modified.
+func MigrateProfileSettings(cfg *Config, reg *Registry, activeProfile string) (cfgDirty, regDirty bool) {
+	hasOldFields := cfg.ActiveServer != "" || cfg.ServerManagement != nil ||
+		cfg.ModpackPath != "" || cfg.ModpackManagement != nil ||
+		cfg.AnticheatSystem != ""
+	if !hasOldFields {
+		return false, false
+	}
+
+	for name := range reg.Profiles {
+		ps := reg.GetSettings(name)
+
+		if ps.Server == "" && cfg.ActiveServer != "" {
+			ps.Server = cfg.ActiveServer
+		}
+		if ps.ServerManagement == nil && cfg.ServerManagement != nil {
+			ps.ServerManagement = cfg.ServerManagement
+		}
+		if ps.ModpackPath == "" && cfg.ModpackPath != "" {
+			ps.ModpackPath = cfg.ModpackPath
+		}
+		if ps.ModpackManagement == nil && cfg.ModpackManagement != nil {
+			ps.ModpackManagement = cfg.ModpackManagement
+		}
+		if ps.AnticheatSystem == "" && cfg.AnticheatSystem != "" {
+			ps.AnticheatSystem = cfg.AnticheatSystem
+		}
+		reg.SetSettings(name, ps)
+	}
+
+	cfg.ActiveServer = ""
+	cfg.ServerManagement = nil
+	cfg.ModpackPath = ""
+	cfg.ModpackManagement = nil
+	cfg.AnticheatSystem = ""
+
+	return true, true
 }

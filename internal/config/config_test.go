@@ -422,3 +422,163 @@ func TestDetectLocalModsSkipsByBareName(t *testing.T) {
 		t.Fatalf("DetectLocalMods returned %d mods, want 0 (FastLink should be skipped). Got: %+v", len(locals), locals)
 	}
 }
+
+func TestProfileSettingsHelpers(t *testing.T) {
+	// Default (nil) means enabled
+	ps := ProfileSettings{}
+	if !ps.ServerManagementEnabled() {
+		t.Error("ServerManagementEnabled should default to true")
+	}
+	if !ps.ModpackManagementEnabled() {
+		t.Error("ModpackManagementEnabled should default to true")
+	}
+
+	// Explicitly disabled
+	f := false
+	ps.ServerManagement = &f
+	ps.ModpackManagement = &f
+	if ps.ServerManagementEnabled() {
+		t.Error("ServerManagementEnabled should be false when set to false")
+	}
+	if ps.ModpackManagementEnabled() {
+		t.Error("ModpackManagementEnabled should be false when set to false")
+	}
+
+	// Explicitly enabled
+	tr := true
+	ps.ServerManagement = &tr
+	ps.ModpackManagement = &tr
+	if !ps.ServerManagementEnabled() {
+		t.Error("ServerManagementEnabled should be true when set to true")
+	}
+	if !ps.ModpackManagementEnabled() {
+		t.Error("ModpackManagementEnabled should be true when set to true")
+	}
+}
+
+func TestRegistrySettingsRoundTrip(t *testing.T) {
+	tmp := t.TempDir()
+	p := Paths{
+		ConfigDir:    tmp,
+		RegistryFile: filepath.Join(tmp, "registry.json"),
+	}
+
+	reg := NewRegistry()
+	f := false
+	reg.SetSettings("myprofile", ProfileSettings{
+		Server:           "praetoris",
+		ServerManagement: &f,
+		ModpackPath:      "/some/path",
+		AnticheatSystem:  "azu",
+	})
+
+	if err := SaveRegistry(p, reg); err != nil {
+		t.Fatalf("SaveRegistry failed: %v", err)
+	}
+
+	loaded, err := LoadRegistry(p)
+	if err != nil {
+		t.Fatalf("LoadRegistry failed: %v", err)
+	}
+
+	ps := loaded.GetSettings("myprofile")
+	if ps.Server != "praetoris" {
+		t.Errorf("Server = %q, want %q", ps.Server, "praetoris")
+	}
+	if ps.ServerManagementEnabled() {
+		t.Error("ServerManagement should be disabled")
+	}
+	if ps.ModpackPath != "/some/path" {
+		t.Errorf("ModpackPath = %q, want %q", ps.ModpackPath, "/some/path")
+	}
+	if ps.AnticheatSystem != "azu" {
+		t.Errorf("AnticheatSystem = %q, want %q", ps.AnticheatSystem, "azu")
+	}
+}
+
+func TestMigrateProfileSettings(t *testing.T) {
+	f := false
+	cfg := Config{
+		ActiveProfile:    "default",
+		ActiveServer:     "myserver",
+		ServerManagement: &f,
+		ModpackPath:      "/modpack",
+		AnticheatSystem:  "enforcer",
+	}
+	reg := NewRegistry()
+	reg.EnsureProfile("default")
+	reg.EnsureProfile("other")
+
+	cfgDirty, regDirty := MigrateProfileSettings(&cfg, &reg, "default")
+	if !cfgDirty || !regDirty {
+		t.Error("migration should mark both as dirty")
+	}
+
+	// Config fields should be cleared
+	if cfg.ActiveServer != "" {
+		t.Errorf("ActiveServer should be empty after migration, got %q", cfg.ActiveServer)
+	}
+	if cfg.ServerManagement != nil {
+		t.Error("ServerManagement should be nil after migration")
+	}
+	if cfg.ModpackPath != "" {
+		t.Errorf("ModpackPath should be empty after migration, got %q", cfg.ModpackPath)
+	}
+	if cfg.AnticheatSystem != "" {
+		t.Errorf("AnticheatSystem should be empty after migration, got %q", cfg.AnticheatSystem)
+	}
+
+	// All profiles should have the values
+	for _, name := range []string{"default", "other"} {
+		ps := reg.GetSettings(name)
+		if ps.Server != "myserver" {
+			t.Errorf("%s: Server = %q, want %q", name, ps.Server, "myserver")
+		}
+		if ps.ServerManagementEnabled() {
+			t.Errorf("%s: ServerManagement should be disabled after migration", name)
+		}
+		if ps.ModpackPath != "/modpack" {
+			t.Errorf("%s: ModpackPath = %q, want %q", name, ps.ModpackPath, "/modpack")
+		}
+		if ps.AnticheatSystem != "enforcer" {
+			t.Errorf("%s: AnticheatSystem = %q, want %q", name, ps.AnticheatSystem, "enforcer")
+		}
+	}
+}
+
+func TestMigrateProfileSettingsIdempotent(t *testing.T) {
+	cfg := Config{ActiveProfile: "default"}
+	reg := NewRegistry()
+
+	// No old fields set — migration should be a no-op
+	cfgDirty, regDirty := MigrateProfileSettings(&cfg, &reg, "default")
+	if cfgDirty || regDirty {
+		t.Error("migration should be no-op when config has no old fields")
+	}
+}
+
+func TestMigrateProfileSettingsPreservesExisting(t *testing.T) {
+	cfg := Config{
+		ActiveProfile: "default",
+		ActiveServer:  "newserver",
+	}
+	reg := NewRegistry()
+	reg.EnsureProfile("default")
+	reg.SetSettings("default", ProfileSettings{Server: "existingserver"})
+
+	MigrateProfileSettings(&cfg, &reg, "default")
+
+	ps := reg.GetSettings("default")
+	if ps.Server != "existingserver" {
+		t.Errorf("Server = %q, want %q — migration should not overwrite existing profile settings", ps.Server, "existingserver")
+	}
+}
+
+func TestEnsureProfileCreatesSettings(t *testing.T) {
+	reg := NewRegistry()
+	reg.EnsureProfile("newprofile")
+
+	if _, ok := reg.Settings["newprofile"]; !ok {
+		t.Error("EnsureProfile should create a settings entry")
+	}
+}
