@@ -22,7 +22,10 @@ import (
 )
 
 // Async message types for local tab.
-type installDoneMsg struct{ err error }
+type installDoneMsg struct {
+	err        error
+	updatedAll bool
+}
 type updateCheckDoneMsg struct{ updates map[string]string }
 type gameStatusMsg struct{ running bool }
 type gameStartMsg struct{ err error }
@@ -429,7 +432,7 @@ func updateAllMods(paths config.Paths, cfg config.Config, reg *config.Registry, 
 				return installDoneMsg{err: fmt.Errorf("failed to update %s: %w", name, err)}
 			}
 		}
-		return installDoneMsg{}
+		return installDoneMsg{updatedAll: true}
 	}
 }
 
