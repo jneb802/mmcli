@@ -177,10 +177,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.mods.auditRows = m.buildAuditRows()
 			}
-			if updatedName != "" {
-				delete(m.local.updates, updatedName)
-			} else {
+			if msg.updatedAll {
 				m.local.updates = make(map[string]string)
+			} else if updatedName != "" {
+				delete(m.local.updates, updatedName)
 			}
 			m.local.checkingUpdates = true
 			return m, checkUpdates(m.local.mods)
