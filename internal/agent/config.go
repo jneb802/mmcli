@@ -103,6 +103,10 @@ func (c AgentConfig) ProfilePluginsDir(name string) string {
 	return filepath.Join(c.ValheimDir, "mmcli-profiles", name, "plugins")
 }
 
+func (c AgentConfig) ProfileConfigDir(name string) string {
+	return filepath.Join(c.ValheimDir, "mmcli-profiles", name, "config")
+}
+
 func (c AgentConfig) ProfilePatchersDir(name string) string {
 	return filepath.Join(c.ValheimDir, "mmcli-profiles", name, "patchers")
 }
@@ -129,6 +133,7 @@ func (c AgentConfig) ActiveManifestPath() string {
 func (c AgentConfig) ProfileSubdirs(name string) []string {
 	return []string{
 		c.ProfilePluginsDir(name),
+		c.ProfileConfigDir(name),
 		c.ProfilePatchersDir(name),
 		c.ProfileMonomodDir(name),
 	}

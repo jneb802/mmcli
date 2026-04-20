@@ -1583,6 +1583,7 @@ func (h *Handlers) ensureProfiles() error {
 		dst string
 	}{
 		{filepath.Join(bepDir, "plugins"), h.cfg.ProfilePluginsDir(profileName)},
+		{filepath.Join(bepDir, "config"), h.cfg.ProfileConfigDir(profileName)},
 		{filepath.Join(bepDir, "patchers"), h.cfg.ProfilePatchersDir(profileName)},
 		{filepath.Join(bepDir, "monomod"), h.cfg.ProfileMonomodDir(profileName)},
 	}
@@ -1635,35 +1636,69 @@ func (h *Handlers) ensureProfiles() error {
 }
 
 // activateProfileSymlinks creates symlinks from BepInEx subdirs to the given profile's dirs.
+// If a BepInEx subdir is a real directory (first-time migration), its contents are moved
+// into the profile target before the directory is replaced with a symlink.
 func (h *Handlers) activateProfileSymlinks(name string) error {
 	symlinks := []struct {
 		link   string
 		target string
+		label  string
 	}{
-		{h.cfg.PluginsDir(), h.cfg.ProfilePluginsDir(name)},
-		{h.cfg.PatchersDir(), h.cfg.ProfilePatchersDir(name)},
-		{h.cfg.MonomodDir(), h.cfg.ProfileMonomodDir(name)},
+		{h.cfg.PluginsDir(), h.cfg.ProfilePluginsDir(name), "plugins"},
+		{h.cfg.ConfigDir(), h.cfg.ProfileConfigDir(name), "config"},
+		{h.cfg.PatchersDir(), h.cfg.ProfilePatchersDir(name), "patchers"},
+		{h.cfg.MonomodDir(), h.cfg.ProfileMonomodDir(name), "monomod"},
 	}
 
 	for _, s := range symlinks {
 		// Ensure target exists
-		os.MkdirAll(s.target, 0755)
+		if err := os.MkdirAll(s.target, 0755); err != nil {
+			return fmt.Errorf("failed to create profile %s dir: %w", s.label, err)
+		}
 
-		// Remove existing symlink or directory
 		info, err := os.Lstat(s.link)
 		if err == nil {
 			if info.Mode()&os.ModeSymlink != 0 {
-				os.Remove(s.link)
+				if err := os.Remove(s.link); err != nil {
+					return fmt.Errorf("failed to remove existing %s symlink: %w", s.label, err)
+				}
 			} else if info.IsDir() {
-				os.RemoveAll(s.link)
+				// Real directory — migrate contents into profile target before removing.
+				if err := migrateContents(s.link, s.target); err != nil {
+					return fmt.Errorf("failed to migrate %s contents: %w", s.label, err)
+				}
+				if err := os.RemoveAll(s.link); err != nil {
+					return fmt.Errorf("failed to remove %s dir: %w", s.label, err)
+				}
 			}
 		}
 
 		// Ensure parent exists
-		os.MkdirAll(filepath.Dir(s.link), 0755)
+		if err := os.MkdirAll(filepath.Dir(s.link), 0755); err != nil {
+			return err
+		}
 
 		if err := os.Symlink(s.target, s.link); err != nil {
 			return fmt.Errorf("failed to symlink %s -> %s: %w", s.link, s.target, err)
+		}
+	}
+	return nil
+}
+
+// migrateContents moves all files from src into dst, skipping any that already exist in dst.
+func migrateContents(src, dst string) error {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		srcPath := filepath.Join(src, e.Name())
+		dstPath := filepath.Join(dst, e.Name())
+		if _, err := os.Stat(dstPath); err == nil {
+			continue
+		}
+		if err := os.Rename(srcPath, dstPath); err != nil {
+			return err
 		}
 	}
 	return nil
