@@ -317,17 +317,53 @@ func importProfileCode(paths config.Paths, cfg config.Config, code string) error
 	origProfile := cfg.ActiveProfile
 	cfg.ActiveProfile = profileName
 
-	// Install each mod
+	// Install each mod at the version pinned by the profile code. Mods pulled
+	// in earlier as dependencies will have been installed at latest; a verify
+	// pass below reinstalls any that don't match the pinned version.
+	applyEnabled := func(m thunderstore.ProfileMod) {
+		if m.Enabled {
+			return
+		}
+		if err := installer.Toggle(paths, cfg, &reg, m.Name); err != nil {
+			fmt.Printf("\033[31mWarning: failed to disable %s: %v\033[0m\n", m.Name, err)
+		}
+	}
 	for _, m := range filtered {
-		if err := installer.Install(paths, cfg, &reg, m.Name, "both"); err != nil {
+		if err := installer.InstallVersion(paths, cfg, &reg, m.Name, "both", m.Version); err != nil {
 			fmt.Printf("\033[31mWarning: failed to install %s: %v\033[0m\n", m.Name, err)
 			continue
 		}
-		// Toggle to disabled if the profile had it disabled
-		if !m.Enabled {
-			if err := installer.Toggle(paths, cfg, &reg, m.Name); err != nil {
-				fmt.Printf("\033[31mWarning: failed to disable %s: %v\033[0m\n", m.Name, err)
+		applyEnabled(m)
+	}
+
+	// Pin pass: mods that were installed as dependencies before their direct
+	// install call now carry the latest version, not the pinned one. Remove
+	// and reinstall at the pinned version. Repeat until converged (a downgrade
+	// can cascade to its own dependencies).
+	for attempt := 0; attempt < 3; attempt++ {
+		mismatches := 0
+		for _, m := range filtered {
+			if m.Version == "" {
+				continue
 			}
+			mod, ok := reg.GetMod(profileName, m.Name)
+			if !ok || mod.Version == m.Version {
+				continue
+			}
+			mismatches++
+			fmt.Printf("Pinning %s: %s → %s\n", m.Name, mod.Version, m.Version)
+			if err := installer.Remove(paths, cfg, &reg, m.Name); err != nil {
+				fmt.Printf("\033[31mWarning: failed to remove %s for repin: %v\033[0m\n", m.Name, err)
+				continue
+			}
+			if err := installer.InstallVersion(paths, cfg, &reg, m.Name, "both", m.Version); err != nil {
+				fmt.Printf("\033[31mWarning: failed to repin %s to %s: %v\033[0m\n", m.Name, m.Version, err)
+				continue
+			}
+			applyEnabled(m)
+		}
+		if mismatches == 0 {
+			break
 		}
 	}
 
@@ -374,6 +410,7 @@ func init() {
 }
 
 // extractProfileConfigs extracts config files from a profile code zip into the profile's config dir.
+// r2modman exports use a "BepInEx/config/" prefix; older or alternate exports may use "config/".
 func extractProfileConfigs(paths config.Paths, profileName string, zipData []byte) {
 	zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
 	if err != nil {
@@ -381,33 +418,45 @@ func extractProfileConfigs(paths config.Paths, profileName string, zipData []byt
 	}
 
 	configDir := paths.ProfileConfigDir(profileName)
+	count := 0
 	for _, f := range zr.File {
 		if f.FileInfo().IsDir() {
 			continue
 		}
 		name := filepath.ToSlash(f.Name)
-		// Skip the manifest
-		if name == "export.r2x" {
+		var rel string
+		switch {
+		case strings.HasPrefix(name, "BepInEx/config/"):
+			rel = name[len("BepInEx/config/"):]
+		case strings.HasPrefix(name, "config/"):
+			rel = name[len("config/"):]
+		default:
 			continue
 		}
-		// Extract config/ prefixed files into the profile config dir
-		if strings.HasPrefix(name, "config/") {
-			rel := name[len("config/"):]
-			dest := filepath.Join(configDir, rel)
-			os.MkdirAll(filepath.Dir(dest), 0755)
-			rc, err := f.Open()
-			if err != nil {
-				continue
-			}
-			out, err := os.Create(dest)
-			if err != nil {
-				rc.Close()
-				continue
-			}
-			io.Copy(out, rc)
-			out.Close()
-			rc.Close()
+		if rel == "" {
+			continue
 		}
+		dest := filepath.Join(configDir, rel)
+		if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+			continue
+		}
+		rc, err := f.Open()
+		if err != nil {
+			continue
+		}
+		out, err := os.Create(dest)
+		if err != nil {
+			rc.Close()
+			continue
+		}
+		if _, err := io.Copy(out, rc); err == nil {
+			count++
+		}
+		out.Close()
+		rc.Close()
+	}
+	if count > 0 {
+		fmt.Printf("Extracted %d config file(s) from profile code.\n", count)
 	}
 }
 
