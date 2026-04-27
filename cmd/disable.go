@@ -22,7 +22,7 @@ The mod argument is matched by Owner-Name or just the mod Name.`,
 			return err
 		}
 
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}

@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"mmcli/internal/config"
+	"mmcli/internal/games"
 	"mmcli/internal/installer"
 	"mmcli/internal/platform"
 	"mmcli/internal/profile"
@@ -34,7 +35,7 @@ var profileCreateCmd = &cobra.Command{
 use 'mmcli profile switch' to make it active.`,
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		paths, _, err := loadConfig()
+		paths, cfg, err := loadConfig()
 		if err != nil {
 			return err
 		}
@@ -45,7 +46,7 @@ use 'mmcli profile switch' to make it active.`,
 		}
 
 		// Ensure profile exists in registry
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}
@@ -84,7 +85,7 @@ Use --json for machine-readable output.`,
 			return nil
 		}
 
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}
@@ -170,12 +171,11 @@ be deleted; switch to a different profile first.`,
 		}
 
 		// Remove from registry
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}
-		delete(reg.Profiles, name)
-		delete(reg.Settings, name)
+		reg.DeleteProfile(name)
 		if err := config.SaveRegistry(paths, reg); err != nil {
 			return err
 		}
@@ -223,11 +223,17 @@ Examples:
 		}
 
 		deps := pkg.Versions[0].Dependencies
-		// Filter out BepInExPack
+		// Filter out the active game's BepInEx loader pack so it doesn't
+		// get installed as a regular mod.
+		game, gerr := games.Get(cfg.ActiveGame)
+		var loaderPackName string
+		if gerr == nil {
+			loaderPackName = game.LoaderPack.Name
+		}
 		var mods []string
 		for _, dep := range deps {
 			ref := thunderstore.ParseDep(dep)
-			if ref.Name == "BepInExPack_Valheim" || ref.Name == "BepInEx_pack" {
+			if loaderPackName != "" && ref.Name == loaderPackName {
 				continue
 			}
 			mods = append(mods, fmt.Sprintf("%s-%s", ref.Owner, ref.Name))
@@ -244,7 +250,7 @@ Examples:
 			return err
 		}
 
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}
@@ -283,11 +289,16 @@ func importProfileCode(paths config.Paths, cfg config.Config, code string) error
 		return err
 	}
 
-	// Filter out BepInExPack
+	// Filter out the active game's BepInEx loader pack from the imported
+	// profile so it isn't installed as a regular mod.
+	loaderPackName := ""
+	if game, gerr := games.Get(cfg.ActiveGame); gerr == nil {
+		loaderPackName = game.LoaderPack.Name
+	}
 	var filtered []thunderstore.ProfileMod
 	for _, m := range mods {
 		parts := strings.SplitN(m.Name, "-", 2)
-		if len(parts) == 2 && (parts[1] == "BepInExPack_Valheim" || parts[1] == "BepInEx_pack") {
+		if loaderPackName != "" && len(parts) == 2 && parts[1] == loaderPackName {
 			continue
 		}
 		filtered = append(filtered, m)
@@ -308,7 +319,7 @@ func importProfileCode(paths config.Paths, cfg config.Config, code string) error
 		return err
 	}
 
-	reg, err := config.LoadRegistry(paths)
+	reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 	if err != nil {
 		return err
 	}
@@ -467,13 +478,11 @@ func loadConfig() (config.Paths, config.Config, error) {
 		return config.Paths{}, config.Config{}, err
 	}
 
-	cfg, err := config.EnsureInitialized(paths)
+	resolved, cfg, err := config.EnsureInitialized(paths)
 	if err != nil {
 		return config.Paths{}, config.Config{}, err
 	}
-
-	paths.ValheimDir = cfg.ValheimPath
-	return paths, cfg, nil
+	return resolved, cfg, nil
 }
 
 // loadConfigWithRegistry loads config, registry, and runs the per-profile settings migration.
@@ -482,7 +491,7 @@ func loadConfigWithRegistry() (config.Paths, config.Config, *config.Registry, er
 	if err != nil {
 		return config.Paths{}, config.Config{}, nil, err
 	}
-	reg, err := config.LoadRegistry(paths)
+	reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 	if err != nil {
 		return config.Paths{}, config.Config{}, nil, err
 	}

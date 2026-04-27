@@ -342,7 +342,7 @@ Use --dry-run to preview which files would be removed.`,
 
 // findOrphanedConfigs returns config files that don't belong to any installed mod.
 func findOrphanedConfigs(paths config.Paths, cfg config.Config, files []string) []string {
-	reg, err := config.LoadRegistry(paths)
+	reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 	if err != nil {
 		return nil
 	}

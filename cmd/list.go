@@ -39,7 +39,7 @@ Use --json for machine-readable output.`,
 			return err
 		}
 
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}
@@ -48,7 +48,7 @@ Use --json for machine-readable output.`,
 
 		// Detect local (untracked) mods in the plugins directory
 		pluginsDir := paths.ProfilePluginsDir(cfg.ActiveProfile)
-		registered := reg.Profiles[cfg.ActiveProfile]
+		registered := reg.ProfileMods(cfg.ActiveProfile)
 		if registered == nil {
 			registered = make(map[string]config.ModEntry)
 		}

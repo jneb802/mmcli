@@ -155,14 +155,14 @@ func TestRegistryEnsureProfile(t *testing.T) {
 	reg := NewRegistry()
 	reg.EnsureProfile("new-profile")
 
-	if reg.Profiles["new-profile"] == nil {
+	if reg.ProfileMods("new-profile") == nil {
 		t.Error("EnsureProfile did not create profile map")
 	}
 
 	// Calling again should not reset existing data
 	reg.SetMod("new-profile", ModEntry{Owner: "A", Name: "Mod"})
 	reg.EnsureProfile("new-profile")
-	if len(reg.Profiles["new-profile"]) != 1 {
+	if len(reg.ProfileMods("new-profile")) != 1 {
 		t.Error("EnsureProfile reset existing profile data")
 	}
 }
@@ -170,7 +170,7 @@ func TestRegistryEnsureProfile(t *testing.T) {
 func TestPathHelpers(t *testing.T) {
 	p := Paths{
 		ProfilesDir: "/home/user/.config/mmcli/profiles",
-		ValheimDir:  "/home/user/Valheim",
+		GameDir:     "/home/user/Valheim",
 	}
 
 	tests := []struct {
@@ -211,7 +211,8 @@ func TestLoadSaveConfig(t *testing.T) {
 
 	cfg := Config{
 		ActiveProfile: "default",
-		ValheimPath:   "/path/to/valheim",
+		ActiveGame:    "valheim",
+		GameInstalls:  map[string]string{"valheim": "/path/to/valheim"},
 		Initialized:   true,
 		ActiveServer:  "myserver",
 		Servers: map[string]ServerEntry{
@@ -231,8 +232,11 @@ func TestLoadSaveConfig(t *testing.T) {
 	if loaded.ActiveProfile != cfg.ActiveProfile {
 		t.Errorf("ActiveProfile = %q, want %q", loaded.ActiveProfile, cfg.ActiveProfile)
 	}
-	if loaded.ValheimPath != cfg.ValheimPath {
-		t.Errorf("ValheimPath = %q, want %q", loaded.ValheimPath, cfg.ValheimPath)
+	if loaded.ActiveGame != "valheim" {
+		t.Errorf("ActiveGame = %q, want valheim", loaded.ActiveGame)
+	}
+	if loaded.GamePath() != "/path/to/valheim" {
+		t.Errorf("GamePath() = %q, want /path/to/valheim", loaded.GamePath())
 	}
 	if !loaded.Initialized {
 		t.Error("Initialized = false, want true")
@@ -246,6 +250,65 @@ func TestLoadSaveConfig(t *testing.T) {
 	}
 	if srv.Host != "1.2.3.4" || srv.Port != 9877 || srv.Secret != "abc" {
 		t.Errorf("Server = %+v, want host=1.2.3.4 port=9877 secret=abc", srv)
+	}
+}
+
+func TestLoadMigratesLegacyValheimPath(t *testing.T) {
+	tmp := t.TempDir()
+	p := Paths{
+		ConfigDir:  tmp,
+		ConfigFile: filepath.Join(tmp, "config.json"),
+	}
+
+	// Write a pre-multigame config.json by hand: only ValheimPath, no
+	// ActiveGame or GameInstalls.
+	legacy := []byte(`{"active_profile":"default","valheim_path":"/old/valheim","initialized":true}`)
+	if err := os.WriteFile(p.ConfigFile, legacy, 0644); err != nil {
+		t.Fatalf("write legacy config: %v", err)
+	}
+
+	loaded, err := Load(p)
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+
+	if loaded.ActiveGame != "valheim" {
+		t.Errorf("ActiveGame = %q, want valheim", loaded.ActiveGame)
+	}
+	if loaded.GamePath() != "/old/valheim" {
+		t.Errorf("GamePath() = %q, want /old/valheim", loaded.GamePath())
+	}
+	if loaded.ValheimPath != "" {
+		t.Errorf("ValheimPath should be cleared after migration, got %q", loaded.ValheimPath)
+	}
+}
+
+func TestMigrationIsSafeOnAlreadyMigratedConfig(t *testing.T) {
+	cfg := &Config{
+		ActiveGame:   "valheim",
+		GameInstalls: map[string]string{"valheim": "/already/migrated"},
+	}
+	if migrateGameInstalls(cfg) {
+		t.Error("migration should be a no-op on already-migrated config")
+	}
+	if cfg.GameInstalls["valheim"] != "/already/migrated" {
+		t.Errorf("install path was modified, got %q", cfg.GameInstalls["valheim"])
+	}
+}
+
+func TestMigrationPreservesExistingGameInstalls(t *testing.T) {
+	cfg := &Config{
+		ValheimPath:  "/legacy/path",
+		GameInstalls: map[string]string{"valheim": "/existing/path"},
+	}
+	if !migrateGameInstalls(cfg) {
+		t.Error("migration should clear ValheimPath even when GameInstalls already has the key")
+	}
+	if cfg.GameInstalls["valheim"] != "/existing/path" {
+		t.Errorf("existing GameInstalls entry was overwritten, got %q", cfg.GameInstalls["valheim"])
+	}
+	if cfg.ValheimPath != "" {
+		t.Errorf("ValheimPath should be cleared, got %q", cfg.ValheimPath)
 	}
 }
 
@@ -264,7 +327,7 @@ func TestLoadSaveRegistry(t *testing.T) {
 		t.Fatalf("SaveRegistry failed: %v", err)
 	}
 
-	loaded, err := LoadRegistry(p)
+	loaded, err := LoadRegistry(p, "valheim")
 	if err != nil {
 		t.Fatalf("LoadRegistry failed: %v", err)
 	}
@@ -277,12 +340,15 @@ func TestLoadSaveRegistry(t *testing.T) {
 
 func TestLoadRegistryNotExist(t *testing.T) {
 	p := Paths{RegistryFile: "/nonexistent/path/registry.json"}
-	reg, err := LoadRegistry(p)
+	reg, err := LoadRegistry(p, "valheim")
 	if err != nil {
 		t.Fatalf("LoadRegistry should return empty registry for missing file, got error: %v", err)
 	}
-	if reg.Profiles == nil {
-		t.Error("Profiles map should be initialized")
+	if reg.ActiveGame() != "valheim" {
+		t.Errorf("ActiveGame = %q, want valheim", reg.ActiveGame())
+	}
+	if names := reg.ProfileNames(); len(names) != 0 {
+		t.Errorf("ProfileNames = %v, want empty", names)
 	}
 }
 
@@ -316,8 +382,9 @@ func TestRegistryJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(data, &loaded); err != nil {
 		t.Fatalf("Unmarshal failed: %v", err)
 	}
+	loaded.SetActiveGame("valheim")
 
-	mod, ok := loaded.Profiles["default"]["A-Mod"]
+	mod, ok := loaded.GetMod("default", "A-Mod")
 	if !ok {
 		t.Fatal("mod not found after round trip")
 	}
@@ -476,7 +543,7 @@ func TestRegistrySettingsRoundTrip(t *testing.T) {
 		t.Fatalf("SaveRegistry failed: %v", err)
 	}
 
-	loaded, err := LoadRegistry(p)
+	loaded, err := LoadRegistry(p, "valheim")
 	if err != nil {
 		t.Fatalf("LoadRegistry failed: %v", err)
 	}
@@ -578,7 +645,14 @@ func TestEnsureProfileCreatesSettings(t *testing.T) {
 	reg := NewRegistry()
 	reg.EnsureProfile("newprofile")
 
-	if _, ok := reg.Settings["newprofile"]; !ok {
-		t.Error("EnsureProfile should create a settings entry")
+	found := false
+	for _, name := range reg.ProfileNames() {
+		if name == "newprofile" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("EnsureProfile should register the profile name")
 	}
 }

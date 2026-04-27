@@ -200,7 +200,7 @@ ignoreDisableSwitch=false
 dllSearchPathOverride=unstripped_corlib
 `, preloader)
 
-	return os.WriteFile(filepath.Join(paths.ValheimDir, "doorstop_config.ini"), []byte(content), 0644)
+	return os.WriteFile(filepath.Join(paths.GameDir, "doorstop_config.ini"), []byte(content), 0644)
 }
 
 func copyDirContents(src, dst string) error {

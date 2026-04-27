@@ -18,7 +18,7 @@ func testPaths(t *testing.T) config.Paths {
 	return config.Paths{
 		ConfigDir:   filepath.Join(tmp, "config"),
 		ProfilesDir: filepath.Join(tmp, "config", "profiles"),
-		ValheimDir:  valheim,
+		GameDir:     valheim,
 	}
 }
 
