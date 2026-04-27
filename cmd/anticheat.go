@@ -34,6 +34,9 @@ regardless of their anticheat classification.
 
 Dependencies are automatically classified to match.`,
 	Args: cobra.ExactArgs(2),
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		return requireAnticheatCapability()
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		modName := args[0]
 		classification := args[1]
@@ -47,7 +50,7 @@ Dependencies are automatically classified to match.`,
 			return err
 		}
 
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}
@@ -119,13 +122,16 @@ var anticheatAutoCmd = &cobra.Command{
 
   server/both targets → whitelist (required)
   client targets      → greylist  (optional)`,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		return requireAnticheatCapability()
+	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths, cfg, err := loadConfig()
 		if err != nil {
 			return err
 		}
 
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}

@@ -140,7 +140,7 @@ func resolveAnticheatSystem(anticheatPref string, mods []config.ModEntry) string
 
 func (m model) Init() tea.Cmd {
 	m.local.checkingUpdates = true
-	cmds := []tea.Cmd{checkUpdates(m.local.mods), checkGameRunning(), localTick()}
+	cmds := []tea.Cmd{checkUpdates(m.local.mods), checkGameRunning(m.cfg.ActiveGame), localTick()}
 	if m.isFullMode() {
 		cmds = append(cmds, fetchServerStatus(m.server.client), serverTick())
 	}
@@ -217,7 +217,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case localTickMsg:
-		return m, tea.Batch(checkGameRunning(), localTick())
+		return m, tea.Batch(checkGameRunning(m.cfg.ActiveGame), localTick())
 
 	case localLogLineMsg:
 		m.local.logs.lines = append(m.local.logs.lines, msg.lines...)

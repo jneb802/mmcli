@@ -14,6 +14,7 @@ import (
 	"mmcli/internal/agentapi"
 	"mmcli/internal/client"
 	"mmcli/internal/config"
+	"mmcli/internal/games"
 	"mmcli/internal/installer"
 	"mmcli/internal/modpack"
 	"mmcli/internal/platform"
@@ -147,9 +148,9 @@ func (m model) buildSettingsItems() []settingsItem {
 			editable: true,
 		},
 		{
-			label:    "Valheim Path",
-			value:    m.cfg.ValheimPath,
-			tooltip:  "Local Valheim installation directory. Used for BepInEx and mod file paths.",
+			label:    "Game Path",
+			value:    m.cfg.GamePath(),
+			tooltip:  "Local game installation directory. Used for BepInEx and mod file paths.",
 			editable: true,
 		},
 		{
@@ -380,6 +381,11 @@ func streamLocalLogs(path string, lastSize int64) (<-chan []string, chan struct{
 
 func startGame(paths config.Paths, cfg config.Config) tea.Cmd {
 	return func() tea.Msg {
+		game, err := games.Get(cfg.ActiveGame)
+		if err != nil {
+			return gameStartMsg{err: err}
+		}
+
 		logPath := paths.ProfileLogFile(cfg.ActiveProfile)
 		os.Remove(logPath)
 
@@ -387,12 +393,12 @@ func startGame(paths config.Paths, cfg config.Config) tea.Cmd {
 			return gameStartMsg{err: fmt.Errorf("failed to activate profile: %w", err)}
 		}
 
-		target := platform.GameLaunchTarget(paths.ValheimDir)
+		target := platform.GameLaunchTarget(paths.GameDir, game)
 		if _, err := os.Stat(target); os.IsNotExist(err) {
 			return gameStartMsg{err: fmt.Errorf("game launch target not found — run `mmcli init` first")}
 		}
 
-		cmd, _, lf, err := platform.StartGameProcess(paths.ValheimDir, target, logPath)
+		cmd, _, lf, err := platform.StartGameProcess(paths.GameDir, target, logPath)
 		if err != nil {
 			return gameStartMsg{err: fmt.Errorf("failed to start game: %w", err)}
 		}
@@ -407,9 +413,13 @@ func startGame(paths config.Paths, cfg config.Config) tea.Cmd {
 	}
 }
 
-func checkGameRunning() tea.Cmd {
+func checkGameRunning(activeGame string) tea.Cmd {
 	return func() tea.Msg {
-		return gameStatusMsg{running: platform.IsGameRunning()}
+		game, err := games.Get(activeGame)
+		if err != nil {
+			return gameStatusMsg{running: false}
+		}
+		return gameStatusMsg{running: platform.IsGameRunning(game)}
 	}
 }
 
@@ -579,17 +589,20 @@ func detectBepInExVersion(paths config.Paths) string {
 	}
 	for _, e := range entries {
 		name := e.Name()
-		if strings.HasPrefix(name, "BepInExPack_Valheim-") && strings.HasSuffix(name, ".zip") {
-			ver := strings.TrimPrefix(name, "BepInExPack_Valheim-")
-			ver = strings.TrimSuffix(ver, ".zip")
-			return ver
+		if strings.HasPrefix(name, "BepInExPack") && strings.HasSuffix(name, ".zip") {
+			// Cache filename shape is "<LoaderPack.Name>-<version>.zip"
+			// where <LoaderPack.Name> always starts with "BepInExPack".
+			rest := strings.TrimSuffix(name, ".zip")
+			if idx := strings.LastIndex(rest, "-"); idx > 0 {
+				return rest[idx+1:]
+			}
 		}
 	}
 	if _, err := os.Stat(paths.BepInExDir()); err == nil {
 		return "installed"
 	}
 	if runtime.GOOS == "windows" {
-		if _, err := os.Stat(filepath.Join(paths.ValheimDir, "winhttp.dll")); err == nil {
+		if _, err := os.Stat(filepath.Join(paths.GameDir, "winhttp.dll")); err == nil {
 			return "installed"
 		}
 	}

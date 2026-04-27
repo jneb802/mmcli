@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"os/signal"
 	"syscall"
+
+	"mmcli/internal/games"
 )
 
 func ConfigDir() (string, error) {
@@ -18,20 +20,27 @@ func ConfigDir() (string, error) {
 	return home + "/.config/mmcli", nil
 }
 
-func DetectValheimPath() (string, error) {
-	return "", fmt.Errorf("Valheim detection not supported on Linux")
+// DetectInstall is not implemented on Linux; mmcli is run on Linux only
+// by the dedicated-server agent flow which configures install paths
+// explicitly.
+func DetectInstall(game games.Game) (string, error) {
+	return "", fmt.Errorf("install detection is not supported on Linux for %s", game.DisplayName)
 }
 
 func OpenPath(path string) error {
 	return exec.Command("xdg-open", path).Run()
 }
 
-func GameLaunchTarget(workDir string) string {
+func GameLaunchTarget(workDir string, game games.Game) string {
 	return workDir + "/run_bepinex.sh"
 }
 
-func IsGameRunning() bool {
-	return exec.Command("pgrep", "-x", "valheim.x86_64").Run() == nil
+func IsGameRunning(game games.Game) bool {
+	procName := game.ProcessNameFor("linux")
+	if procName == "" {
+		return false
+	}
+	return exec.Command("pgrep", "-x", procName).Run() == nil
 }
 
 func StartGameProcess(workDir, target, logPath string) (*exec.Cmd, int, *os.File, error) {

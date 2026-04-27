@@ -8,8 +8,8 @@ import (
 
 var startCmd = &cobra.Command{
 	Use:   "start",
-	Short: "Launch Valheim with BepInEx and stream logs",
-	Long: `Launch Valheim via the BepInEx run script and stream game logs to stdout.
+	Short: "Launch the active game with BepInEx and stream logs",
+	Long: `Launch the active game via the BepInEx run script and stream game logs to stdout.
 This command blocks until the game process exits. Use Ctrl+C to stop.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths, cfg, err := loadConfig()

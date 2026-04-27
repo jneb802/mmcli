@@ -22,7 +22,7 @@ Returns an error if the mod is not found or is already enabled.`,
 			return err
 		}
 
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}

@@ -11,8 +11,8 @@ import (
 var logsCmd = &cobra.Command{
 	Use:   "logs",
 	Short: "View local BepInEx logs from the last game session",
-	Long: `Read and display the BepInEx log file (LogOutput.log) from the Valheim
-installation. Shows the last N lines (default 200). Useful for debugging
+	Long: `Read and display the BepInEx log file (LogOutput.log) from the active
+game's installation. Shows the last N lines (default 200). Useful for debugging
 mod issues after a game session.`,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		lines, _ := cmd.Flags().GetInt("lines")
