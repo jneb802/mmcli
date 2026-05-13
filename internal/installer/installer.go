@@ -10,8 +10,24 @@ import (
 	"strings"
 
 	"mmcli/internal/config"
+	"mmcli/internal/games"
 	"mmcli/internal/thunderstore"
 )
+
+// loaderPackSkipList returns the dep-resolver skip list for the active
+// game: just the game's loader pack name. The empty fallback covers the
+// rare case where ActiveGame isn't set yet (mid-init); in that case we
+// pass nothing and Thunderstore won't filter.
+func loaderPackSkipList(cfg config.Config) []string {
+	if cfg.ActiveGame == "" {
+		return nil
+	}
+	g, err := games.Get(cfg.ActiveGame)
+	if err != nil {
+		return nil
+	}
+	return []string{g.LoaderPack.Name}
+}
 
 // Install resolves a mod query, downloads + installs it and its dependencies.
 // target is "client", "server", or "both" (empty string defaults to "both").
@@ -59,11 +75,11 @@ func InstallVersion(paths config.Paths, cfg config.Config, reg *config.Registry,
 
 	// Resolve dependencies
 	installed := make(map[string]bool)
-	for name := range reg.Profiles[profile] {
+	for name := range reg.ProfileMods(profile) {
 		installed[name] = true
 	}
 
-	deps, err := thunderstore.ResolveDependencies(pkg, installed)
+	deps, err := thunderstore.ResolveDependencies(pkg, installed, loaderPackSkipList(cfg))
 	if err != nil {
 		return fmt.Errorf("failed to resolve dependencies: %w", err)
 	}

@@ -210,7 +210,7 @@ func (m model) getOrRegisterMod(name string) (config.ModEntry, bool) {
 	}
 	// Check locally-detected mods
 	pluginsDir := m.paths.ProfilePluginsDir(m.cfg.ActiveProfile)
-	for _, local := range config.DetectLocalMods(pluginsDir, m.reg.Profiles[m.cfg.ActiveProfile]) {
+	for _, local := range config.DetectLocalMods(pluginsDir, m.reg.ProfileMods(m.cfg.ActiveProfile)) {
 		if local.FullName() == name {
 			m.reg.SetMod(m.cfg.ActiveProfile, local)
 			return local, true

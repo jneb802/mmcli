@@ -47,7 +47,7 @@ Nothing is changed locally.`,
 			return err
 		}
 
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}

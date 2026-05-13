@@ -30,7 +30,7 @@ Accepts Owner-Name (e.g., 'RandyKnapp-EpicLoot'), Owner-Name-Version, or a Thund
 			return err
 		}
 
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}
@@ -71,7 +71,7 @@ mods installed in the active profile. Shows a diff of changes before writing.`,
 			return err
 		}
 
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}
@@ -128,7 +128,7 @@ The modpack directory must contain manifest.json, README.md, and icon.png.`,
 			return err
 		}
 
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}

@@ -13,9 +13,8 @@ import (
 	"strings"
 
 	"mmcli/internal/config"
+	"mmcli/internal/games"
 )
-
-const bepinexPackage = "denikson/BepInExPack_Valheim"
 
 type tsVersion struct {
 	VersionNumber string `json:"version_number"`
@@ -26,9 +25,10 @@ type tsPackage struct {
 	Versions []tsVersion `json:"versions"`
 }
 
-// LatestVersion fetches the latest BepInExPack_Valheim version info.
-func LatestVersion() (version string, downloadURL string, err error) {
-	url := fmt.Sprintf("https://thunderstore.io/api/experimental/package/%s/", bepinexPackage)
+// LatestVersion fetches the latest version of the given game's BepInEx
+// pack from Thunderstore.
+func LatestVersion(game games.Game) (version string, downloadURL string, err error) {
+	url := fmt.Sprintf("https://thunderstore.io/api/experimental/package/%s/", game.LoaderPack.FullName())
 	resp, err := http.Get(url)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to query Thunderstore: %w", err)
@@ -52,10 +52,12 @@ func LatestVersion() (version string, downloadURL string, err error) {
 	return pkg.Latest.VersionNumber, pkg.Latest.DownloadURL, nil
 }
 
-// Download downloads the BepInEx zip to the cache directory.
-func Download(paths config.Paths, downloadURL, version string) (string, error) {
+// Download downloads the BepInEx zip to the cache directory. The cached
+// filename is keyed on the loader-pack name plus version so different
+// games don't share cache entries.
+func Download(paths config.Paths, game games.Game, downloadURL, version string) (string, error) {
 	os.MkdirAll(paths.CacheDir, 0755)
-	zipPath := filepath.Join(paths.CacheDir, fmt.Sprintf("BepInExPack_Valheim-%s.zip", version))
+	zipPath := filepath.Join(paths.CacheDir, fmt.Sprintf("%s-%s.zip", game.LoaderPack.Name, version))
 
 	// Skip download if already cached
 	if _, err := os.Stat(zipPath); err == nil {
@@ -86,10 +88,14 @@ func Download(paths config.Paths, downloadURL, version string) (string, error) {
 	return zipPath, nil
 }
 
-// Install extracts the BepInEx zip into the Valheim directory.
-// Strips the "BepInExPack_Valheim/" prefix and skips metadata files.
-// Removes any dangling symlinks from a previous mmcli install first.
-func Install(paths config.Paths, zipPath string) error {
+// Install extracts the BepInEx zip into the game directory. Strips the
+// "BepInExPack*/" prefix and skips metadata files. On Windows, BepInEx/
+// entries are routed into the bootstrap profile's directory so the
+// profile-local layout works on first launch.
+//
+// bootstrapProfile is the profile name into which the BepInEx tree
+// should be installed on Windows (typically "default" during init).
+func Install(paths config.Paths, zipPath, bootstrapProfile string) error {
 	// Clean up dangling symlinks left from previous profile symlinks
 	removeDanglingSymlinks(paths.BepInExDir())
 
@@ -133,7 +139,7 @@ func Install(paths config.Paths, zipPath string) error {
 			continue
 		}
 
-		destPath := installDestPath(paths, name)
+		destPath := installDestPath(paths, name, bootstrapProfile)
 
 		if f.FileInfo().IsDir() {
 			os.MkdirAll(destPath, 0755)
@@ -153,8 +159,9 @@ func Install(paths config.Paths, zipPath string) error {
 //  1. The arch detection case block rejects non-x86/x64 binaries
 //  2. The launch uses bare `exec` instead of forcing x86_64 via Rosetta
 //
-// This function applies the same patches as a known-working macOS install.
-func PatchRunScript(paths config.Paths) error {
+// This function applies the same patches as a known-working macOS install,
+// using the game's macOS executable name.
+func PatchRunScript(paths config.Paths, game games.Game) error {
 	if runtime.GOOS != "darwin" {
 		return nil
 	}
@@ -166,8 +173,11 @@ func PatchRunScript(paths config.Paths) error {
 
 	content := string(data)
 
-	// Set executable_name to valheim.app
-	content = replaceScriptVar(content, "executable_name", "valheim.app")
+	// Set executable_name to the game's macOS executable; the patched
+	// script ends up wrapping that .app under arch -x86_64.
+	if execName := game.ExecutableFor("darwin"); execName != "" {
+		content = replaceScriptVar(content, "executable_name", execName)
+	}
 
 	// Comment out the arch detection case block — it rejects Apple Silicon binaries.
 	// The block starts with `case "${file_out}" in` and ends with `esac`.
@@ -259,7 +269,7 @@ func RemoveQuarantine(paths config.Paths) error {
 	}
 	// xattr -rd removes the attribute recursively; errors are expected for files
 	// that don't have it, so we only fail on exec errors.
-	cmd := exec.Command("xattr", "-rd", "com.apple.quarantine", paths.ValheimDir)
+	cmd := exec.Command("xattr", "-rd", "com.apple.quarantine", paths.GameDir)
 	cmd.Run() // ignore exit code — files without the attribute cause non-zero exit
 	return nil
 }
@@ -271,7 +281,7 @@ func MakeExecutable(paths config.Paths) error {
 	}
 	files := []string{
 		paths.RunBepInExScript(),
-		filepath.Join(paths.ValheimDir, "libdoorstop.dylib"),
+		filepath.Join(paths.GameDir, "libdoorstop.dylib"),
 	}
 	for _, f := range files {
 		if _, err := os.Stat(f); err == nil {
@@ -302,16 +312,16 @@ func extractFile(f *zip.File, destPath string) error {
 	return err
 }
 
-func installDestPath(paths config.Paths, name string) string {
+func installDestPath(paths config.Paths, name, bootstrapProfile string) string {
 	if runtime.GOOS != "windows" {
-		return filepath.Join(paths.ValheimDir, name)
+		return filepath.Join(paths.GameDir, name)
 	}
 
 	trimmed := strings.TrimPrefix(filepath.ToSlash(name), "./")
 	if trimmed == "BepInEx" || strings.HasPrefix(trimmed, "BepInEx/") {
-		return filepath.Join(paths.ProfileDir("default"), filepath.FromSlash(trimmed))
+		return filepath.Join(paths.ProfileDir(bootstrapProfile), filepath.FromSlash(trimmed))
 	}
-	return filepath.Join(paths.ValheimDir, filepath.FromSlash(trimmed))
+	return filepath.Join(paths.GameDir, filepath.FromSlash(trimmed))
 }
 
 // removeDanglingSymlinks removes symlinks in a directory that point to non-existent targets.

@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
-)
 
-const steamAppID = "892970"
+	"mmcli/internal/games"
+)
 
 func ConfigDir() (string, error) {
 	appData := os.Getenv("APPDATA")
@@ -23,36 +23,54 @@ func ConfigDir() (string, error) {
 	return filepath.Join(appData, "mmcli"), nil
 }
 
-func DetectValheimPath() (string, error) {
+// DetectInstall locates the install directory of the given game by
+// walking Steam libraries on Windows.
+func DetectInstall(game games.Game) (string, error) {
+	if !game.SupportedOn("windows") {
+		return "", fmt.Errorf("%s is not supported on Windows", game.DisplayName)
+	}
+	exeName := game.ExecutableFor("windows")
+
 	steamRoot, err := steamInstallPath()
 	if err != nil {
 		return "", err
 	}
 
 	for _, library := range steamLibraries(steamRoot) {
-		path := filepath.Join(library, "steamapps", "common", "Valheim")
-		if _, err := os.Stat(filepath.Join(path, "valheim.exe")); err == nil {
+		path := filepath.Join(library, "steamapps", "common", game.SteamFolderName)
+		if _, err := os.Stat(filepath.Join(path, exeName)); err == nil {
 			return path, nil
 		}
 	}
 
-	return "", fmt.Errorf("Valheim not found in Steam libraries under %s", steamRoot)
+	return "", fmt.Errorf("%s not found in Steam libraries under %s", game.DisplayName, steamRoot)
 }
 
 func OpenPath(path string) error {
 	return exec.Command("explorer", path).Run()
 }
 
-func GameLaunchTarget(workDir string) string {
-	return filepath.Join(workDir, "valheim.exe")
+// GameLaunchTarget returns the per-game executable path. On Windows the
+// BepInEx winhttp.dll proxy injects into the game on launch, so mmcli
+// runs the executable directly (no shim script).
+func GameLaunchTarget(workDir string, game games.Game) string {
+	exeName := game.ExecutableFor("windows")
+	if exeName == "" {
+		exeName = game.SteamFolderName + ".exe"
+	}
+	return filepath.Join(workDir, exeName)
 }
 
-func IsGameRunning() bool {
-	out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq valheim.exe").CombinedOutput()
+func IsGameRunning(game games.Game) bool {
+	procName := game.ProcessNameFor("windows")
+	if procName == "" {
+		return false
+	}
+	out, err := exec.Command("tasklist", "/FI", "IMAGENAME eq "+procName).CombinedOutput()
 	if err != nil {
 		return false
 	}
-	return bytes.Contains(bytes.ToLower(out), []byte("valheim.exe"))
+	return bytes.Contains(bytes.ToLower(out), []byte(strings.ToLower(procName)))
 }
 
 // StartGameProcess launches valheim.exe directly. On Windows the doorstop DLL

@@ -8,12 +8,18 @@ import (
 	"github.com/nxadm/tail"
 
 	"mmcli/internal/config"
+	"mmcli/internal/games"
 	"mmcli/internal/platform"
 	"mmcli/internal/profile"
 )
 
-// Start launches Valheim and streams BepInEx logs.
+// Start launches the active game with BepInEx and streams logs.
 func Start(paths config.Paths, cfg config.Config) error {
+	game, err := games.Get(cfg.ActiveGame)
+	if err != nil {
+		return err
+	}
+
 	// Delete stale log
 	logFile := paths.ProfileLogFile(cfg.ActiveProfile)
 	os.Remove(logFile)
@@ -23,16 +29,16 @@ func Start(paths config.Paths, cfg config.Config) error {
 		return fmt.Errorf("failed to activate profile: %w", err)
 	}
 
-	target := platform.GameLaunchTarget(paths.ValheimDir)
+	target := platform.GameLaunchTarget(paths.GameDir, game)
 	if _, err := os.Stat(target); os.IsNotExist(err) {
 		return fmt.Errorf("game launch target not found at %s. Run `mmcli init` first", target)
 	}
 
-	fmt.Printf("Launching Valheim (profile: %s)...\n", cfg.ActiveProfile)
+	fmt.Printf("Launching %s (profile: %s)...\n", game.DisplayName, cfg.ActiveProfile)
 
 	// Launch game — pass empty logPath so output goes to the terminal (no TUI
 	// to corrupt in CLI mode).
-	cmd, pgid, _, err := platform.StartGameProcess(paths.ValheimDir, target, "")
+	cmd, pgid, _, err := platform.StartGameProcess(paths.GameDir, target, "")
 	if err != nil {
 		return fmt.Errorf("failed to start game: %w", err)
 	}
@@ -68,7 +74,7 @@ func Start(paths config.Paths, cfg config.Config) error {
 
 	select {
 	case <-sigChan:
-		fmt.Println("\nShutting down Valheim...")
+		fmt.Printf("\nShutting down %s...\n", game.DisplayName)
 		_ = platform.GracefulKill(cmd, pgid)
 
 		// Wait up to 5 seconds for graceful shutdown

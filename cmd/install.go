@@ -72,7 +72,7 @@ With --server, the mod is installed directly on the active server via the agent
 			return err
 		}
 
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return err
 		}

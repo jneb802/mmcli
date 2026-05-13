@@ -60,7 +60,7 @@ func (m model) viewSettingsTab() string {
 
 	// Local path editing modal
 	if m.settingsTab.editingPath {
-		b.WriteString("\n  Valheim Path:\n\n")
+		b.WriteString("\n  Game Path:\n\n")
 		fmt.Fprintf(&b, "  > %s\033[7m \033[0m\n", m.settingsTab.pathInput)
 		b.WriteString("\n  \033[2menter save • esc cancel\033[0m\n\n")
 		return b.String()
@@ -155,11 +155,11 @@ func (m model) buildSettingsTabItems() []settingsTabItem {
 	// --- Local section ---
 	items = append(items, settingsTabItem{label: "Local", isSectionHeader: true})
 
-	// Valheim path
+	// Game install path
 	items = append(items, settingsTabItem{
-		label:    "Valheim Path",
-		value:    m.cfg.ValheimPath,
-		tooltip:  "Local Valheim installation directory.",
+		label:    "Game Path",
+		value:    m.cfg.GamePath(),
+		tooltip:  "Local game installation directory.",
 		editable: true,
 		action:   "path",
 	})
@@ -411,9 +411,9 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.settingsTab.editingPath = false
 		case "enter":
-			if m.settingsTab.pathInput != "" {
-				m.cfg.ValheimPath = m.settingsTab.pathInput
-				m.paths.ValheimDir = m.settingsTab.pathInput
+			if m.settingsTab.pathInput != "" && m.cfg.ActiveGame != "" {
+				m.cfg.SetGameInstall(m.cfg.ActiveGame, m.settingsTab.pathInput)
+				m.paths.GameDir = m.settingsTab.pathInput
 				config.Save(m.paths, m.cfg)
 			}
 			m.settingsTab.editingPath = false
@@ -591,7 +591,7 @@ func (m model) handleSettingsTabKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.anticheatSystem = resolveAnticheatSystem(m.profileSettings.AnticheatSystem, m.local.mods)
 		case "path":
 			m.settingsTab.editingPath = true
-			m.settingsTab.pathInput = m.cfg.ValheimPath
+			m.settingsTab.pathInput = m.cfg.GamePath()
 		case "server-editor":
 			if m.server.role == agentapi.RoleAdmin && m.server.client != nil {
 				if m.server.settings == nil {

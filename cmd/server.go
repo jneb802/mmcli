@@ -20,10 +20,13 @@ import (
 
 var serverCmd = &cobra.Command{
 	Use:   "server",
-	Short: "Manage remote Valheim dedicated servers",
-	Long: `Manage remote Valheim dedicated servers via the mmcli-agent.
+	Short: "Manage remote dedicated servers (Valheim only for now)",
+	Long: `Manage remote dedicated servers via the mmcli-agent.
 The agent must be running on the server. Use 'server add' to register
 a server, then use other subcommands to control it.`,
+	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+		return requireAgentCapability()
+	},
 }
 
 var serverAddCmd = &cobra.Command{
@@ -79,7 +82,7 @@ Requires --host and --secret flags. Validates connectivity before saving.`,
 		}
 
 		// Set as active server for current profile
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return fmt.Errorf("failed to load registry: %w", err)
 		}
@@ -116,7 +119,7 @@ Use --json for machine-readable output.`,
 			return nil
 		}
 
-		reg, _ := config.LoadRegistry(paths)
+		reg, _ := config.LoadRegistry(paths, cfg.ActiveGame)
 		ps := reg.GetSettings(cfg.ActiveProfile)
 
 		if jsonOutput {
@@ -178,7 +181,7 @@ var serverSwitchCmd = &cobra.Command{
 			return fmt.Errorf("server '%s' not found", name)
 		}
 
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return fmt.Errorf("failed to load registry: %w", err)
 		}
@@ -213,7 +216,7 @@ var serverRemoveCmd = &cobra.Command{
 		delete(cfg.Servers, name)
 
 		// Update profile settings if removed server was active for this profile
-		reg, err := config.LoadRegistry(paths)
+		reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 		if err != nil {
 			return fmt.Errorf("failed to load registry: %w", err)
 		}
@@ -734,7 +737,7 @@ func requireAdmin() error {
 	if err != nil {
 		return err
 	}
-	reg, _ := config.LoadRegistry(paths)
+	reg, _ := config.LoadRegistry(paths, cfg.ActiveGame)
 	ps := reg.GetSettings(cfg.ActiveProfile)
 	if ps.Server == "" {
 		return nil // resolveActiveServer will handle this
@@ -752,7 +755,7 @@ func resolveActiveServer() (string, *client.AgentClient, error) {
 		return "", nil, err
 	}
 
-	reg, err := config.LoadRegistry(paths)
+	reg, err := config.LoadRegistry(paths, cfg.ActiveGame)
 	if err != nil {
 		return "", nil, err
 	}

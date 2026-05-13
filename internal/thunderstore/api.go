@@ -88,11 +88,18 @@ func GetPackage(owner, name string) (*Package, error) {
 }
 
 // ResolveDependencies resolves all dependencies for a package recursively.
-// Returns packages in topological order (dependencies first).
-// Skips BepInExPack_Valheim and already-installed mods.
-func ResolveDependencies(pkg *Package, installed map[string]bool) ([]DepRef, error) {
+// Returns packages in topological order (dependencies first). Any
+// dependency whose Name appears in skipNames is skipped — callers pass
+// the active game's BepInEx pack here so the loader doesn't get pulled in
+// as a regular mod.
+func ResolveDependencies(pkg *Package, installed map[string]bool, skipNames []string) ([]DepRef, error) {
 	if len(pkg.Versions) == 0 {
 		return nil, fmt.Errorf("package %s has no versions", pkg.FullName)
+	}
+
+	skipSet := make(map[string]bool, len(skipNames))
+	for _, s := range skipNames {
+		skipSet[s] = true
 	}
 
 	var result []DepRef
@@ -105,8 +112,8 @@ func ResolveDependencies(pkg *Package, installed map[string]bool) ([]DepRef, err
 			ref := ParseDep(dep)
 			fullName := fmt.Sprintf("%s-%s", ref.Owner, ref.Name)
 
-			// Skip BepInExPack
-			if ref.Name == "BepInExPack_Valheim" || ref.Name == "BepInEx_pack" {
+			// Skip the configured loader-pack(s).
+			if skipSet[ref.Name] {
 				continue
 			}
 
