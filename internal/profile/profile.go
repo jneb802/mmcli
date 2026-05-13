@@ -192,12 +192,20 @@ func writeDoorstopConfig(paths config.Paths, name string) error {
 		return fmt.Errorf("BepInEx preloader not found at %s", preloader)
 	}
 
-	content := fmt.Sprintf(`[UnityDoorstop]
-enabled=true
-targetAssembly=%s
-redirectOutputLog=false
-ignoreDisableSwitch=false
-dllSearchPathOverride=unstripped_corlib
+	content := fmt.Sprintf(`# General options for Unity Doorstop
+[General]
+
+enabled = true
+target_assembly=%s
+redirect_output_log = false
+boot_config_override =
+ignore_disable_switch = false
+
+[UnityMono]
+dll_search_path_override =
+debug_enabled = false
+debug_address = 127.0.0.1:10000
+debug_suspend = false
 `, preloader)
 
 	return os.WriteFile(filepath.Join(paths.ValheimDir, "doorstop_config.ini"), []byte(content), 0644)
